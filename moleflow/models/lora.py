@@ -214,3 +214,246 @@ class MoLESubnet(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.layer2(self.relu(self.layer1(x)))
+
+
+class MoLEContextSubnet(nn.Module):
+    """
+    MoLE Subnet with Context-Aware Scale (Baseline 1.5 / 2.0).
+
+    Key Innovation:
+    - s-network: concat(x, local_context) → anomaly-sensitive scale
+    - t-network: x only → density-preserving shift
+
+    This design ensures:
+    - scale(s) can detect "patches different from neighbors" (anomaly-sensitive)
+    - shift(t) preserves density estimation without noise from context
+
+    Architecture:
+    - 3×3 depthwise conv for local context extraction
+    - Context gating (two modes):
+      1. Global alpha (legacy): alpha = alpha_max * sigmoid(alpha_param)
+         - Single learnable scalar, same for all patches
+      2. Patch-wise gate (v2.0): gate = sigmoid(MLP([x, ctx]))
+         - Per-patch decision: "should I use context here?"
+         - Normal patches → gate ≈ 0 (learn to ignore context)
+         - Anomaly-like patches → gate ≈ 1 (context matters)
+    - s_net: Linear(2D→H) → ReLU → Linear(H→D/2)
+    - t_net: Linear(D→H) → ReLU → Linear(H→D/2)
+    """
+
+    # Class-level storage for spatial info (set by parent NF before forward)
+    _spatial_info = None  # (batch_size, H, W)
+
+    def __init__(self, dims_in: int, dims_out: int, rank: int = 4, alpha: float = 1.0,
+                 use_lora: bool = True, use_task_bias: bool = True,
+                 context_kernel: int = 3, context_init_scale: float = 0.1,
+                 context_max_alpha: float = 0.2, use_context_gate: bool = False,
+                 context_gate_hidden: int = 64):
+        super(MoLEContextSubnet, self).__init__()
+
+        hidden_dim = 2 * dims_in
+        self.dims_in = dims_in
+        self.dims_out = dims_out
+        self.use_lora = use_lora
+        self.use_task_bias = use_task_bias
+        self.context_max_alpha = context_max_alpha
+        self.use_context_gate = use_context_gate
+
+        # =====================================================================
+        # Context extraction (3×3 depthwise conv)
+        # =====================================================================
+        self.context_conv = nn.Conv2d(
+            dims_in, dims_in,
+            kernel_size=context_kernel,
+            padding=context_kernel // 2,
+            groups=dims_in,  # depthwise: each channel independently
+            bias=True
+        )
+        # Initialize to near-zero (minimal initial context influence)
+        nn.init.zeros_(self.context_conv.weight)
+        nn.init.zeros_(self.context_conv.bias)
+
+        # =====================================================================
+        # Context gating: Global alpha vs Patch-wise gate
+        # =====================================================================
+        if use_context_gate:
+            # Patch-wise gate: sigmoid(MLP([x, ctx])) → (BHW, 1)
+            # This learns "when to use context" per-patch
+            # - Normal patches: gate → 0 (ignore context)
+            # - Anomaly-like patches: gate → 1 (use context)
+            self.context_gate_net = nn.Sequential(
+                nn.Linear(dims_in * 2, context_gate_hidden),
+                nn.ReLU(),
+                nn.Linear(context_gate_hidden, 1)
+                # No sigmoid here - we'll apply it in forward for numerical stability
+            )
+            # Initialize to output ~0 (gate starts near 0.5)
+            # This means context is initially used moderately
+            nn.init.zeros_(self.context_gate_net[0].weight)
+            nn.init.zeros_(self.context_gate_net[0].bias)
+            nn.init.zeros_(self.context_gate_net[2].weight)
+            nn.init.zeros_(self.context_gate_net[2].bias)
+
+            # No global alpha param needed
+            self.context_scale_param = None
+        else:
+            # Legacy: Global alpha with sigmoid upper bound
+            # alpha = alpha_max * sigmoid(alpha_param)
+            # Initialize alpha_param so that sigmoid(alpha_param) * alpha_max = init_scale
+            p = min(max(context_init_scale / context_max_alpha, 0.01), 0.99)
+            init_param = torch.log(torch.tensor([p / (1 - p)]))  # Inverse sigmoid
+            self.context_scale_param = nn.Parameter(init_param)
+            self.context_gate_net = None
+
+        # =====================================================================
+        # s-network: context-aware (anomaly-sensitive)
+        # Input: concat(x, context) = 2 * dims_in
+        # Output: dims_out // 2 (first half of coupling output)
+        # =====================================================================
+        self.s_layer1 = LoRALinear(dims_in * 2, hidden_dim, rank=rank, alpha=alpha,
+                                   use_lora=use_lora, use_task_bias=use_task_bias)
+        self.s_layer2 = LoRALinear(hidden_dim, dims_out // 2, rank=rank, alpha=alpha,
+                                   use_lora=use_lora, use_task_bias=use_task_bias)
+
+        # =====================================================================
+        # t-network: context-free (density-preserving)
+        # Input: x = dims_in
+        # Output: dims_out // 2 (second half of coupling output)
+        # =====================================================================
+        self.t_layer1 = LoRALinear(dims_in, hidden_dim, rank=rank, alpha=alpha,
+                                   use_lora=use_lora, use_task_bias=use_task_bias)
+        self.t_layer2 = LoRALinear(hidden_dim, dims_out // 2, rank=rank, alpha=alpha,
+                                   use_lora=use_lora, use_task_bias=use_task_bias)
+
+        self.relu = nn.ReLU()
+
+    def add_task_adapter(self, task_id: int):
+        """Add LoRA adapters for a new task to all 4 layers."""
+        self.s_layer1.add_task_adapter(task_id)
+        self.s_layer2.add_task_adapter(task_id)
+        self.t_layer1.add_task_adapter(task_id)
+        self.t_layer2.add_task_adapter(task_id)
+
+    def freeze_base(self):
+        """Freeze base weights of all layers."""
+        self.s_layer1.freeze_base()
+        self.s_layer2.freeze_base()
+        self.t_layer1.freeze_base()
+        self.t_layer2.freeze_base()
+
+    def unfreeze_base(self):
+        """Unfreeze base weights of all layers."""
+        self.s_layer1.unfreeze_base()
+        self.s_layer2.unfreeze_base()
+        self.t_layer1.unfreeze_base()
+        self.t_layer2.unfreeze_base()
+
+    def set_active_task(self, task_id: Optional[int]):
+        """Set active LoRA adapter for all layers."""
+        self.s_layer1.set_active_task(task_id)
+        self.s_layer2.set_active_task(task_id)
+        self.t_layer1.set_active_task(task_id)
+        self.t_layer2.set_active_task(task_id)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward with context-aware scale.
+
+        Args:
+            x: (BHW, D) flattened patch features
+
+        Returns:
+            output: (BHW, dims_out) where first half is s, second half is t
+        """
+        BHW, D = x.shape
+
+        # Get spatial info (set by parent NF model)
+        if MoLEContextSubnet._spatial_info is not None:
+            B, H, W = MoLEContextSubnet._spatial_info
+        else:
+            # Fallback: assume square spatial layout
+            B = 1
+            HW = BHW
+            H = W = int(HW ** 0.5)
+            if H * W != HW:
+                # Non-square, find factors
+                for h in range(int(HW ** 0.5), 0, -1):
+                    if HW % h == 0:
+                        H = h
+                        W = HW // h
+                        break
+            B = BHW // (H * W)
+
+        # =================================================================
+        # Extract local context via 3×3 depthwise conv
+        # =================================================================
+        x_spatial = x.view(B, H, W, D).permute(0, 3, 1, 2)  # (B, D, H, W)
+        ctx = self.context_conv(x_spatial)  # (B, D, H, W)
+        ctx = ctx.permute(0, 2, 3, 1).reshape(BHW, D)  # (BHW, D)
+
+        # =================================================================
+        # Apply context gating (patch-wise or global)
+        # =================================================================
+        if self.use_context_gate and self.context_gate_net is not None:
+            # Patch-wise gate: sigmoid(MLP([x, ctx])) → (BHW, 1)
+            # Each patch decides independently how much context to use
+            gate_input = torch.cat([x, ctx], dim=-1)  # (BHW, 2D)
+            gate_logit = self.context_gate_net(gate_input)  # (BHW, 1)
+            gate = torch.sigmoid(gate_logit)  # (BHW, 1), in [0, 1]
+
+            # Store gate for logging/debugging (detached)
+            self._last_gate = gate.detach()
+
+            # Scale context by patch-wise gate
+            ctx = gate * ctx  # (BHW, D)
+        else:
+            # Legacy: Global alpha with sigmoid upper bound
+            # alpha = alpha_max * sigmoid(alpha_param)
+            alpha = self.context_max_alpha * torch.sigmoid(self.context_scale_param)
+            ctx = alpha * ctx
+
+        # =================================================================
+        # s-network: context-aware (anomaly-sensitive)
+        # =================================================================
+        s_input = torch.cat([x, ctx], dim=-1)  # (BHW, 2D)
+        s = self.s_layer2(self.relu(self.s_layer1(s_input)))  # (BHW, dims_out//2)
+
+        # =================================================================
+        # t-network: context-free (density-preserving)
+        # =================================================================
+        t = self.t_layer2(self.relu(self.t_layer1(x)))  # (BHW, dims_out//2)
+
+        # Concatenate [s, t] for FrEIA coupling block
+        return torch.cat([s, t], dim=-1)  # (BHW, dims_out)
+
+    # =========================================================================
+    # Logging/Debugging utilities
+    # =========================================================================
+
+    def get_context_alpha(self) -> float:
+        """Get current global context alpha value (legacy mode only)."""
+        if self.context_scale_param is not None:
+            with torch.no_grad():
+                return (
+                    self.context_max_alpha
+                    * torch.sigmoid(self.context_scale_param)
+                ).item()
+        return None
+
+    def get_last_gate_stats(self) -> dict:
+        """
+        Get statistics of the last gate values (patch-wise gate mode only).
+
+        Returns:
+            dict with 'mean', 'std', 'min', 'max' of gate values
+            or None if not using patch-wise gate
+        """
+        if hasattr(self, '_last_gate') and self._last_gate is not None:
+            gate = self._last_gate
+            return {
+                'mean': gate.mean().item(),
+                'std': gate.std().item(),
+                'min': gate.min().item(),
+                'max': gate.max().item()
+            }
+        return None

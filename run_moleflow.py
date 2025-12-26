@@ -31,6 +31,7 @@ from moleflow import (
     setup_training_logger,
     evaluate_all_tasks,
     evaluate_routing_performance,
+    FlowDiagnostics,
     # Utilities
     init_seeds,
     setting_lr_parameters,
@@ -49,11 +50,11 @@ def main():
     # Parse arguments
     parser = argparse.ArgumentParser(description='MoLE-Flow: Continual Anomaly Detection')
     parser.add_argument('--task_classes', type=str, nargs='+',
-                        default=['bottle', 'cable'],
+                        default=['leather', 'grid', 'transistor'],
                         help='Classes to learn sequentially')
-    parser.add_argument('--num_epochs', type=int, default=10,
+    parser.add_argument('--num_epochs', type=int, default=40,
                         help='Number of epochs per task')
-    parser.add_argument('--lora_rank', type=int, default=32,
+    parser.add_argument('--lora_rank', type=int, default=64,
                         help='LoRA rank for adaptation')
     parser.add_argument('--lr', type=float, default=1e-4,
                         help='Learning rate')
@@ -84,6 +85,8 @@ def main():
                         help='Random seed for reproducibility')
     parser.add_argument('--embed_dim', type=int, default=None,
                         help='Embedding dimension for NF model (default: same as ViT output dim)')
+    parser.add_argument('--run_diagnostics', action='store_true',
+                        help='Run Flow diagnostics after training (analyze scale(s) behavior)')
 
     # Add ablation arguments
     add_ablation_args(parser)
@@ -179,6 +182,13 @@ def main():
             'use_pos_embedding': ablation_config.use_pos_embedding,
             'use_task_bias': ablation_config.use_task_bias,
             'use_mahalanobis': ablation_config.use_mahalanobis,
+            'adapter_mode': ablation_config.adapter_mode,
+            'soft_ln_init_scale': ablation_config.soft_ln_init_scale,
+            'robust_gate_type': ablation_config.robust_gate_type,
+            'lambda_logdet': ablation_config.lambda_logdet,
+            'use_spatial_context': ablation_config.use_spatial_context,
+            'spatial_context_mode': ablation_config.spatial_context_mode,
+            'spatial_context_kernel': ablation_config.spatial_context_kernel,
         },
         'device': str(torch.device("cuda" if torch.cuda.is_available() else "cpu")),
         'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -404,6 +414,67 @@ def main():
             img_aps=results.get('img_aps', []),
             pixel_aps=results.get('pixel_aps', [])
         )
+
+    # Run Flow diagnostics if requested
+    if parsed_args.run_diagnostics:
+        print("\n" + "="*70)
+        print("Running Flow Diagnostics (scale(s) analysis)")
+        print("="*70)
+
+        diagnostics_dir = logger.log_dir / "diagnostics"
+        diagnostics = FlowDiagnostics(save_dir=str(diagnostics_dir), max_samples=500)
+
+        # Collect diagnostics for each task
+        for task_id, task_classes in enumerate(CONTINUAL_TASKS):
+            print(f"\nCollecting diagnostics for Task {task_id}: {task_classes}")
+
+            trainer.nf_model.set_active_task(task_id)
+            trainer.nf_model.eval()
+            trainer.vit_extractor.eval()
+
+            for cls_name in task_classes:
+                try:
+                    # Create test dataset
+                    args.class_to_idx = {cls_name: GLOBAL_CLASS_TO_IDX[cls_name]}
+                    args.n_classes = 1
+
+                    test_dataset = create_task_dataset(args, [cls_name], GLOBAL_CLASS_TO_IDX, train=False)
+                    test_loader = DataLoader(test_dataset, batch_size=8, shuffle=False, num_workers=2)
+
+                    with torch.no_grad():
+                        for images, labels, masks, _, _ in test_loader:
+                            images = images.to(device)
+
+                            # Extract features
+                            patch_embeddings, spatial_shape = vit_extractor(images, return_spatial_shape=True)
+
+                            if ablation_config.use_pos_embedding:
+                                patch_embeddings_with_pos = pos_embed_generator(spatial_shape, patch_embeddings)
+                            else:
+                                B = patch_embeddings.shape[0]
+                                H, W = spatial_shape
+                                patch_embeddings_with_pos = patch_embeddings.reshape(B, H, W, -1)
+
+                            # Forward through NF
+                            z, logdet_patch = nf_model.forward(patch_embeddings_with_pos, reverse=False)
+
+                            # Collect
+                            is_anomaly = (labels > 0).long()
+                            diagnostics.collect(
+                                z=z,
+                                logdet_patch=logdet_patch,
+                                is_anomaly=is_anomaly,
+                                images=images,
+                                masks=masks,
+                                class_name=cls_name
+                            )
+                except Exception as e:
+                    print(f"Failed to collect diagnostics for {cls_name}: {e}")
+                    continue
+
+        # Generate diagnostic plots
+        diagnostics.analyze_and_save(task_id=len(CONTINUAL_TASKS)-1)
+        print(f"\nDiagnostics saved to: {diagnostics_dir}")
 
     # Close logger
     logger.close()

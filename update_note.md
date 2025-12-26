@@ -556,3 +556,282 @@ python run_moleflow.py \
 | `moleflow/trainer/continual_trainer.py` | `_compute_nll_loss()` helper method, focal weighting |
 | `run_moleflow.py` | `--focal_gamma` argument |
 | `run.sh` | v7 experiment configuration |
+
+---
+
+## Baseline 1.5 → 2.0: Patch-wise Context Gate
+
+### Motivation
+**Baseline 1.5 (Global Alpha)의 문제점**:
+- `alpha`는 global scalar → 모든 패치에 동일한 context 강도 적용
+- 학습 중 **정상 데이터만** 봄 → anomaly-aware 학습 불가능
+- 결과: `alpha ≈ 초기값`으로 고정, sigmoid bound가 의미 없음
+
+**핵심 통찰**:
+> Global alpha는 "knob"일 뿐이고,
+> Anomaly detection에서는 "switch"가 필요하다.
+> 그 switch는 **patch-wise gate**다.
+
+### Core Idea
+| 구분 | Baseline 1.5 (Global Alpha) | Baseline 2.0 (Patch-wise Gate) |
+|------|----------------------------|-------------------------------|
+| 수식 | `ctx = alpha * ctx` | `ctx = gate(x, ctx) * ctx` |
+| 차원 | `alpha` ∈ ℝ (scalar) | `gate` ∈ ℝ^(B×H×W×1) (per-patch) |
+| 학습 | 모든 패치 동일 | 패치별 독립 결정 |
+| 정상 패치 | α * ctx | gate → 0 (context 무시) |
+| 이상 패치 | α * ctx | gate → 1 (context 사용) |
+
+### Code Changes
+
+#### 1. MoLEContextSubnet (lora.py)
+
+**Before (Baseline 1.5 - Global Alpha)**:
+```python
+class MoLEContextSubnet(nn.Module):
+    def __init__(self, dims_in, dims_out, ...,
+                 context_init_scale=0.1, context_max_alpha=0.2):
+        # ...
+
+        # Global alpha with sigmoid upper bound
+        # alpha = alpha_max * sigmoid(alpha_param)
+        p = min(max(context_init_scale / context_max_alpha, 0.01), 0.99)
+        init_param = torch.log(torch.tensor([p / (1 - p)]))  # Inverse sigmoid
+        self.context_scale_param = nn.Parameter(init_param)
+
+    def forward(self, x):
+        # ...
+        ctx = self.context_conv(x_spatial)
+
+        # Global alpha scaling (same for ALL patches)
+        alpha = self.context_max_alpha * torch.sigmoid(self.context_scale_param)
+        ctx = alpha * ctx  # (BHW, D) * scalar
+
+        s_input = torch.cat([x, ctx], dim=-1)
+        # ...
+```
+
+**After (Baseline 2.0 - Patch-wise Gate)**:
+```python
+class MoLEContextSubnet(nn.Module):
+    def __init__(self, dims_in, dims_out, ...,
+                 context_init_scale=0.1, context_max_alpha=0.2,
+                 use_context_gate=False, context_gate_hidden=64):  # NEW
+        # ...
+        self.use_context_gate = use_context_gate
+
+        if use_context_gate:
+            # NEW: Patch-wise gate network
+            # gate = sigmoid(MLP([x, ctx])) → (BHW, 1)
+            self.context_gate_net = nn.Sequential(
+                nn.Linear(dims_in * 2, context_gate_hidden),
+                nn.ReLU(),
+                nn.Linear(context_gate_hidden, 1)
+            )
+            # Initialize to output ~0 → gate starts at 0.5
+            nn.init.zeros_(self.context_gate_net[0].weight)
+            nn.init.zeros_(self.context_gate_net[0].bias)
+            nn.init.zeros_(self.context_gate_net[2].weight)
+            nn.init.zeros_(self.context_gate_net[2].bias)
+
+            self.context_scale_param = None  # No global alpha
+        else:
+            # Legacy: Global alpha (Baseline 1.5)
+            p = min(max(context_init_scale / context_max_alpha, 0.01), 0.99)
+            init_param = torch.log(torch.tensor([p / (1 - p)]))
+            self.context_scale_param = nn.Parameter(init_param)
+            self.context_gate_net = None
+
+    def forward(self, x):
+        # ...
+        ctx = self.context_conv(x_spatial)
+
+        if self.use_context_gate and self.context_gate_net is not None:
+            # NEW: Patch-wise gate (per-patch decision)
+            gate_input = torch.cat([x, ctx], dim=-1)  # (BHW, 2D)
+            gate_logit = self.context_gate_net(gate_input)  # (BHW, 1)
+            gate = torch.sigmoid(gate_logit)  # (BHW, 1)
+
+            self._last_gate = gate.detach()  # For logging
+            ctx = gate * ctx  # (BHW, D) * (BHW, 1) → per-patch scaling
+        else:
+            # Legacy: Global alpha
+            alpha = self.context_max_alpha * torch.sigmoid(self.context_scale_param)
+            ctx = alpha * ctx
+
+        s_input = torch.cat([x, ctx], dim=-1)
+        # ...
+
+    # NEW: Logging utilities
+    def get_context_alpha(self) -> float:
+        """Get global alpha value (legacy mode)."""
+        if self.context_scale_param is not None:
+            with torch.no_grad():
+                return (self.context_max_alpha
+                        * torch.sigmoid(self.context_scale_param)).item()
+        return None
+
+    def get_last_gate_stats(self) -> dict:
+        """Get gate statistics (patch-wise mode)."""
+        if hasattr(self, '_last_gate') and self._last_gate is not None:
+            gate = self._last_gate
+            return {
+                'mean': gate.mean().item(),
+                'std': gate.std().item(),
+                'min': gate.min().item(),
+                'max': gate.max().item()
+            }
+        return None
+```
+
+#### 2. AblationConfig (ablation.py)
+
+**Added**:
+```python
+@dataclass
+class AblationConfig:
+    # ... existing fields ...
+
+    # Scale-specific Context (Baseline 1.5)
+    use_scale_context: bool = False
+    scale_context_kernel: int = 3
+    scale_context_init_scale: float = 0.1
+    scale_context_max_alpha: float = 0.2
+
+    # NEW: Patch-wise Context Gate (Baseline 2.0)
+    use_context_gate: bool = False    # Use patch-wise gate instead of global alpha
+    context_gate_hidden: int = 64     # Hidden dim for gate MLP
+```
+
+#### 3. MoLESpatialAwareNF (mole_nf.py)
+
+**Before**:
+```python
+subnet = MoLEContextSubnet(
+    dims_in, dims_out,
+    rank=self.lora_rank,
+    alpha=self.lora_alpha,
+    use_lora=self.use_lora,
+    use_task_bias=self.use_task_bias,
+    context_kernel=self.scale_context_kernel,
+    context_init_scale=self.scale_context_init_scale,
+    context_max_alpha=self.scale_context_max_alpha
+)
+```
+
+**After**:
+```python
+subnet = MoLEContextSubnet(
+    dims_in, dims_out,
+    rank=self.lora_rank,
+    alpha=self.lora_alpha,
+    use_lora=self.use_lora,
+    use_task_bias=self.use_task_bias,
+    context_kernel=self.scale_context_kernel,
+    context_init_scale=self.scale_context_init_scale,
+    context_max_alpha=self.scale_context_max_alpha,
+    use_context_gate=self.use_context_gate,      # NEW
+    context_gate_hidden=self.context_gate_hidden  # NEW
+)
+```
+
+**Added get_context_info() method**:
+```python
+def get_context_info(self) -> dict:
+    """Get context gate/alpha information for logging."""
+    if not self.use_scale_context:
+        return {}
+
+    info = {}
+    if self.use_context_gate:
+        # Aggregate gate stats from all subnets
+        gate_stats = []
+        for subnet in self.subnets:
+            if hasattr(subnet, 'get_last_gate_stats'):
+                stats = subnet.get_last_gate_stats()
+                if stats is not None:
+                    gate_stats.append(stats)
+
+        if gate_stats:
+            info['gate_mean'] = sum(s['mean'] for s in gate_stats) / len(gate_stats)
+            info['gate_std'] = sum(s['std'] for s in gate_stats) / len(gate_stats)
+            info['gate_min'] = min(s['min'] for s in gate_stats)
+            info['gate_max'] = max(s['max'] for s in gate_stats)
+    else:
+        # Collect alpha from all subnets
+        alphas = [s.get_context_alpha() for s in self.subnets
+                  if hasattr(s, 'get_context_alpha')]
+        alphas = [a for a in alphas if a is not None]
+        if alphas:
+            info['alpha_mean'] = sum(alphas) / len(alphas)
+
+    return info
+```
+
+#### 4. Trainer Logging (continual_trainer.py)
+
+**Added context logging per epoch**:
+```python
+# In _train_base_task, _train_fast_stage, _train_slow_stage:
+avg_epoch_loss = epoch_loss / max(num_batches, 1)
+current_lr = optimizer.param_groups[0]['lr']
+
+# NEW: Get context gate/alpha info for logging
+extra_info = {"LR": current_lr}
+context_info = self.nf_model.get_context_info()
+if context_info:
+    extra_info.update(context_info)
+
+if self.logger:
+    self.logger.log_epoch(task_id, epoch, num_epochs, avg_epoch_loss,
+                          stage="FAST", extra_info=extra_info)
+else:
+    ctx_str = ""
+    if 'gate_mean' in context_info:
+        ctx_str = f" | Gate: {context_info['gate_mean']:.4f}±{context_info['gate_std']:.4f}"
+    elif 'alpha_mean' in context_info:
+        ctx_str = f" | Alpha: {context_info['alpha_mean']:.4f}"
+    print(f"  📊 [FAST] Epoch [...] Average Loss: {avg_epoch_loss:.4f}{ctx_str}")
+```
+
+### Command Line Usage
+
+```bash
+# Baseline 1.5: Global Alpha (기존)
+python run_moleflow.py \
+    --use_scale_context \
+    --scale_context_kernel 3 \
+    --scale_context_init_scale 0.1 \
+    --scale_context_max_alpha 0.2
+
+# Baseline 2.0: Patch-wise Gate (신규)
+python run_moleflow.py \
+    --use_scale_context \
+    --use_context_gate \
+    --context_gate_hidden 64 \
+    --scale_context_kernel 3
+```
+
+### Expected Behavior
+
+**Global Alpha (Baseline 1.5)**:
+```
+Epoch 1:  alpha ≈ 0.1001
+Epoch 10: alpha ≈ 0.0998
+Epoch 40: alpha ≈ 0.1003  # 거의 변화 없음
+```
+
+**Patch-wise Gate (Baseline 2.0)**:
+```
+Epoch 1:  Gate: 0.5000±0.0100  # 초기값 (중립)
+Epoch 10: Gate: 0.3200±0.1500  # 정상 패치에서 gate 감소 학습
+Epoch 40: Gate: 0.2100±0.2300  # 분포가 형성됨 (bimodal 기대)
+```
+
+### File Changes Summary
+
+| File | Changes |
+|------|---------|
+| `moleflow/models/lora.py` | `MoLEContextSubnet`: `use_context_gate`, `context_gate_net`, logging methods |
+| `moleflow/config/ablation.py` | `use_context_gate`, `context_gate_hidden` fields + argparse |
+| `moleflow/models/mole_nf.py` | Pass gate params to subnet, `get_context_info()` method |
+| `moleflow/trainer/continual_trainer.py` | Context gate/alpha logging per epoch |

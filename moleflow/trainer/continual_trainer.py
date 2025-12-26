@@ -112,17 +112,20 @@ class MoLEContinualTrainer:
         self.device = device
 
         # Ablation configuration
+        self.ablation_config = ablation_config
         if ablation_config is None:
             # Default: all components enabled
             self.use_lora = True
             self.use_router = True
             self.use_pos_embedding = True
             self.use_mahalanobis = True
+            self.lambda_logdet = 0.0
         else:
             self.use_lora = ablation_config.use_lora
             self.use_router = ablation_config.use_router
             self.use_pos_embedding = ablation_config.use_pos_embedding
             self.use_mahalanobis = ablation_config.use_mahalanobis
+            self.lambda_logdet = ablation_config.lambda_logdet
 
         # Slow-Fast hyperparameters
         self.slow_lr_ratio = slow_lr_ratio
@@ -168,6 +171,10 @@ class MoLEContinualTrainer:
         else:
             print("[Ablation] Full model (all components enabled)")
 
+        # Log logdet regularization
+        if self.lambda_logdet > 0:
+            print(f"[Regularization] Logdet L2: lambda={self.lambda_logdet:.2e}")
+
     def _log(self, message: str, level: str = 'info'):
         """Log message using logger if available, otherwise print."""
         if self.logger:
@@ -180,19 +187,24 @@ class MoLEContinualTrainer:
         else:
             print(message)
 
-    def _compute_nll_loss(self, z: torch.Tensor, logdet_patch: torch.Tensor) -> torch.Tensor:
+    def _compute_nll_loss(self, z: torch.Tensor, logdet_patch: torch.Tensor,
+                          return_logdet_reg: bool = False):
         """
         Compute NLL loss using patch-wise log-likelihood.
 
         Standard NLL: L = -log p(x) = -log p(z) - log |det J|
         Now computed properly at patch level before aggregation.
 
+        Optional: Logdet L2 regularization to stabilize image-level scores
+        L_reg = lambda * (logdet_patch ** 2).mean()
+
         Args:
             z: Latent tensor [B, H, W, D]
             logdet_patch: Patch-wise log Jacobian determinant [B, H, W]
+            return_logdet_reg: If True, also return logdet regularization term
 
         Returns:
-            NLL loss (scalar)
+            nll_loss (scalar), or (nll_loss, logdet_reg) if return_logdet_reg=True
         """
         B, H, W, D = z.shape
 
@@ -207,6 +219,12 @@ class MoLEContinualTrainer:
 
         # NLL = -log p(x), averaged over batch
         nll_loss = -log_px_image.mean()
+
+        if return_logdet_reg:
+            # Logdet L2 regularization: encourages log|det J| to be small
+            # This reduces variance in log_det across patches, stabilizing image scores
+            logdet_reg = (logdet_patch ** 2).mean()
+            return nll_loss, logdet_reg
 
         return nll_loss
 
@@ -302,9 +320,12 @@ class MoLEContinualTrainer:
         trainable_params = self.nf_model.get_trainable_params(task_id)
         num_params = sum(p.numel() for p in trainable_params)
 
-        # Check if LoRA is included
+        # Check if LoRA is included (handles both MoLESubnet and MoLEContextSubnet)
+        def _get_first_layer(subnet):
+            return subnet.s_layer1 if hasattr(subnet, 's_layer1') else subnet.layer1
+
         has_lora = self.use_lora and any(
-            str(task_id) in subnet.layer1.lora_A for subnet in self.nf_model.subnets
+            str(task_id) in _get_first_layer(subnet).lora_A for subnet in self.nf_model.subnets
         )
         phase_name = "Base + LoRA Training" if has_lora else "Base Training"
 
@@ -354,14 +375,20 @@ class MoLEContinualTrainer:
                 # Forward through NF to get latent z and patch-wise logdet
                 z, logdet_patch = self.nf_model.forward(patch_embeddings_with_pos, reverse=False)
 
-                # Compute NLL loss (using patch-wise logdet)
-                nll_loss = self._compute_nll_loss(z, logdet_patch)
+                # Compute NLL loss with optional logdet regularization
+                if self.lambda_logdet > 0:
+                    nll_loss, logdet_reg = self._compute_nll_loss(z, logdet_patch, return_logdet_reg=True)
+                    total_loss = nll_loss + self.lambda_logdet * logdet_reg
+                else:
+                    nll_loss = self._compute_nll_loss(z, logdet_patch)
+                    total_loss = nll_loss
+                    logdet_reg = None
 
-                if torch.isnan(nll_loss) or nll_loss.item() > 1e8:
+                if torch.isnan(total_loss) or total_loss.item() > 1e8:
                     continue
 
                 optimizer.zero_grad()
-                nll_loss.backward()
+                total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(list(trainable_params), max_norm=0.5)
                 optimizer.step()
 
@@ -370,25 +397,41 @@ class MoLEContinualTrainer:
 
                 if (batch_idx + 1) % log_interval == 0:
                     avg_loss = epoch_loss / num_batches
+                    extra_info = {}
+                    if logdet_reg is not None:
+                        extra_info["logdet_reg"] = logdet_reg.item()
                     if self.logger:
                         self.logger.log_batch(
                             task_id, epoch, num_epochs, batch_idx+1, len(train_loader),
-                            nll_loss.item(), avg_loss, stage="BASE"
+                            nll_loss.item(), avg_loss, stage="BASE", extra_info=extra_info if extra_info else None
                         )
                     else:
+                        reg_str = f" | LogdetReg: {logdet_reg.item():.4f}" if logdet_reg is not None else ""
                         print(f"  [BASE] Epoch [{epoch+1}/{num_epochs}] Batch [{batch_idx+1}/{len(train_loader)}] "
-                              f"Loss: {nll_loss.item():.4f} | Avg: {avg_loss:.4f}")
+                              f"Loss: {nll_loss.item():.4f} | Avg: {avg_loss:.4f}{reg_str}")
 
             scheduler.step()
             avg_epoch_loss = epoch_loss / max(num_batches, 1)
             current_lr = scheduler.get_last_lr()[0] if hasattr(scheduler, 'get_last_lr') else lr
+
+            # Get context gate/alpha info for logging
+            extra_info = {"LR": current_lr}
+            context_info = self.nf_model.get_context_info()
+            if context_info:
+                extra_info.update(context_info)
+
             if self.logger:
                 self.logger.log_epoch(
                     task_id, epoch, num_epochs, avg_epoch_loss,
-                    stage="BASE", extra_info={"LR": current_lr}
+                    stage="BASE", extra_info=extra_info
                 )
             else:
-                print(f"  📊 [BASE] Epoch [{epoch+1}/{num_epochs}] Average Loss: {avg_epoch_loss:.4f}")
+                ctx_str = ""
+                if 'gate_mean' in context_info:
+                    ctx_str = f" | Gate: {context_info['gate_mean']:.4f}±{context_info['gate_std']:.4f}"
+                elif 'alpha_mean' in context_info:
+                    ctx_str = f" | Alpha: {context_info['alpha_mean']:.4f}"
+                print(f"  📊 [BASE] Epoch [{epoch+1}/{num_epochs}] Average Loss: {avg_epoch_loss:.4f}{ctx_str}")
 
         # Finalize feature statistics
         self.nf_model.finalize_reference_stats()
@@ -464,14 +507,20 @@ class MoLEContinualTrainer:
                 # Forward through NF to get latent z and patch-wise logdet
                 z, logdet_patch = self.nf_model.forward(patch_embeddings_with_pos, reverse=False)
 
-                # Compute NLL loss (using patch-wise logdet)
-                nll_loss = self._compute_nll_loss(z, logdet_patch)
+                # Compute NLL loss with optional logdet regularization
+                if self.lambda_logdet > 0:
+                    nll_loss, logdet_reg = self._compute_nll_loss(z, logdet_patch, return_logdet_reg=True)
+                    total_loss = nll_loss + self.lambda_logdet * logdet_reg
+                else:
+                    nll_loss = self._compute_nll_loss(z, logdet_patch)
+                    total_loss = nll_loss
+                    logdet_reg = None
 
-                if torch.isnan(nll_loss) or nll_loss.item() > 1e8:
+                if torch.isnan(total_loss) or total_loss.item() > 1e8:
                     continue
 
                 optimizer.zero_grad()
-                nll_loss.backward()
+                total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(list(fast_params), max_norm=0.5)
                 optimizer.step()
 
@@ -484,6 +533,8 @@ class MoLEContinualTrainer:
                     extra_info = {"LR": current_lr}
                     if epoch < warmup_epochs:
                         extra_info["Warmup"] = True
+                    if logdet_reg is not None:
+                        extra_info["logdet_reg"] = logdet_reg.item()
 
                     if self.logger:
                         self.logger.log_batch(
@@ -492,21 +543,34 @@ class MoLEContinualTrainer:
                         )
                     else:
                         warmup_str = " (warmup)" if epoch < warmup_epochs else ""
+                        reg_str = f" | LogdetReg: {logdet_reg.item():.4f}" if logdet_reg is not None else ""
                         print(f"  [FAST] Epoch [{epoch+1}/{num_epochs}] Batch [{batch_idx+1}/{len(train_loader)}] "
-                              f"Loss: {nll_loss.item():.4f} | Avg: {avg_loss:.4f}{warmup_str}")
+                              f"Loss: {nll_loss.item():.4f} | Avg: {avg_loss:.4f}{warmup_str}{reg_str}")
 
             if epoch >= warmup_epochs:
                 scheduler.step()
 
             avg_epoch_loss = epoch_loss / max(num_batches, 1)
             current_lr = optimizer.param_groups[0]['lr']
+
+            # Get context gate/alpha info for logging
+            extra_info = {"LR": current_lr}
+            context_info = self.nf_model.get_context_info()
+            if context_info:
+                extra_info.update(context_info)
+
             if self.logger:
                 self.logger.log_epoch(
                     task_id, epoch, num_epochs, avg_epoch_loss,
-                    stage="FAST", extra_info={"LR": current_lr}
+                    stage="FAST", extra_info=extra_info
                 )
             else:
-                print(f"  📊 [FAST] Epoch [{epoch+1}/{num_epochs}] Average Loss: {avg_epoch_loss:.4f}")
+                ctx_str = ""
+                if 'gate_mean' in context_info:
+                    ctx_str = f" | Gate: {context_info['gate_mean']:.4f}±{context_info['gate_std']:.4f}"
+                elif 'alpha_mean' in context_info:
+                    ctx_str = f" | Alpha: {context_info['alpha_mean']:.4f}"
+                print(f"  📊 [FAST] Epoch [{epoch+1}/{num_epochs}] Average Loss: {avg_epoch_loss:.4f}{ctx_str}")
 
     def _train_slow_stage(self, task_id: int, task_classes: List[str],
                           train_loader: DataLoader, num_epochs: int,
@@ -589,13 +653,25 @@ class MoLEContinualTrainer:
             scheduler.step()
             avg_epoch_loss = epoch_loss / max(num_batches, 1)
             current_lr = optimizer.param_groups[0]['lr']
+
+            # Get context gate/alpha info for logging
+            extra_info = {"LR": current_lr}
+            context_info = self.nf_model.get_context_info()
+            if context_info:
+                extra_info.update(context_info)
+
             if self.logger:
                 self.logger.log_epoch(
                     task_id, epoch, num_epochs, avg_epoch_loss,
-                    stage="SLOW", extra_info={"LR": current_lr}
+                    stage="SLOW", extra_info=extra_info
                 )
             else:
-                print(f"  📊 [SLOW] Epoch [{epoch+1}/{num_epochs}] Average Loss: {avg_epoch_loss:.4f}")
+                ctx_str = ""
+                if 'gate_mean' in context_info:
+                    ctx_str = f" | Gate: {context_info['gate_mean']:.4f}±{context_info['gate_std']:.4f}"
+                elif 'alpha_mean' in context_info:
+                    ctx_str = f" | Alpha: {context_info['alpha_mean']:.4f}"
+                print(f"  📊 [SLOW] Epoch [{epoch+1}/{num_epochs}] Average Loss: {avg_epoch_loss:.4f}{ctx_str}")
 
     def _build_prototype(self, task_id: int, task_classes: List[str],
                          train_loader: DataLoader):

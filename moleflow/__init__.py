@@ -30,6 +30,7 @@ from moleflow.config.ablation import (
     parse_ablation_args,
 )
 from moleflow.data import MVTEC, MVTEC_CLASS_NAMES, create_task_dataset, TaskDataset
+from moleflow.utils.diagnostics import FlowDiagnostics, run_diagnostics_on_model
 
 __version__ = "0.1.0"
 __all__ = [
@@ -50,6 +51,9 @@ __all__ = [
     "evaluate_class",
     "evaluate_all_tasks",
     "evaluate_routing_performance",
+    # Diagnostics
+    "FlowDiagnostics",
+    "run_diagnostics_on_model",
     # Ablation
     "AblationConfig",
     "ABLATION_PRESETS",

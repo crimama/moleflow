@@ -9,6 +9,7 @@ from moleflow.utils.evaluation import (
     compare_router_vs_oracle,
 )
 from moleflow.utils.config import get_config, get_default_config
+from moleflow.utils.diagnostics import FlowDiagnostics, run_diagnostics_on_model
 
 __all__ = [
     "TrainingLogger",
@@ -21,4 +22,6 @@ __all__ = [
     "compare_router_vs_oracle",
     "get_config",
     "get_default_config",
+    "FlowDiagnostics",
+    "run_diagnostics_on_model",
 ]
