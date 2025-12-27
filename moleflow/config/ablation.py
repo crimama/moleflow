@@ -134,6 +134,23 @@ class AblationConfig:
     regional_prototype_grid: int = 4         # Grid size (4×4 = 16 regions)
 
     # ==========================================================================
+    # V5 Score Aggregation (Patch → Image)
+    # ==========================================================================
+    # Controls how patch-level anomaly scores are aggregated to image-level score
+    #
+    # Modes:
+    #   "percentile": Use p-th percentile (default, p=0.99)
+    #   "top_k": Average of top-K highest scoring patches
+    #   "top_k_percent": Average of top K% highest scoring patches
+    #   "max": Maximum patch score
+    #   "mean": Mean of all patch scores
+    #   "adaptive": Per-class optimal percentile (requires validation set)
+    score_aggregation_mode: str = "percentile"
+    score_aggregation_percentile: float = 0.99    # For "percentile" mode
+    score_aggregation_top_k: int = 10             # For "top_k" mode
+    score_aggregation_top_k_percent: float = 0.05 # For "top_k_percent" mode (top 5%)
+
+    # ==========================================================================
     # V3 No-Replay Solutions: DIA + OGP
     # ==========================================================================
 
@@ -611,6 +628,29 @@ def add_ablation_args(parser):
         help='LoRA rank for regional_proj in TC-MSContext (default: 16)'
     )
 
+    # =========================================================================
+    # V5 Score Aggregation (Patch → Image)
+    # =========================================================================
+    score_group = parser.add_argument_group('V5 Score Aggregation')
+
+    score_group.add_argument(
+        '--score_aggregation_mode', type=str, default='percentile',
+        choices=['percentile', 'top_k', 'top_k_percent', 'max', 'mean'],
+        help='[V5] Score aggregation mode (default: percentile)'
+    )
+    score_group.add_argument(
+        '--score_aggregation_percentile', type=float, default=0.99,
+        help='Percentile for percentile mode (default: 0.99)'
+    )
+    score_group.add_argument(
+        '--score_aggregation_top_k', type=int, default=10,
+        help='K value for top_k mode (default: 10)'
+    )
+    score_group.add_argument(
+        '--score_aggregation_top_k_percent', type=float, default=0.05,
+        help='Percentage for top_k_percent mode (default: 0.05 = top 5%%)'
+    )
+
     return parser
 
 
@@ -773,6 +813,18 @@ def parse_ablation_args(parsed_args) -> AblationConfig:
         config.tc_ms_context_use_regional = False
     if hasattr(parsed_args, 'tc_ms_context_lora_rank'):
         config.tc_ms_context_lora_rank = parsed_args.tc_ms_context_lora_rank
+
+    # =========================================================================
+    # V5 Score Aggregation
+    # =========================================================================
+    if hasattr(parsed_args, 'score_aggregation_mode'):
+        config.score_aggregation_mode = parsed_args.score_aggregation_mode
+    if hasattr(parsed_args, 'score_aggregation_percentile'):
+        config.score_aggregation_percentile = parsed_args.score_aggregation_percentile
+    if hasattr(parsed_args, 'score_aggregation_top_k'):
+        config.score_aggregation_top_k = parsed_args.score_aggregation_top_k
+    if hasattr(parsed_args, 'score_aggregation_top_k_percent'):
+        config.score_aggregation_top_k_percent = parsed_args.score_aggregation_top_k_percent
 
     # Re-run __post_init__ to apply all validation/conflict resolution logic
     # This is necessary because __post_init__ was called when config was created (with default values)

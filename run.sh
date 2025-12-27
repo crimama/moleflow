@@ -17,49 +17,45 @@
 # CUDA_VISIBLE_DEVICES=0 python run_moleflow.py \    
 #     --experiment_name Version2-CouplingLayers_16
 
-# V4.1: Complete Separation Architecture (Improved)
-# ==================================================
-# Changes from V4:
-# - SpatialMixer frozen after Task 0
-# - context_conv frozen after Task 0 (NEW in V4.1)
-# - context_scale_param frozen after Task 0 (NEW in V4.1)
-# All shared parameters are now frozen → true complete separation
+# V5: Score Aggregation Experiments
+# ==================================
+# Test different aggregation methods for image-level anomaly score
+# Hypothesis: top-k averaging is more robust than 99th percentile
+#
+# Modes:
+#   percentile: Use p-th percentile (current default, p=0.99)
+#   top_k: Average of top K patches (e.g., K=10)
+#   top_k_percent: Average of top K% patches (e.g., 5%)
+#   max: Maximum patch score
+#   mean: Mean of all patches
 
-CUDA_VISIBLE_DEVICES=0 python run_moleflow.py --run_diagnostics \
-      --use_whitening_adapter \
-      --use_dia \
-      --experiment_name Version4.1-CompleteSeparation
+# Pilot experiments (3 classes: leather, grid, transistor)
+# Run in parallel to compare aggregation methods
 
-# # GPU 0: Original class order
+CUDA_VISIBLE_DEVICES=1 python run_moleflow.py --run_diagnostics \
+      --use_whitening_adapter --use_dia \
+      --score_aggregation_mode top_k \
+      --score_aggregation_top_k 10 \
+      --experiment_name Version4.2-ScoreAgg_topk10
+
+
+# # GPU 0: Baseline (percentile 99%)
 # (
 #   CUDA_VISIBLE_DEVICES=0 python run_moleflow.py --run_diagnostics \
-#       --task_classes leather grid transistor carpet zipper hazelnut toothbrush metal_nut screw wood tile capsule pill cable bottle \
-#       --use_whitening_adapter \
-#       --use_dia \
-#       --experiment_name Version4.1-CompleteSeparation_all_classes
+#       --use_whitening_adapter --use_dia \
+#       --score_aggregation_mode percentile \
+#       --score_aggregation_percentile 0.99 \
+#       --experiment_name Version5-ScoreAgg_percentile99
 # ) &
 
-# # GPU 1: Alphabet order
+# # GPU 1: Top-K averaging (K=10)
 # (
 #   CUDA_VISIBLE_DEVICES=1 python run_moleflow.py --run_diagnostics \
-#       --task_classes bottle cable capsule carpet grid hazelnut leather metal_nut pill screw tile toothbrush transistor wood zipper \
-#       --use_whitening_adapter \
-#       --use_dia \
-#       --experiment_name Version4.1-CompleteSeparation_all_classes_alphabet_order
+#       --use_whitening_adapter --use_dia \
+#       --score_aggregation_mode top_k \
+#       --score_aggregation_top_k 10 \
+#       --experiment_name Version5-ScoreAgg_topk10
 # ) &
 
-wait
-echo "V4.1 실험 완료"
-
-# Previous experiments (commented out)
-# ====================================
-# V4 experiments
-# CUDA_VISIBLE_DEVICES=0 python run_moleflow.py --run_diagnostics \
-#     --task_classes leather grid transistor carpet zipper hazelnut toothbrush metal_nut screw wood tile capsule pill cable bottle \
-#     --use_whitening_adapter --use_dia \
-#     --experiment_name Version4-CompleteSeparation_all_classes
-
-# V3 experiments
-# CUDA_VISIBLE_DEVICES=1s python run_moleflow.py --run_diagnostics --use_whitening_adapter \
-#     --use_dia --use_ogp --task_classes leather bottle cable capsule carpet grid hazelnut metal_nut pill screw tile toothbrush transistor wood zipper \
-#     --experiment_name Version3-WhiteningAdapter_DIA_OGP_all_classes_alphabet_order_leather_first
+# wait
+# echo "V5 Pilot 완료"

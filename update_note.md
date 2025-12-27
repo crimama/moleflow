@@ -1953,3 +1953,164 @@ if task_id == 0:
 | 학습 파라미터 | LoRA + DIA + WhiteningAdapter + context_conv | LoRA + DIA + WhiteningAdapter |
 
 ---
+
+## V5 - Score Aggregation Improvements
+
+### Motivation
+
+V4.1에서 catastrophic forgetting은 해결되었지만, **Image AUC가 Pixel AUC보다 현저히 낮은 문제** 여전히 존재:
+
+| Class | Image AUC | Pixel AUC | Gap |
+|-------|-----------|-----------|-----|
+| screw | 0.42 | 0.86 | -0.44 |
+| capsule | 0.67 | 0.94 | -0.27 |
+| toothbrush | 0.78 | 0.95 | -0.17 |
+| **Mean** | **0.87** | **0.94** | **-0.07** |
+
+**통계 분석:**
+- Image AUC std: 0.1532 (높은 분산)
+- Pixel AUC std: 0.0399 (낮은 분산)
+
+### 문제 원인 분석
+
+**현재 Image Score 계산:**
+```python
+# 기존: 99th percentile
+patch_scores = -log_pz - log_det  # (B, H, W)
+image_scores = torch.quantile(patch_scores.reshape(B, -1), 0.99, dim=1)
+```
+
+**문제:**
+1. Normal 이미지에도 outlier 패치 존재 (높은 anomaly score)
+2. 99th percentile은 이 outlier에 민감
+3. Normal과 Anomaly 이미지의 image score 분포가 중첩
+
+```
+Normal Image:  패치 scores = [0.1, 0.2, 0.3, ..., 0.8, 0.9, 1.5(outlier)]
+                                                            ↑ 99th percentile = 1.5
+Anomaly Image: 패치 scores = [0.1, 0.2, 0.3, ..., 1.2, 1.4, 1.6(true anomaly)]
+                                                            ↑ 99th percentile = 1.6
+→ 분포 중첩으로 구분 어려움
+```
+
+### Solution: Configurable Score Aggregation
+
+**Top-K Averaging** 접근:
+```python
+# Top-K 평균: outlier 영향 감소
+top_k_scores, _ = torch.topk(patch_scores, k=10, dim=1)
+image_score = top_k_scores.mean(dim=1)
+```
+
+**장점:**
+- K개 패치 평균 → 단일 outlier 영향 희석
+- Normal의 sporadic outlier와 Anomaly의 clustered anomaly 구분 가능
+
+### Implementation
+
+#### 1. AblationConfig (ablation.py)
+
+새로운 config 옵션 추가:
+```python
+# V5 Score Aggregation
+score_aggregation_mode: str = "percentile"  # percentile, top_k, top_k_percent, max, mean
+score_aggregation_percentile: float = 0.99  # For percentile mode
+score_aggregation_top_k: int = 10           # For top_k mode
+score_aggregation_top_k_percent: float = 0.05  # For top_k_percent mode (5%)
+```
+
+#### 2. continual_trainer.py - _aggregate_patch_scores()
+
+새로운 aggregation 메서드:
+```python
+def _aggregate_patch_scores(self, patch_scores: torch.Tensor) -> torch.Tensor:
+    """
+    Aggregate patch-level scores to image-level score.
+
+    Args:
+        patch_scores: (B, H, W) tensor of per-patch anomaly scores
+
+    Returns:
+        image_scores: (B,) tensor of per-image anomaly scores
+    """
+    B = patch_scores.shape[0]
+    flat_scores = patch_scores.reshape(B, -1)  # (B, H*W)
+    num_patches = flat_scores.shape[1]
+    mode = self.score_aggregation_mode
+
+    if mode == "percentile":
+        p = self.score_aggregation_percentile
+        image_scores = torch.quantile(flat_scores, p, dim=1)
+    elif mode == "top_k":
+        k = min(self.score_aggregation_top_k, num_patches)
+        top_k_scores, _ = torch.topk(flat_scores, k, dim=1)
+        image_scores = top_k_scores.mean(dim=1)
+    elif mode == "top_k_percent":
+        k = max(1, int(num_patches * self.score_aggregation_top_k_percent))
+        top_k_scores, _ = torch.topk(flat_scores, k, dim=1)
+        image_scores = top_k_scores.mean(dim=1)
+    elif mode == "max":
+        image_scores = flat_scores.max(dim=1)[0]
+    elif mode == "mean":
+        image_scores = flat_scores.mean(dim=1)
+    else:
+        # Fallback to percentile
+        image_scores = torch.quantile(flat_scores, 0.99, dim=1)
+
+    return image_scores
+```
+
+#### 3. CLI Arguments
+
+```bash
+python run_moleflow.py \
+    --score_aggregation_mode top_k \
+    --score_aggregation_top_k 10 \
+    --experiment_name V5-TopK10
+```
+
+### Aggregation Modes 비교
+
+| Mode | 수식 | 특성 | 예상 효과 |
+|------|------|------|-----------|
+| `percentile` | `quantile(scores, 0.99)` | 기존 방식, outlier 민감 | Baseline |
+| `top_k` | `mean(top_k_scores)` | K개 평균, outlier 영향 감소 | **추천** |
+| `top_k_percent` | `mean(top_5%_scores)` | 비율 기반, 해상도 무관 | Alternative |
+| `max` | `max(scores)` | 가장 극단적, 가장 민감 | 특수 케이스 |
+| `mean` | `mean(scores)` | 전체 평균, 가장 둔감 | 특수 케이스 |
+
+### 실험 계획
+
+**Pilot (3 classes: leather, grid, transistor):**
+```bash
+# GPU 0: Baseline (percentile 99%)
+python run_moleflow.py --score_aggregation_mode percentile --score_aggregation_percentile 0.99 \
+    --experiment_name Version5-ScoreAgg_percentile99
+
+# GPU 1: Top-K (K=10)
+python run_moleflow.py --score_aggregation_mode top_k --score_aggregation_top_k 10 \
+    --experiment_name Version5-ScoreAgg_topk10
+```
+
+**추가 실험 (선택):**
+- Top-K percent (5%)
+- Lower percentile (95%)
+
+### V5 File Changes Summary
+
+| File | Changes |
+|------|---------|
+| `moleflow/config/ablation.py` | V5 Score Aggregation config options 추가 (lines 136-151), CLI arguments 추가 (lines 631-652), `parse_ablation_args()` 업데이트 (lines 817-827) |
+| `moleflow/trainer/continual_trainer.py` | `_aggregate_patch_scores()` 메서드 추가, `_compute_anomaly_scores()` 수정하여 aggregation 호출 |
+| `run.sh` | V5 실험 스크립트 추가 |
+
+### 예상 결과
+
+| 지표 | V4.1 (percentile) | V5 (top_k) 예상 |
+|------|-------------------|-----------------|
+| Image AUC (screw) | 0.42 | 0.55+ |
+| Image AUC (capsule) | 0.67 | 0.75+ |
+| Mean Image AUC | 0.87 | **0.90+** |
+| Image AUC std | 0.1532 | 0.10 미만 |
+
+---

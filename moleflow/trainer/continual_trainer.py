@@ -126,6 +126,11 @@ class MoLEContinualTrainer:
             self.ogp_threshold = 0.99
             self.ogp_max_rank = 50
             self.ogp_n_samples = 300
+            # V5: Score aggregation defaults
+            self.score_aggregation_mode = "percentile"
+            self.score_aggregation_percentile = 0.99
+            self.score_aggregation_top_k = 10
+            self.score_aggregation_top_k_percent = 0.05
         else:
             self.use_lora = ablation_config.use_lora
             self.use_router = ablation_config.use_router
@@ -137,6 +142,11 @@ class MoLEContinualTrainer:
             self.ogp_threshold = ablation_config.ogp_threshold
             self.ogp_max_rank = ablation_config.ogp_max_rank
             self.ogp_n_samples = ablation_config.ogp_n_samples
+            # V5: Score aggregation settings
+            self.score_aggregation_mode = ablation_config.score_aggregation_mode
+            self.score_aggregation_percentile = ablation_config.score_aggregation_percentile
+            self.score_aggregation_top_k = ablation_config.score_aggregation_top_k
+            self.score_aggregation_top_k_percent = ablation_config.score_aggregation_top_k_percent
 
         # Slow-Fast hyperparameters
         self.slow_lr_ratio = slow_lr_ratio
@@ -893,7 +903,56 @@ class MoLEContinualTrainer:
         # Anomaly score = -log p(x)
         anomaly_scores = -patch_log_prob
 
-        # Image-level score (99th percentile)
-        image_scores = torch.quantile(anomaly_scores.reshape(B, -1), 0.99, dim=1)
+        # V5: Image-level score aggregation (configurable)
+        image_scores = self._aggregate_patch_scores(anomaly_scores)
 
         return anomaly_scores, image_scores
+
+    def _aggregate_patch_scores(self, patch_scores: torch.Tensor) -> torch.Tensor:
+        """
+        Aggregate patch-level anomaly scores to image-level scores.
+
+        V5 Feature: Multiple aggregation modes for better image-level detection.
+
+        Args:
+            patch_scores: (B, H, W) patch-level anomaly scores
+
+        Returns:
+            image_scores: (B,) image-level anomaly scores
+        """
+        B = patch_scores.shape[0]
+        flat_scores = patch_scores.reshape(B, -1)  # (B, H*W)
+        num_patches = flat_scores.shape[1]
+
+        mode = self.score_aggregation_mode
+
+        if mode == "percentile":
+            # Original method: p-th percentile
+            p = self.score_aggregation_percentile
+            image_scores = torch.quantile(flat_scores, p, dim=1)
+
+        elif mode == "top_k":
+            # Average of top-K highest scoring patches
+            k = min(self.score_aggregation_top_k, num_patches)
+            top_k_scores, _ = torch.topk(flat_scores, k, dim=1)
+            image_scores = top_k_scores.mean(dim=1)
+
+        elif mode == "top_k_percent":
+            # Average of top K% highest scoring patches
+            k = max(1, int(num_patches * self.score_aggregation_top_k_percent))
+            top_k_scores, _ = torch.topk(flat_scores, k, dim=1)
+            image_scores = top_k_scores.mean(dim=1)
+
+        elif mode == "max":
+            # Maximum patch score
+            image_scores = flat_scores.max(dim=1)[0]
+
+        elif mode == "mean":
+            # Mean of all patch scores
+            image_scores = flat_scores.mean(dim=1)
+
+        else:
+            # Default fallback to percentile
+            image_scores = torch.quantile(flat_scores, 0.99, dim=1)
+
+        return image_scores
