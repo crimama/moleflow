@@ -717,8 +717,11 @@ class MoLESpatialAwareNF(nn.Module):
         if task_key in self.dia_adapters:
             params.extend(self.dia_adapters[task_key].parameters())
 
-        # Spatial mixer parameters (shared, trained with FAST stage)
-        if self.spatial_mixer is not None:
+        # V4 Complete Separation: Spatial mixer only trained in Task 0
+        # After Task 0, SpatialMixer is frozen to prevent representation drift
+        # This fixes the catastrophic forgetting issue where shared SpatialMixer
+        # would drift during subsequent task training, corrupting Task 0 representations
+        if self.spatial_mixer is not None and task_id == 0:
             params.extend(self.spatial_mixer.parameters())
 
         return params
@@ -753,8 +756,8 @@ class MoLESpatialAwareNF(nn.Module):
             for param in self.dia_adapters[task_key].parameters():
                 param.requires_grad = False
 
-        # Freeze spatial mixer
-        if self.spatial_mixer is not None:
+        # V4: Freeze spatial mixer only for Task 0 (it's already frozen for Task 1+)
+        if self.spatial_mixer is not None and task_id == 0:
             for param in self.spatial_mixer.parameters():
                 param.requires_grad = False
 
@@ -788,8 +791,8 @@ class MoLESpatialAwareNF(nn.Module):
             for param in self.dia_adapters[task_key].parameters():
                 param.requires_grad = True
 
-        # Unfreeze spatial mixer
-        if self.spatial_mixer is not None:
+        # V4: Unfreeze spatial mixer only for Task 0 (it stays frozen for Task 1+)
+        if self.spatial_mixer is not None and task_id == 0:
             for param in self.spatial_mixer.parameters():
                 param.requires_grad = True
 

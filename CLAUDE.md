@@ -102,3 +102,16 @@ Training logs and results are saved to `--log_dir` (default: `./logs/`). Each ex
 - `training.log`: Training progress
 - `final_results.csv`: Per-class metrics
 - `diagnostics/`: Flow analysis plots (if `--run_diagnostics`)
+
+## Development Workflow
+
+### Progress Tracking (IMPORTANT)
+
+**Always record progress and analysis in `update_note.md`**:
+- When analyzing experimental results, document findings in update_note.md
+- When identifying problems or root causes, record them with evidence
+- When proposing or implementing solutions, document the approach and rationale
+- When completing version changes, summarize what was changed and why
+- Include quantitative results (metrics, performance numbers) when available
+
+This ensures continuity across sessions and maintains a clear history of the project's evolution.

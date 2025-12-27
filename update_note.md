@@ -863,41 +863,74 @@ z → ConstrainedDewhiten(z) → x' (controlled distribution)
 
 ### Implementation
 ```python
-# moleflow/models/whitening_adapter.py
+# moleflow/models/adapters.py
 class WhiteningAdapter(nn.Module):
     """
-    Whitening + Constrained De-whitening for distribution alignment.
+    Whitening-based Task Adapter (V3 Solution 3).
 
-    Forward: x → whiten → constrained de-whiten → x'
-    - Whitening uses running statistics (updated during training)
-    - De-whitening uses learnable but constrained parameters
+    Key Design:
+    1. All tasks go through Whitening first (mean=0, std=1) via LayerNorm
+    2. Task-specific de-whitening with constrained gamma/beta parameters
+    3. Task 0 stays close to identity (anchor point)
+
+    Parameters:
+    - gamma: constrained to [gamma_min, gamma_max] via sigmoid
+    - beta: constrained to [-beta_max, beta_max] via tanh
     """
-    def __init__(self, channels, constraint_scale=0.1):
-        # Running statistics for whitening
-        self.register_buffer('running_mean', torch.zeros(channels))
-        self.register_buffer('running_var', torch.ones(channels))
+    def __init__(self, channels: int, task_id: int = 0,
+                 reference_mean=None, reference_std=None,
+                 gamma_range: tuple = (0.5, 2.0), beta_max: float = 2.0):
+        super().__init__()
+        self.gamma_min, self.gamma_max = gamma_range
+        self.beta_max = beta_max
 
-        # Constrained de-whitening parameters
-        # γ ∈ [1-δ, 1+δ], β ∈ [-δ, δ]
-        self.dewhiten_gamma = nn.Parameter(torch.ones(channels))
-        self.dewhiten_beta = nn.Parameter(torch.zeros(channels))
-        self.constraint_scale = constraint_scale
+        # Whitening layer (shared across all tasks, no learnable affine)
+        self.whiten = nn.LayerNorm(channels, elementwise_affine=False)
 
-    def forward(self, x):
-        # Whitening: (x - μ) / σ
-        x_whitened = (x - self.running_mean) / (self.running_var.sqrt() + 1e-5)
+        if task_id == 0:
+            # Task 0: Start very close to identity
+            # gamma ≈ 1.0, beta ≈ 0.0
+            init_gamma_raw = -0.7 * torch.ones(1, 1, 1, channels)
+            self.gamma_raw = nn.Parameter(init_gamma_raw)
+            self.beta_raw = nn.Parameter(torch.zeros(1, 1, 1, channels))
+            self.identity_reg_weight = 0.1  # Regularize toward identity
+        else:
+            # Task 1+: Learnable, initialized at midpoint
+            self.gamma_raw = nn.Parameter(torch.zeros(1, 1, 1, channels))
+            self.beta_raw = nn.Parameter(torch.zeros(1, 1, 1, channels))
+            self.identity_reg_weight = 0.0
 
-        # Constrained de-whitening
-        gamma = 1.0 + self.constraint_scale * torch.tanh(self.dewhiten_gamma - 1.0)
-        beta = self.constraint_scale * torch.tanh(self.dewhiten_beta)
+    @property
+    def gamma(self):
+        """Constrained gamma in [gamma_min, gamma_max]."""
+        return self.gamma_min + (self.gamma_max - self.gamma_min) * torch.sigmoid(self.gamma_raw)
 
-        return gamma * x_whitened + beta
+    @property
+    def beta(self):
+        """Constrained beta in [-beta_max, beta_max]."""
+        return self.beta_max * torch.tanh(self.beta_raw)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, H, W, D = x.shape
+        # 1. Whitening: normalize to N(0, 1)
+        x_white = self.whiten(x.reshape(-1, D)).reshape(B, H, W, D)
+        # 2. Task-specific de-whitening
+        return self.gamma * x_white + self.beta
+
+    def identity_regularization(self) -> torch.Tensor:
+        """Regularization loss to keep Task 0 adapter close to identity."""
+        if self.identity_reg_weight > 0:
+            gamma_reg = ((self.gamma - 1.0) ** 2).mean()
+            beta_reg = (self.beta ** 2).mean()
+            return self.identity_reg_weight * (gamma_reg + beta_reg)
+        return torch.tensor(0.0, device=self.gamma_raw.device)
 ```
 
 ### Key Design
-1. **Running Statistics**: Task별 업데이트, 현재 task의 분포 반영
-2. **Constrained Parameters**: tanh로 범위 제한 → 안정적 학습
-3. **Per-Task Adapter**: 각 task마다 별도 WhiteningAdapter
+1. **LayerNorm-based Whitening**: Task-agnostic normalization (no learnable params)
+2. **Constrained Parameters**: sigmoid/tanh로 범위 제한 → 안정적 학습
+3. **Per-Task Adapter**: 각 task마다 별도 WhiteningAdapter (create_task_adapter factory 함수 사용)
+4. **Task 0 Identity Regularization**: Task 0는 identity에 가깝게 유지
 
 ### Command Line
 ```bash
@@ -992,52 +1025,113 @@ x → Base NF → z_base → DIA_task → z_final
 
 ### Implementation
 ```python
-# moleflow/models/dia.py
+# moleflow/models/lora.py
 class DeepInvertibleAdapter(nn.Module):
     """
-    Task-specific mini normalizing flow after base NF.
+    Deep Invertible Adapter (DIA) - V3 Solution 1 (No Replay).
 
-    Provides nonlinear manifold adaptation while maintaining invertibility.
+    Key Insight:
+    Instead of linear LoRA (W + BA), we add a small task-specific Flow
+    AFTER the base NF. This allows nonlinear manifold adaptation.
+
+    Architecture:
+    - Base NF: Frozen after Task 0 (extracts common features)
+    - DIA: 1-2 lightweight coupling blocks per task (learns task-specific warping)
+
+    Mathematical Formulation:
+    - Base: z_base = f_base(x)
+    - DIA:  z_final = f_DIA_t(z_base)
+    - log p(x) = log p(z_final) + log|det J_base| + log|det J_DIA|
     """
-    def __init__(self, channels, n_blocks=2, hidden_ratio=0.5):
-        self.blocks = nn.ModuleList([
-            InvertibleBlock(channels, hidden_ratio) for _ in range(n_blocks)
-        ])
+    def __init__(self, channels: int, task_id: int, n_blocks: int = 2,
+                 hidden_ratio: float = 0.5, clamp_alpha: float = 1.9):
+        super().__init__()
+        self.clamp_alpha = clamp_alpha
+        hidden_dim = int(channels * hidden_ratio)
 
-    def forward(self, z, reverse=False):
-        logdet = 0
-        blocks = reversed(self.blocks) if reverse else self.blocks
+        # Build mini-flow: sequence of affine coupling blocks
+        self.coupling_blocks = nn.ModuleList([
+            AffineCouplingBlock(
+                channels=channels,
+                hidden_dim=hidden_dim,
+                clamp_alpha=clamp_alpha,
+                reverse=(i % 2 == 1)  # Alternate which half is transformed
+            ) for i in range(n_blocks)
+        ])
+        self._initialize_near_identity()
+
+    def _initialize_near_identity(self):
+        """Initialize to near-identity transformation."""
+        for block in self.coupling_blocks:
+            nn.init.zeros_(block.s_net.layers[-1].weight)
+            nn.init.zeros_(block.s_net.layers[-1].bias)
+            nn.init.zeros_(block.t_net.layers[-1].weight)
+            nn.init.zeros_(block.t_net.layers[-1].bias)
+
+    def forward(self, x: torch.Tensor, reverse: bool = False):
+        B, H, W, D = x.shape
+        log_det = torch.zeros(B, H, W, device=x.device)
+        blocks = reversed(self.coupling_blocks) if reverse else self.coupling_blocks
 
         for block in blocks:
-            z, ld = block(z, reverse=reverse)
-            logdet = logdet + ld
+            x, block_log_det = block(x, reverse=reverse)
+            log_det = log_det + block_log_det
+        return x, log_det
 
-        return z, logdet
 
-class InvertibleBlock(nn.Module):
-    """Affine coupling block for DIA."""
-    def __init__(self, channels, hidden_ratio=0.5):
-        hidden_dim = int(channels * hidden_ratio)
-        self.net = nn.Sequential(
-            nn.Linear(channels // 2, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, channels)  # s and t
-        )
+class AffineCouplingBlock(nn.Module):
+    """Affine Coupling Block for DIA with clamped scale."""
+    def __init__(self, channels: int, hidden_dim: int,
+                 clamp_alpha: float = 1.9, reverse: bool = False):
+        super().__init__()
+        self.clamp_alpha = clamp_alpha
+        self.reverse_split = reverse
+        self.split_dim = channels // 2
 
-    def forward(self, x, reverse=False):
-        x1, x2 = x.chunk(2, dim=-1)
-        st = self.net(x1)
-        s, t = st.chunk(2, dim=-1)
-        s = torch.tanh(s) * 0.5  # Bounded scale
+        # Scale network: x1 -> s
+        self.s_net = SimpleSubnet(self.split_dim, self.split_dim, hidden_dim)
+        # Translation network: x1 -> t
+        self.t_net = SimpleSubnet(self.split_dim, self.split_dim, hidden_dim)
+
+    def forward(self, x: torch.Tensor, reverse: bool = False):
+        B, H, W, D = x.shape
+        if self.reverse_split:
+            x2, x1 = x[..., :self.split_dim], x[..., self.split_dim:]
+        else:
+            x1, x2 = x[..., :self.split_dim], x[..., self.split_dim:]
+
+        x1_flat = x1.reshape(-1, self.split_dim)
+        s = self.s_net(x1_flat).reshape(B, H, W, self.split_dim)
+        t = self.t_net(x1_flat).reshape(B, H, W, self.split_dim)
+        s = self.clamp_alpha * torch.tanh(s / self.clamp_alpha)
 
         if not reverse:
             y2 = x2 * torch.exp(s) + t
-            logdet = s.sum(dim=-1)
+            log_det = s.sum(dim=-1)
         else:
             y2 = (x2 - t) * torch.exp(-s)
-            logdet = -s.sum(dim=-1)
+            log_det = -s.sum(dim=-1)
 
-        return torch.cat([x1, y2], dim=-1), logdet
+        if self.reverse_split:
+            return torch.cat([y2, x1], dim=-1), log_det
+        return torch.cat([x1, y2], dim=-1), log_det
+
+
+class SimpleSubnet(nn.Module):
+    """Simple MLP subnet for DIA coupling blocks."""
+    def __init__(self, in_dim: int, out_dim: int, hidden_dim: int):
+        super().__init__()
+        self.layers = nn.Sequential(
+            nn.Linear(in_dim, hidden_dim), nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
+            nn.Linear(hidden_dim, out_dim)
+        )
+        # Initialize output layer to zero for identity start
+        nn.init.zeros_(self.layers[-1].weight)
+        nn.init.zeros_(self.layers[-1].bias)
+
+    def forward(self, x):
+        return self.layers(x)
 ```
 
 ### Integration in mole_nf.py
@@ -1047,17 +1141,22 @@ class MoLESpatialAwareNF(nn.Module):
         # ...
         self.dia_adapters = nn.ModuleDict()  # Per-task DIA
 
-    def add_task_adapter(self, task_id):
+    def add_task(self, task_id):
+        # ...
         if self.use_dia:
             self.dia_adapters[str(task_id)] = DeepInvertibleAdapter(
-                self.c_in, self.dia_n_blocks, self.dia_hidden_ratio
-            )
+                channels=self.embed_dim,
+                task_id=task_id,
+                n_blocks=self.dia_n_blocks,
+                hidden_ratio=self.dia_hidden_ratio,
+                clamp_alpha=self.clamp_alpha
+            ).to(self.device)
 
     def forward(self, x, reverse=False):
         # Base NF forward
-        z, logdet = self.inn(x)
+        z, logdet = self.flow(x)
 
-        # DIA forward
+        # DIA forward (applied AFTER base NF)
         if self.use_dia and self.current_task_id is not None:
             task_key = str(self.current_task_id)
             if task_key in self.dia_adapters:
@@ -1087,86 +1186,177 @@ python run_moleflow.py \
 
 **Gradient Projection**:
 ```
-g' = g - Σᵢ (g · vᵢ) vᵢ
+g' = g - Σᵢ (basis_i @ basis_i.T @ g)
 ```
-where vᵢ = important directions from previous tasks
+where basis_i = important gradient directions from task i
 
 ### Implementation
 ```python
-# moleflow/models/ogp.py
+# moleflow/utils/replay.py
 class OrthogonalGradientProjection:
     """
-    Projects gradients to the null space of important subspaces
-    from previous tasks to prevent catastrophic forgetting.
+    Orthogonal Gradient Projection (OGP) - V3 No-Replay Solution.
+
+    Key Idea:
+    After learning Task t, compute the principal subspace of gradients
+    (or features) that are important for that task. When learning Task t+1,
+    project gradients to be orthogonal to this subspace, ensuring that
+    updates don't interfere with previously learned knowledge.
+
+    This is based on GPM (Gradient Projection Memory) from:
+    "Continual Learning in Low-rank Orthogonal Subspaces", NeurIPS 2020
+
+    Mathematical Formulation:
+    1. After Task t: Compute U_t = SVD(G_t)[:, :k] where G_t is gradient matrix
+    2. Store basis vectors (Vh transposed from SVD)
+    3. For Task t+1: g' = g - basis @ (basis.T @ g) for each stored basis
+
+    Advantages over Replay:
+    - No data storage required
+    - Memory: O(d × k) per task where k << d
+    - Mathematically guarantees no interference in stored subspace
     """
-    def __init__(self, threshold=0.99, max_rank_per_task=50, device='cuda'):
+    def __init__(self, threshold: float = 0.99, max_rank_per_task: int = 50,
+                 device: str = 'cuda'):
         self.threshold = threshold
-        self.max_rank = max_rank_per_task
+        self.max_rank_per_task = max_rank_per_task
         self.device = device
-        self.projection_matrices = {}  # Per-parameter projection
 
-    def compute_basis(self, model, dataloader, task_id):
-        """Compute important gradient directions for current task."""
-        gradients = self._collect_gradients(model, dataloader)
+        # Store projection bases per parameter
+        # param_name -> list of basis matrices (one per task)
+        self.bases: Dict[str, List[torch.Tensor]] = {}
+        self.is_initialized = False
+        self.n_tasks = 0
 
-        for name, grads in gradients.items():
-            # SVD to find important directions
-            G = torch.stack(grads)  # (N, D)
-            U, S, V = torch.svd(G)
+    def compute_and_store_basis(self, model: nn.Module, data_loader,
+                                 task_id: int, n_samples: int = 300):
+        """
+        Compute gradient subspace basis for completed task.
+        Called AFTER training on a task is complete.
+        """
+        model.eval()
+        gradient_matrices: Dict[str, List[torch.Tensor]] = {}
 
-            # Select top-k directions (explain threshold% variance)
-            cumsum = torch.cumsum(S**2, 0) / (S**2).sum()
-            k = (cumsum < self.threshold).sum() + 1
-            k = min(k, self.max_rank)
+        n_processed = 0
+        for batch in data_loader:
+            if n_processed >= n_samples:
+                break
+            features = batch[0].to(self.device)
+            batch_size = features.shape[0]
 
-            # Store projection matrix: I - V_k @ V_k.T
-            V_k = V[:, :k]
-            if name not in self.projection_matrices:
-                self.projection_matrices[name] = V_k
-            else:
-                # Merge with existing basis
-                combined = torch.cat([self.projection_matrices[name], V_k], dim=1)
-                U_c, S_c, V_c = torch.svd(combined)
-                self.projection_matrices[name] = V_c[:, :self.max_rank]
+            model.zero_grad()
+            log_prob = model.log_prob(features)
+            loss = -log_prob.mean()
+            loss.backward()
 
-    def project_gradient(self, model):
-        """Project current gradients to null space of stored basis."""
+            for name, param in model.named_parameters():
+                if param.requires_grad and param.grad is not None:
+                    grad = param.grad.detach().flatten()
+                    if name not in gradient_matrices:
+                        gradient_matrices[name] = []
+                    gradient_matrices[name].append(grad.clone())
+            n_processed += batch_size
+
+        # Compute SVD for each parameter's gradient matrix
+        for name, grads in gradient_matrices.items():
+            if len(grads) < 5:
+                continue
+            G = torch.stack(grads, dim=0)  # (n_samples, n_params)
+
+            U, S, Vh = torch.linalg.svd(G, full_matrices=False)
+
+            # Select top-k components based on variance threshold
+            var_ratio = (S ** 2).cumsum(0) / (S ** 2).sum()
+            k = min(
+                (var_ratio < self.threshold).sum().item() + 1,
+                self.max_rank_per_task,
+                S.shape[0]
+            )
+
+            # Store basis vectors: Vh[:k, :].T gives (n_params, k)
+            basis = Vh[:k, :].T  # (n_params, k)
+
+            if name not in self.bases:
+                self.bases[name] = []
+            self.bases[name].append(basis.to(self.device))
+
+        self.n_tasks = task_id + 1
+        self.is_initialized = True
+
+    def project_gradient(self, model: nn.Module):
+        """
+        Project current gradients to be orthogonal to stored subspaces.
+        Call AFTER loss.backward() and BEFORE optimizer.step().
+        """
+        if not self.is_initialized:
+            return
+
         for name, param in model.named_parameters():
-            if param.grad is None or name not in self.projection_matrices:
+            if not param.requires_grad or param.grad is None:
+                continue
+            if name not in self.bases:
                 continue
 
-            V = self.projection_matrices[name]
-            g = param.grad.view(-1)
+            grad = param.grad.flatten()
 
-            # g' = g - V @ V.T @ g
-            g_proj = g - V @ (V.T @ g)
-            param.grad = g_proj.view(param.grad.shape)
+            # Project out all stored subspaces for this parameter
+            for basis in self.bases[name]:
+                # basis: (n_params, k)
+                # proj = basis @ (basis.T @ grad)
+                proj = basis @ (basis.T @ grad)
+                grad = grad - proj
+
+            param.grad = grad.reshape(param.shape)
+
+    def get_memory_usage(self) -> Dict[str, int]:
+        """Get memory usage statistics."""
+        total_elements = sum(b.numel() for bl in self.bases.values() for b in bl)
+        return {
+            'n_params': len(self.bases),
+            'n_tasks': self.n_tasks,
+            'total_elements': total_elements,
+            'memory_mb': total_elements * 4 / (1024 * 1024)
+        }
 ```
 
 ### Integration in Trainer
 ```python
+# moleflow/trainer/continual_trainer.py
 class MoLEContinualTrainer:
     def __init__(self, ...):
         if self.use_ogp:
             self.ogp = OrthogonalGradientProjection(
                 threshold=self.ogp_threshold,
-                max_rank_per_task=self.ogp_max_rank
+                max_rank_per_task=self.ogp_max_rank,
+                device=device
             )
 
     def _train_fast_stage(self, task_id, ...):
         for batch in dataloader:
             loss.backward()
 
-            # OGP: Project gradients
-            if self.use_ogp and self.ogp.is_initialized:
+            # OGP: Project gradients for Task > 0
+            if self.use_ogp and self.ogp is not None and self.ogp.is_initialized:
                 self.ogp.project_gradient(self.nf_model)
 
             optimizer.step()
 
-    def _after_task_training(self, task_id, dataloader):
-        # Compute OGP basis after task training
-        if self.use_ogp:
-            self.ogp.compute_basis(self.nf_model, dataloader, task_id)
+    def train_task(self, task_id, ...):
+        # ... training code ...
+
+        # Compute OGP basis AFTER task training completes
+        if self.use_ogp and self.ogp is not None:
+            self._compute_ogp_basis(task_id, train_loader)
+
+    def _compute_ogp_basis(self, task_id, train_loader):
+        """Compute and store OGP gradient basis for completed task."""
+        # Creates FeatureDataLoader wrapper to provide features
+        self.ogp.compute_and_store_basis(
+            model=self.nf_model,
+            data_loader=feature_loader,
+            task_id=task_id,
+            n_samples=self.ogp_n_samples
+        )
 ```
 
 ### Command Line
@@ -1174,7 +1364,8 @@ class MoLEContinualTrainer:
 python run_moleflow.py \
     --use_ogp \
     --ogp_threshold 0.99 \
-    --ogp_max_rank 50
+    --ogp_max_rank 50 \
+    --ogp_n_samples 300
 ```
 
 ---
@@ -1255,16 +1446,13 @@ python run_moleflow.py \
 
 | File | Changes |
 |------|---------|
-| `moleflow/models/whitening_adapter.py` | NEW: WhiteningAdapter module |
-| `moleflow/models/ms_context.py` | NEW: LightweightMSContext module |
-| `moleflow/models/dia.py` | NEW: DeepInvertibleAdapter module |
-| `moleflow/models/ogp.py` | NEW: OrthogonalGradientProjection |
-| `moleflow/models/routing.py` | TwoStageHybridRouter 추가 |
-| `moleflow/models/mole_nf.py` | DIA integration, V3 options |
-| `moleflow/config/ablation.py` | V3 options: use_dia, use_ogp, use_whitening_adapter, use_ms_context |
-| `moleflow/trainer/continual_trainer.py` | OGP integration |
+| `moleflow/models/adapters.py` | **WhiteningAdapter** 추가 (line 417-531), `create_task_adapter` factory에 "whitening" 모드 추가 |
+| `moleflow/models/lora.py` | **LightweightMSContext** (line 223-366), **TaskConditionedMSContext** (line 373-701), **DeepInvertibleAdapter** + AffineCouplingBlock + SimpleSubnet (line 708-908) 추가 |
+| `moleflow/utils/replay.py` | **OrthogonalGradientProjection** (line 512-687), GradientProjectionHook, FeatureBank, DistillationLoss, EWC 추가 |
+| `moleflow/models/mole_nf.py` | DIA integration (`dia_adapters`), WhiteningAdapter/MSContext/TaskConditionedMSContext 통합, V3 config options 처리 |
+| `moleflow/config/ablation.py` | V3 options: `use_dia`, `use_ogp`, `use_whitening_adapter`, `use_ms_context`, `use_task_conditioned_ms_context`, `ogp_*` params, `dia_*` params |
+| `moleflow/trainer/continual_trainer.py` | OGP integration: `_compute_ogp_basis()`, `ogp.project_gradient()` in training loop |
 | `run_moleflow.py` | V3 CLI arguments, config saving |
-| `run_v3_experiments.sh` | V3 ablation experiment script |
 
 ---
 
@@ -1298,5 +1486,348 @@ python run_moleflow.py \
     --use_whitening_adapter \
     --experiment_name Version3-All
 ```
+
+---
+
+## V3 Problem Analysis 
+--
+  심층 분석 결과
+
+  1. 핵심 발견: 공유 파라미터 문제
+
+  spatial_mixer가 모든 task에서 공유되고 학습됩니다:
+
+  # mole_nf.py:529-530
+  if self.spatial_mixer is not None and not reverse:
+      x = self.spatial_mixer(x)
+
+  # mole_nf.py:721-722 (get_fast_params)
+  if self.spatial_mixer is not None:
+      params.extend(self.spatial_mixer.parameters())  # 모든 task에서 학습!
+
+  Forward 경로:
+  Input → WhiteningAdapter[task] → SpatialMixer[SHARED] → BaseNF → DIA[task] → Output
+                                         ↑
+                              이것이 매 task마다 업데이트됨!
+
+  ---
+  2. Task 0 붕괴 메커니즘 상세 분석
+
+  Phase 1: Task 0 학습 (정상)
+
+  leather features → WhiteningAdapter_0 → SpatialMixer_v0 → BaseNF → DIA_0
+                                                ↑
+                                       이 시점의 파라미터
+  - Image AUC = 1.0 달성
+
+  Phase 2: Task 1-6 학습 (점진적 드리프트)
+
+  grid/transistor/... → WhiteningAdapter_k → SpatialMixer_v1...v6 → BaseNF → DIA_k
+                                                    ↑
+                                           매 task마다 업데이트
+  - leather 평가 시: SpatialMixer_v6이 사용됨 (원래 v0과 다름)
+  - 하지만 OGP가 어느 정도 gradient를 제한하여 드리프트 최소화
+  - leather Image AUC: 1.0 → 0.99 (미미한 감소)
+
+  Phase 3: Task 7-8 학습 (붕괴 시작)
+
+  metal_nut/screw → WhiteningAdapter_k → SpatialMixer_v7,v8 → BaseNF → DIA_k
+                                                ↑
+                                        OGP 제약이 포화 상태
+  - OGP의 orthogonal 공간이 점점 줄어듦
+  - SpatialMixer가 새로운 task에 적응하려면 이전 subspace에서 벗어나야 함
+  - leather Image AUC: 0.99 → 0.78 → 0.55 (급격한 감소)
+
+  Phase 4: Task 9+ 학습 (완전 붕괴)
+
+  - OGP 제약 하에서도 SpatialMixer가 계속 변경됨
+  - leather의 representation이 완전히 손상됨
+  - leather Image AUC: 0.07 (거의 random)
+
+  ---
+  3. 알파벳 순서에서 더 빠른 붕괴 원인
+
+  | 비교   | 원래 순서        | 알파벳 순서         |
+  |--------|------------------|---------------------|
+  | Task 0 | leather (텍스처) | bottle (형상)       |
+  | Task 2 | transistor       | capsule             |
+  | 유사성 | 낮음             | 높음 (둘 다 원통형) |
+
+  bottle → capsule 유사성 문제:
+  1. bottle의 feature로 학습된 SpatialMixer
+  2. capsule 학습 시 비슷한 feature 공간에서 경쟁
+  3. OGP가 보존하려는 subspace와 새 task가 필요한 공간이 크게 중첩
+  4. 결과: bottle의 representation이 2개 task 만에 손상됨
+
+  leather → grid 비유사성:
+  1. leather의 텍스처 feature로 학습된 SpatialMixer
+  2. grid (패턴), transistor (형상) 등은 다른 feature 공간
+  3. OGP가 보존하는 subspace와 새 task 공간의 중첩이 적음
+  4. 결과: 7개 task까지 상대적으로 안정
+
+  ---
+  4. Image AUC vs Pixel AUC 차이 분석
+
+  leather (원래 순서)
+
+  | Metric    | Task 0 | Task 14 | 설명     |
+  |-----------|--------|---------|----------|
+  | Pixel AUC | 0.97   | 0.66    | 32% 하락 |
+  | Image AUC | 1.00   | 0.07    | 93% 하락 |
+
+  해석:
+  - Pixel-level은 patch별 anomaly score = -log p(z) - log|det J|
+  - Image-level은 patch scores의 99th percentile
+  - Pixel AUC > 0.5: patch들 간의 상대적 순서는 어느 정도 유지됨
+  - Image AUC ≈ 0: 모든 이미지의 99th percentile 값이 전체적으로 shift되어 normal/anomaly 구분 불가
+
+  의미: SpatialMixer 변경으로 전체 score 분포가 shift됨. 개별 patch의 상대적 차이는 유지되지만, image-level 통계가 무의미해짐.
+
+  bottle (알파벳 순서)
+
+  | Metric    | Task 0 | Task 14 | 설명         |
+  |-----------|--------|---------|--------------|
+  | Pixel AUC | 0.94   | 0.12    | Random 이하! |
+  | Image AUC | 1.00   | 0.30    | 70% 하락     |
+
+  해석:
+  - Pixel AUC = 0.12 < 0.5: 모델이 반대로 예측
+  - Anomaly patch에 낮은 score, Normal patch에 높은 score
+  - 이는 단순한 distribution shift가 아니라 representation 자체의 inversion
+
+  의미: SpatialMixer가 bottle의 feature space를 완전히 뒤집어버림. 더 심각한 손상.
+
+  ---
+  5. OGP의 한계
+
+  OGP는 gradient를 이전 task의 중요 subspace에 orthogonal하게 투영:
+
+  g' = g - Σ(basis_i @ basis_i^T @ g)
+
+  문제점:
+  1. 누적 제약: 15개 task × 50 rank = 750개의 orthogonal 방향 제약
+  2. 공유 파라미터에 적용: SpatialMixer의 gradient도 투영됨
+  3. 불완전한 보호: 투영 후에도 남은 gradient가 공유 파라미터를 변경
+
+  Task 0 basis: [v1, v2, ..., v50]  (leather 중요 방향)
+  Task 1 학습: g' = g - proj(g, Task0_basis)
+                ↑
+         이 g'가 SpatialMixer를 변경 → leather 손상
+
+  ---
+  6. 핵심 문제 요약
+
+  | 문제                | 설명                                  | 심각도      |
+  |---------------------|---------------------------------------|-------------|
+  | 공유 SpatialMixer   | 모든 task에서 학습되어 이전 task 손상 | 🔴 Critical |
+  | OGP 누적 제약       | Task 수 증가 시 학습 공간 축소        | 🟠 High     |
+  | 클래스 순서 의존성  | 유사 클래스가 연속되면 더 빠른 붕괴   | 🟡 Medium   |
+  | Task 0 Base NF 편향 | 첫 task에만 최적화된 Base NF          | 🟡 Medium   |
+
+  ---
+  7. Routing이 100% 정확한데도 붕괴하는 이유
+
+  Evaluation: leather test image
+    ↓
+  Router: "This is leather" (100% 정확)
+    ↓
+  WhiteningAdapter_0: leather용 adapter ✓
+    ↓
+  SpatialMixer: Task 14 이후 버전 ✗  ← 여기서 문제!
+    ↓
+  BaseNF + LoRA_0: leather용 ✓
+    ↓
+  DIA_0: leather용 ✓
+    ↓
+  Wrong output due to SpatialMixer mismatch
+
+  결론: Task-specific 컴포넌트는 정상이지만, 공유 컴포넌트(SpatialMixer)의 드리프트가 전체 파이프라인을 오염시킴.
+
+---
+
+## V3 근본적 문제와 해결 방향
+
+### 근본적 문제 진단
+
+V3의 가정:
+> "Task 0에서 학습된 Base NF가 모든 task에 범용적으로 적용 가능하고, LoRA/DIA로 task-specific adaptation만 하면 된다"
+
+**이 가정이 틀린 이유:**
+
+1. **Base NF의 본질적 편향**
+   - Base NF는 Task 0 (leather 또는 bottle)의 "normal = 무결함" 분포만 학습
+   - 다른 task의 normal distribution과 근본적으로 다름
+   - LoRA/DIA는 "fine-tuning"일 뿐, transformation 자체를 바꿀 수 없음
+
+2. **공유 파라미터의 치명적 영향**
+   - SpatialMixer가 모든 task에서 학습됨
+   - OGP는 gradient를 제한할 뿐, 완전한 보호 불가
+   - Task 수 증가 시 OGP 제약 공간 포화 → 이전 task 손상
+
+3. **LoRA/DIA의 표현력 한계**
+   - LoRA: `W + BA` (저차원 linear adaptation)
+   - DIA: 작은 flow block (2 coupling layers)
+   - Base NF가 잘못된 변환을 하면 이를 보정하기 어려움
+
+### 가능한 해결 방향
+
+| 접근법 | 설명 | 장점 | 단점 |
+|--------|------|------|------|
+| **사전학습 Base NF** | 다양한 domain에서 Base NF 사전학습 | Task-agnostic 표현 | 사전학습 데이터 필요 |
+| **완전 분리** | 모든 trainable 파라미터 task-specific | 간섭 원천 차단 | 메모리 증가 |
+| **Replay 기반** | 이전 task 데이터 일부 저장 | 직접적 forgetting 방지 | Privacy, 저장 비용 |
+
+### 채택 방향: 완전 분리 (Complete Separation)
+
+**선택 이유:**
+1. 근본 원인(공유 파라미터 드리프트)을 원천 차단
+2. 추가 데이터 수집/저장 불필요
+3. 구현 복잡도 낮음
+4. 확장성 보장 (task 수 증가에도 안정)
+
+---
+
+## V4 - Complete Separation Architecture
+
+### 핵심 원칙
+> "모든 학습 가능한 파라미터는 task-specific이어야 한다"
+
+### Architecture Overview
+
+```
+V3 (문제):
+Input → WhiteningAdapter[task] → SpatialMixer[SHARED+Trained] → BaseNF[frozen] + LoRA[task] → DIA[task] → Output
+                                         ↑
+                                    모든 task에서 학습 → 드리프트
+
+V4 (해결):
+Input → WhiteningAdapter[task] → SpatialMixer[FROZEN] → BaseNF[frozen] + LoRA[task] → DIA[task] → Output
+                                         ↑
+                                    Task 0 이후 완전 동결
+```
+
+### 핵심 변경사항
+
+| 컴포넌트 | V3 | V4 | 변경 이유 |
+|----------|-----|-----|----------|
+| **SpatialMixer** | 모든 task에서 학습 | Task 0 이후 freeze | 공유 파라미터 드리프트 방지 |
+| **OGP** | 활성화 | 제거 (불필요) | 공유 파라미터 없음 → 투영 불필요 |
+| **WhiteningAdapter** | task별 | task별 (유지) | 이미 완전 분리됨 |
+| **LoRA** | task별 | task별 (유지) | 이미 완전 분리됨 |
+| **DIA** | task별 | task별 (유지) | 이미 완전 분리됨 |
+
+### 학습 프로토콜
+
+**Task 0 (Base Training)**:
+```python
+# 학습 대상: SpatialMixer + BaseNF + LoRA_0 + WhiteningAdapter_0 + DIA_0
+trainable = [
+    spatial_mixer.parameters(),      # Task 0에서만 학습
+    base_nf.parameters(),            # Task 0에서만 학습
+    lora_adapters["0"].parameters(),
+    whitening_adapters["0"].parameters(),
+    dia_adapters["0"].parameters()
+]
+```
+
+**Task 1+ (Adapter Only)**:
+```python
+# 학습 대상: LoRA_t + WhiteningAdapter_t + DIA_t (공유 파라미터 완전 freeze)
+trainable = [
+    lora_adapters[str(task_id)].parameters(),
+    whitening_adapters[str(task_id)].parameters(),
+    dia_adapters[str(task_id)].parameters()
+]
+# SpatialMixer, BaseNF는 완전 freeze
+```
+
+### 구현 변경사항
+
+#### 1. mole_nf.py - get_fast_params() 수정
+
+**Before (V3)**:
+```python
+def get_fast_params(self, task_id: int) -> List[nn.Parameter]:
+    params = []
+    # ... LoRA, WhiteningAdapter, DIA params ...
+
+    # SpatialMixer가 모든 task에서 학습됨 ← 문제!
+    if self.spatial_mixer is not None:
+        params.extend(self.spatial_mixer.parameters())
+
+    return params
+```
+
+**After (V4)**:
+```python
+def get_fast_params(self, task_id: int) -> List[nn.Parameter]:
+    params = []
+    # ... LoRA, WhiteningAdapter, DIA params ...
+
+    # V4: SpatialMixer는 Task 0에서만 학습, 이후 freeze
+    if self.spatial_mixer is not None and task_id == 0:
+        params.extend(self.spatial_mixer.parameters())
+
+    return params
+```
+
+#### 2. continual_trainer.py - OGP 제거
+
+**V4에서 OGP가 불필요한 이유:**
+- OGP는 "공유 파라미터"의 gradient를 투영하여 이전 task 보호
+- V4에서는 공유 파라미터가 모두 frozen → 보호할 대상 없음
+- OGP 연산 오버헤드 제거 → 학습 속도 향상
+
+```python
+# V4: OGP 비활성화
+if self.use_ogp:
+    warnings.warn("V4 Complete Separation: OGP is unnecessary and will be disabled")
+    self.use_ogp = False
+```
+
+#### 3. run.sh - V4 실험 설정
+
+```bash
+# V4: Complete Separation (WhiteningAdapter + DIA, no OGP, frozen SpatialMixer)
+python run_moleflow.py \
+    --task_classes leather grid transistor carpet zipper hazelnut \
+                   toothbrush metal_nut screw wood tile capsule pill cable bottle \
+    --use_whitening_adapter \
+    --use_dia \
+    --dia_n_blocks 2 \
+    --no_ogp \                  # V4: OGP 비활성화
+    --freeze_spatial_mixer \    # V4: SpatialMixer Task 0 이후 freeze
+    --experiment_name Version4-CompleteSeparation
+```
+
+### 예상 결과
+
+| 지표 | V3 (15 classes) | V4 예상 | 근거 |
+|------|-----------------|---------|------|
+| Task 0 Image AUC | 0.07~0.30 | 0.90+ | SpatialMixer 드리프트 없음 |
+| Mean Image AUC | 0.72 | 0.85+ | 모든 task 안정 |
+| Routing Acc | 99.76% | 99%+ | 유지 (Router는 변경 없음) |
+| 학습 속도 | 1x | 1.2x+ | OGP 연산 제거 |
+
+### V4 구현 체크리스트
+
+- [x] `mole_nf.py`: `get_fast_params()`에서 SpatialMixer task_id 조건 추가
+  - Line 720-725: `if self.spatial_mixer is not None and task_id == 0:`
+- [x] `mole_nf.py`: `freeze_fast_params()` Task 0 조건 추가
+  - Line 759-762: SpatialMixer freeze only for Task 0
+- [x] `mole_nf.py`: `unfreeze_fast_params()` Task 0 조건 추가
+  - Line 794-797: SpatialMixer unfreeze only for Task 0
+- [x] `run.sh`: V4 실험 스크립트 추가
+  - `--use_whitening_adapter --use_dia` (no OGP)
+  - All 15 classes in alphabetical order
+
+**Note**: 별도 config 옵션 불필요 - `task_id == 0` 조건으로 자동 처리됨
+
+### V4 File Changes Summary
+
+| File | Changes |
+|------|---------|
+| `moleflow/models/mole_nf.py` | `get_fast_params()`, `freeze_fast_params()`, `unfreeze_fast_params()` - SpatialMixer는 task_id == 0일 때만 학습 |
+| `run.sh` | V4 실험 스크립트: `Version4-CompleteSeparation_all_classes_alphabet` |
 
 ---
