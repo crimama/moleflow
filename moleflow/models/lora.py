@@ -218,7 +218,7 @@ class MoLESubnet(nn.Module):
 
 class MoLEContextSubnet(nn.Module):
     """
-    MoLE Subnet with Context-Aware Scale (Baseline 1.5 / 2.0).
+    MoLE Subnet with Context-Aware Scale.
 
     Key Innovation:
     - s-network: concat(x, local_context) → anomaly-sensitive scale
@@ -230,13 +230,7 @@ class MoLEContextSubnet(nn.Module):
 
     Architecture:
     - 3×3 depthwise conv for local context extraction
-    - Context gating (two modes):
-      1. Global alpha (legacy): alpha = alpha_max * sigmoid(alpha_param)
-         - Single learnable scalar, same for all patches
-      2. Patch-wise gate (v2.0): gate = sigmoid(MLP([x, ctx]))
-         - Per-patch decision: "should I use context here?"
-         - Normal patches → gate ≈ 0 (learn to ignore context)
-         - Anomaly-like patches → gate ≈ 1 (context matters)
+    - Global alpha: alpha = alpha_max * sigmoid(alpha_param)
     - s_net: Linear(2D→H) → ReLU → Linear(H→D/2)
     - t_net: Linear(D→H) → ReLU → Linear(H→D/2)
     """
@@ -247,8 +241,7 @@ class MoLEContextSubnet(nn.Module):
     def __init__(self, dims_in: int, dims_out: int, rank: int = 4, alpha: float = 1.0,
                  use_lora: bool = True, use_task_bias: bool = True,
                  context_kernel: int = 3, context_init_scale: float = 0.1,
-                 context_max_alpha: float = 0.2, use_context_gate: bool = False,
-                 context_gate_hidden: int = 64):
+                 context_max_alpha: float = 0.2, **kwargs):
         super(MoLEContextSubnet, self).__init__()
 
         hidden_dim = 2 * dims_in
@@ -257,7 +250,6 @@ class MoLEContextSubnet(nn.Module):
         self.use_lora = use_lora
         self.use_task_bias = use_task_bias
         self.context_max_alpha = context_max_alpha
-        self.use_context_gate = use_context_gate
 
         # =====================================================================
         # Context extraction (3×3 depthwise conv)
@@ -274,36 +266,13 @@ class MoLEContextSubnet(nn.Module):
         nn.init.zeros_(self.context_conv.bias)
 
         # =====================================================================
-        # Context gating: Global alpha vs Patch-wise gate
+        # Global alpha with sigmoid upper bound
         # =====================================================================
-        if use_context_gate:
-            # Patch-wise gate: sigmoid(MLP([x, ctx])) → (BHW, 1)
-            # This learns "when to use context" per-patch
-            # - Normal patches: gate → 0 (ignore context)
-            # - Anomaly-like patches: gate → 1 (use context)
-            self.context_gate_net = nn.Sequential(
-                nn.Linear(dims_in * 2, context_gate_hidden),
-                nn.ReLU(),
-                nn.Linear(context_gate_hidden, 1)
-                # No sigmoid here - we'll apply it in forward for numerical stability
-            )
-            # Initialize to output ~0 (gate starts near 0.5)
-            # This means context is initially used moderately
-            nn.init.zeros_(self.context_gate_net[0].weight)
-            nn.init.zeros_(self.context_gate_net[0].bias)
-            nn.init.zeros_(self.context_gate_net[2].weight)
-            nn.init.zeros_(self.context_gate_net[2].bias)
-
-            # No global alpha param needed
-            self.context_scale_param = None
-        else:
-            # Legacy: Global alpha with sigmoid upper bound
-            # alpha = alpha_max * sigmoid(alpha_param)
-            # Initialize alpha_param so that sigmoid(alpha_param) * alpha_max = init_scale
-            p = min(max(context_init_scale / context_max_alpha, 0.01), 0.99)
-            init_param = torch.log(torch.tensor([p / (1 - p)]))  # Inverse sigmoid
-            self.context_scale_param = nn.Parameter(init_param)
-            self.context_gate_net = None
+        # alpha = alpha_max * sigmoid(alpha_param)
+        # Initialize alpha_param so that sigmoid(alpha_param) * alpha_max = init_scale
+        p = min(max(context_init_scale / context_max_alpha, 0.01), 0.99)
+        init_param = torch.log(torch.tensor([p / (1 - p)]))  # Inverse sigmoid
+        self.context_scale_param = nn.Parameter(init_param)
 
         # =====================================================================
         # s-network: context-aware (anomaly-sensitive)
@@ -392,25 +361,11 @@ class MoLEContextSubnet(nn.Module):
         ctx = ctx.permute(0, 2, 3, 1).reshape(BHW, D)  # (BHW, D)
 
         # =================================================================
-        # Apply context gating (patch-wise or global)
+        # Apply global alpha scaling
         # =================================================================
-        if self.use_context_gate and self.context_gate_net is not None:
-            # Patch-wise gate: sigmoid(MLP([x, ctx])) → (BHW, 1)
-            # Each patch decides independently how much context to use
-            gate_input = torch.cat([x, ctx], dim=-1)  # (BHW, 2D)
-            gate_logit = self.context_gate_net(gate_input)  # (BHW, 1)
-            gate = torch.sigmoid(gate_logit)  # (BHW, 1), in [0, 1]
-
-            # Store gate for logging/debugging (detached)
-            self._last_gate = gate.detach()
-
-            # Scale context by patch-wise gate
-            ctx = gate * ctx  # (BHW, D)
-        else:
-            # Legacy: Global alpha with sigmoid upper bound
-            # alpha = alpha_max * sigmoid(alpha_param)
-            alpha = self.context_max_alpha * torch.sigmoid(self.context_scale_param)
-            ctx = alpha * ctx
+        # alpha = alpha_max * sigmoid(alpha_param)
+        alpha = self.context_max_alpha * torch.sigmoid(self.context_scale_param)
+        ctx = alpha * ctx
 
         # =================================================================
         # s-network: context-aware (anomaly-sensitive)
@@ -431,29 +386,11 @@ class MoLEContextSubnet(nn.Module):
     # =========================================================================
 
     def get_context_alpha(self) -> float:
-        """Get current global context alpha value (legacy mode only)."""
+        """Get current global context alpha value."""
         if self.context_scale_param is not None:
             with torch.no_grad():
                 return (
                     self.context_max_alpha
                     * torch.sigmoid(self.context_scale_param)
                 ).item()
-        return None
-
-    def get_last_gate_stats(self) -> dict:
-        """
-        Get statistics of the last gate values (patch-wise gate mode only).
-
-        Returns:
-            dict with 'mean', 'std', 'min', 'max' of gate values
-            or None if not using patch-wise gate
-        """
-        if hasattr(self, '_last_gate') and self._last_gate is not None:
-            gate = self._last_gate
-            return {
-                'mean': gate.mean().item(),
-                'std': gate.std().item(),
-                'min': gate.min().item(),
-                'max': gate.max().item()
-            }
         return None

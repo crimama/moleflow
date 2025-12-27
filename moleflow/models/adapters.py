@@ -239,176 +239,6 @@ class SimpleTaskAdapter(nn.Module):
         return x_aligned.reshape(B, H, W, D)
 
 
-class RobustTaskInputAdapter(nn.Module):
-    """
-    Robust Task Input Adapter with anomaly-aware gating.
-
-    Key Design (Option A):
-    - Normalize based on normal patch statistics only
-    - Reduce normalization strength for anomaly-like patches using gating
-    - x' = (1-g)*x + g*Adapter(x)  where g ∈ [0,1]
-    - Anomalies have higher x norms → lower g → less adapter effect → preserved anomaly signal
-
-    Gate Types:
-    - "norm": Use feature L2 norm (higher norm = more anomalous)
-    - "mahal": Use Mahalanobis distance from reference distribution
-    - "learned": Use learned MLP gate
-    """
-
-    def __init__(self, channels: int, reference_mean: torch.Tensor = None,
-                 reference_std: torch.Tensor = None, gate_type: str = "norm"):
-        super(RobustTaskInputAdapter, self).__init__()
-
-        self.channels = channels
-        self.eps = 1e-6
-        self.gate_type = gate_type
-
-        # Store reference statistics (from Task 0)
-        if reference_mean is not None:
-            self.register_buffer('reference_mean', reference_mean.clone())
-            self.register_buffer('reference_std', reference_std.clone())
-            self.has_reference = True
-        else:
-            self.register_buffer('reference_mean', torch.zeros(channels))
-            self.register_buffer('reference_std', torch.ones(channels))
-            self.has_reference = False
-
-        # FiLM parameters for normalization
-        self.film_gamma = nn.Parameter(torch.ones(1, 1, 1, channels))
-        self.film_beta = nn.Parameter(torch.zeros(1, 1, 1, channels))
-
-        # Layer Norm for the adapter path
-        self.layer_norm = nn.LayerNorm(channels)
-
-        # MLP for feature transformation
-        hidden_dim = max(channels // 2, 128)
-        self.mlp = nn.Sequential(
-            nn.Linear(channels, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, channels)
-        )
-        nn.init.normal_(self.mlp[-1].weight, std=0.01)
-        nn.init.zeros_(self.mlp[-1].bias)
-
-        # Gate parameters
-        if gate_type == "learned":
-            # Learned gate network
-            self.gate_net = nn.Sequential(
-                nn.Linear(channels, channels // 4),
-                nn.GELU(),
-                nn.Linear(channels // 4, 1),
-                nn.Sigmoid()
-            )
-        else:
-            # Temperature and bias for norm/mahal-based gate
-            self.gate_temperature = nn.Parameter(torch.tensor([1.0]))
-            self.gate_bias = nn.Parameter(torch.tensor([0.0]))
-
-        # Running statistics for gate normalization (norm-based)
-        self.register_buffer('running_norm_mean', torch.tensor([0.0]))
-        self.register_buffer('running_norm_std', torch.tensor([1.0]))
-        self.register_buffer('norm_count', torch.tensor([0]))
-
-    def _compute_gate(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Compute gate value g ∈ [0,1] for each patch.
-
-        High g (close to 1) = normal patch → apply adapter fully
-        Low g (close to 0) = anomalous patch → preserve original features
-
-        Args:
-            x: (B, H, W, D) input features
-
-        Returns:
-            gate: (B, H, W, 1) gate values
-        """
-        B, H, W, D = x.shape
-
-        if self.gate_type == "learned":
-            # Learned gate
-            x_flat = x.reshape(-1, D)
-            gate = self.gate_net(x_flat)  # (BHW, 1)
-            return gate.reshape(B, H, W, 1)
-
-        elif self.gate_type == "mahal":
-            # Mahalanobis distance-based gate
-            x_flat = x.reshape(-1, D)  # (BHW, D)
-            diff = x_flat - self.reference_mean.unsqueeze(0)
-            mahal_sq = (diff / (self.reference_std.unsqueeze(0) + self.eps)) ** 2
-            distance = mahal_sq.sum(dim=-1)  # (BHW,)
-
-            # Higher distance = more anomalous = lower gate
-            # Use sigmoid with learnable temperature and bias
-            gate = torch.sigmoid(self.gate_bias - self.gate_temperature * distance / D)
-            return gate.reshape(B, H, W, 1)
-
-        else:  # "norm"
-            # L2 norm-based gate
-            x_flat = x.reshape(-1, D)
-            norms = x_flat.norm(dim=-1)  # (BHW,)
-
-            # Update running statistics during training
-            if self.training and self.norm_count < 10000:
-                with torch.no_grad():
-                    batch_mean = norms.mean()
-                    batch_std = norms.std() + self.eps
-                    momentum = 0.1
-                    if self.norm_count == 0:
-                        self.running_norm_mean.copy_(batch_mean)
-                        self.running_norm_std.copy_(batch_std)
-                    else:
-                        self.running_norm_mean.mul_(1 - momentum).add_(batch_mean * momentum)
-                        self.running_norm_std.mul_(1 - momentum).add_(batch_std * momentum)
-                    self.norm_count += 1
-
-            # Normalize norms
-            norm_normalized = (norms - self.running_norm_mean) / (self.running_norm_std + self.eps)
-
-            # Higher norm = more anomalous = lower gate
-            gate = torch.sigmoid(self.gate_bias - self.gate_temperature * norm_normalized)
-            return gate.reshape(B, H, W, 1)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Robust feature modulation with anomaly-aware gating.
-
-        Flow: x -> compute_gate -> x' = (1-g)*x + g*Adapter(x)
-
-        Args:
-            x: (B, H, W, D) input features
-
-        Returns:
-            Transformed features with anomaly signal preserved
-        """
-        B, H, W, D = x.shape
-        identity = x
-
-        # 1. Compute gate (how much to apply adapter)
-        gate = self._compute_gate(x)  # (B, H, W, 1)
-
-        # 2. Apply adapter transformation
-        x_flat = x.reshape(-1, D)
-        x_normed = self.layer_norm(x_flat)
-        x_adapted = x_normed.reshape(B, H, W, D)
-
-        # FiLM modulation
-        x_adapted = self.film_gamma * x_adapted + self.film_beta
-
-        # MLP
-        x_flat = x_adapted.reshape(-1, D)
-        mlp_out = self.mlp(x_flat).reshape(B, H, W, D)
-        x_adapted = x_adapted + 0.5 * mlp_out
-
-        # 3. Gated combination: x' = (1-g)*x + g*Adapter(x)
-        # High gate (normal) → adapter applied
-        # Low gate (anomaly) → original preserved
-        x_out = (1 - gate) * identity + gate * x_adapted
-
-        return x_out
-
-
 class SoftLNTaskInputAdapter(nn.Module):
     """
     Task Input Adapter with Soft/Optional LayerNorm.
@@ -528,30 +358,22 @@ def create_task_adapter(adapter_mode: str, channels: int,
                         reference_std: torch.Tensor = None,
                         task_id: int = 0,
                         soft_ln_init_scale: float = 0.01,
-                        robust_gate_type: str = "norm") -> nn.Module:
+                        **kwargs) -> nn.Module:
     """
     Factory function to create the appropriate adapter based on mode.
 
     Args:
-        adapter_mode: "standard", "robust", "soft_ln", "no_ln_after_task0"
+        adapter_mode: "soft_ln", "standard", "no_ln_after_task0"
         channels: Feature dimension
         reference_mean: Reference mean from Task 0
         reference_std: Reference std from Task 0
         task_id: Current task ID
         soft_ln_init_scale: Initial scale for soft LN
-        robust_gate_type: Gate type for robust adapter
 
     Returns:
         Appropriate adapter module
     """
-    if adapter_mode == "robust":
-        return RobustTaskInputAdapter(
-            channels=channels,
-            reference_mean=reference_mean,
-            reference_std=reference_std,
-            gate_type=robust_gate_type
-        )
-    elif adapter_mode == "soft_ln":
+    if adapter_mode == "soft_ln":
         # SoftLN: Task 0 has learnable LN blend, Task > 0 has blend=0 (LN off)
         return SoftLNTaskInputAdapter(
             channels=channels,

@@ -69,10 +69,10 @@ def main():
     parser.add_argument('--experiment_name', type=str, default=None,
                         help='Name of the experiment')
     parser.add_argument('--backbone_name', type=str,
-                        default='vit_base_patch14_dinov2.lvd142m',
-                        help='ViT backbone model name (e.g., vit_base_patch14_dinov2.lvd142m)')
-    parser.add_argument('--img_size', type=int, default=518,
-                        help='Input image size (default: 518)')
+                        default='vit_base_patch16_224.augreg2_in21k_ft_in1k',
+                        help='ViT backbone model name')
+    parser.add_argument('--img_size', type=int, default=224,
+                        help='Input image size (default: 224)')
     parser.add_argument('--msk_size', type=int, default=256,
                         help='Mask size for evaluation (default: 256)')
     parser.add_argument('--num_coupling_layers', type=int, default=8,
@@ -184,11 +184,12 @@ def main():
             'use_mahalanobis': ablation_config.use_mahalanobis,
             'adapter_mode': ablation_config.adapter_mode,
             'soft_ln_init_scale': ablation_config.soft_ln_init_scale,
-            'robust_gate_type': ablation_config.robust_gate_type,
             'lambda_logdet': ablation_config.lambda_logdet,
             'use_spatial_context': ablation_config.use_spatial_context,
             'spatial_context_mode': ablation_config.spatial_context_mode,
             'spatial_context_kernel': ablation_config.spatial_context_kernel,
+            'use_scale_context': ablation_config.use_scale_context,
+            'scale_context_kernel': ablation_config.scale_context_kernel,
         },
         'device': str(torch.device("cuda" if torch.cuda.is_available() else "cpu")),
         'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

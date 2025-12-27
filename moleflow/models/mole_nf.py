@@ -61,38 +61,30 @@ class MoLESpatialAwareNF(nn.Module):
             self.use_lora = True
             self.use_task_adapter = True
             self.use_task_bias = True
-            self.adapter_mode = "standard"
+            self.adapter_mode = "soft_ln"
             self.soft_ln_init_scale = 0.01
-            self.robust_gate_type = "norm"
-            self.use_spatial_context = False
+            self.use_spatial_context = True
             self.spatial_context_mode = "depthwise_residual"
             self.spatial_context_kernel = 3
-            # Scale-specific context (Baseline 1.5 - RECOMMENDED DEFAULT)
-            self.use_scale_context = True   # ENABLED by default
+            # Scale-specific context
+            self.use_scale_context = True
             self.scale_context_kernel = 3
             self.scale_context_init_scale = 0.1
             self.scale_context_max_alpha = 0.2
-            # Patch-wise context gate (Baseline 2.0 - DISABLED)
-            self.use_context_gate = False   # Gate hurts performance in unsupervised setting
-            self.context_gate_hidden = 64
         else:
             self.use_lora = ablation_config.use_lora
             self.use_task_adapter = ablation_config.use_task_adapter
             self.use_task_bias = ablation_config.use_task_bias
             self.adapter_mode = ablation_config.adapter_mode
             self.soft_ln_init_scale = ablation_config.soft_ln_init_scale
-            self.robust_gate_type = ablation_config.robust_gate_type
             self.use_spatial_context = ablation_config.use_spatial_context
             self.spatial_context_mode = ablation_config.spatial_context_mode
             self.spatial_context_kernel = ablation_config.spatial_context_kernel
-            # Scale-specific context (Baseline 1.5 Improved)
+            # Scale-specific context
             self.use_scale_context = ablation_config.use_scale_context
             self.scale_context_kernel = ablation_config.scale_context_kernel
             self.scale_context_init_scale = ablation_config.scale_context_init_scale
             self.scale_context_max_alpha = ablation_config.scale_context_max_alpha
-            # Patch-wise context gate (Baseline 2.0)
-            self.use_context_gate = ablation_config.use_context_gate
-            self.context_gate_hidden = ablation_config.context_gate_hidden
 
         # Track tasks
         self.num_tasks = 0
@@ -138,9 +130,7 @@ class MoLESpatialAwareNF(nn.Module):
                     use_task_bias=self.use_task_bias,
                     context_kernel=self.scale_context_kernel,
                     context_init_scale=self.scale_context_init_scale,
-                    context_max_alpha=self.scale_context_max_alpha,
-                    use_context_gate=self.use_context_gate,
-                    context_gate_hidden=self.context_gate_hidden
+                    context_max_alpha=self.scale_context_max_alpha
                 )
             else:
                 subnet = MoLESubnet(
@@ -162,8 +152,7 @@ class MoLESpatialAwareNF(nn.Module):
         if not self.use_task_bias:
             ablation_info.append("TaskBias=OFF")
         if self.use_scale_context:
-            gate_str = f",gate=patch(h={self.context_gate_hidden})" if self.use_context_gate else ",gate=global"
-            ablation_info.append(f"ScaleContext=ON(k={self.scale_context_kernel},α_init={self.scale_context_init_scale},α_max={self.scale_context_max_alpha}{gate_str})")
+            ablation_info.append(f"ScaleContext=ON(k={self.scale_context_kernel})")
         ablation_str = f" [{', '.join(ablation_info)}]" if ablation_info else ""
         print(f'MoLE-Flow => Embed Dim: {self.embed_dim}, LoRA Rank: {self.lora_rank}{ablation_str}')
 
@@ -206,7 +195,7 @@ class MoLESpatialAwareNF(nn.Module):
                 if self.use_lora or self.use_task_bias:
                     subnet.add_task_adapter(task_id)
 
-            # NEW v3: Add InputAdapter for Task 0 as well (self-adaptation)
+            # Add InputAdapter for Task 0 as well (self-adaptation)
             # This helps Task 0 pixel-level performance by learning input feature adjustment
             if self.use_task_adapter:
                 self.input_adapters[task_key] = create_task_adapter(
@@ -215,8 +204,7 @@ class MoLESpatialAwareNF(nn.Module):
                     reference_mean=None,  # No reference for Task 0 (it IS the reference)
                     reference_std=None,
                     task_id=task_id,
-                    soft_ln_init_scale=self.soft_ln_init_scale,
-                    robust_gate_type=self.robust_gate_type
+                    soft_ln_init_scale=self.soft_ln_init_scale
                 ).to(self.device)
 
             components = []
@@ -226,9 +214,7 @@ class MoLESpatialAwareNF(nn.Module):
                 components.append("Task Biases")
             if self.use_task_adapter:
                 adapter_info = f"Input Adapter ({self.adapter_mode})"
-                if self.adapter_mode == "robust":
-                    adapter_info += f" [gate={self.robust_gate_type}]"
-                elif self.adapter_mode == "soft_ln":
+                if self.adapter_mode == "soft_ln":
                     adapter_info += f" [init_scale={self.soft_ln_init_scale}]"
                 components.append(adapter_info)
 
@@ -256,8 +242,7 @@ class MoLESpatialAwareNF(nn.Module):
                     reference_mean=ref_mean,
                     reference_std=ref_std,
                     task_id=task_id,
-                    soft_ln_init_scale=self.soft_ln_init_scale,
-                    robust_gate_type=self.robust_gate_type
+                    soft_ln_init_scale=self.soft_ln_init_scale
                 ).to(self.device)
 
             # Print status
@@ -268,9 +253,7 @@ class MoLESpatialAwareNF(nn.Module):
                 components.append("Task Biases")
             if self.use_task_adapter:
                 adapter_info = f"Input Adapter ({self.adapter_mode})"
-                if self.adapter_mode == "robust":
-                    adapter_info += f" [gate={self.robust_gate_type}]"
-                elif self.adapter_mode == "soft_ln":
+                if self.adapter_mode == "soft_ln":
                     adapter_info += f" [init_scale={self.soft_ln_init_scale}]"
                 elif self.adapter_mode == "no_ln_after_task0":
                     adapter_info += " [LN=OFF]"
@@ -343,13 +326,11 @@ class MoLESpatialAwareNF(nn.Module):
                     if task_key in layer.task_biases:
                         params.append(layer.task_biases[task_key])
 
-                # MoLEContextSubnet: context_conv and context gating parameters
+                # MoLEContextSubnet: context_conv and context scaling parameters
                 if hasattr(subnet, 'context_conv'):
                     params.extend(subnet.context_conv.parameters())
                 if hasattr(subnet, 'context_scale_param') and subnet.context_scale_param is not None:
                     params.append(subnet.context_scale_param)
-                if hasattr(subnet, 'context_gate_net') and subnet.context_gate_net is not None:
-                    params.extend(subnet.context_gate_net.parameters())
 
             # Include InputAdapter parameters for Task 0
             if task_key in self.input_adapters:
@@ -370,14 +351,12 @@ class MoLESpatialAwareNF(nn.Module):
                     if task_key in layer.task_biases:
                         params.append(layer.task_biases[task_key])
 
-                # MoLEContextSubnet: context_conv and context gating parameters
+                # MoLEContextSubnet: context_conv and context scaling parameters
                 # (shared across tasks but still trainable)
                 if hasattr(subnet, 'context_conv'):
                     params.extend(subnet.context_conv.parameters())
                 if hasattr(subnet, 'context_scale_param') and subnet.context_scale_param is not None:
                     params.append(subnet.context_scale_param)
-                if hasattr(subnet, 'context_gate_net') and subnet.context_gate_net is not None:
-                    params.extend(subnet.context_gate_net.parameters())
 
             # Input adapter parameters
             if task_key in self.input_adapters:
@@ -588,13 +567,11 @@ class MoLESpatialAwareNF(nn.Module):
                 if task_key in layer.task_biases:
                     params.append(layer.task_biases[task_key])
 
-            # MoLEContextSubnet: context_conv and context gating parameters
+            # MoLEContextSubnet: context_conv and context scaling parameters
             if hasattr(subnet, 'context_conv'):
                 params.extend(subnet.context_conv.parameters())
             if hasattr(subnet, 'context_scale_param') and subnet.context_scale_param is not None:
                 params.append(subnet.context_scale_param)
-            if hasattr(subnet, 'context_gate_net') and subnet.context_gate_net is not None:
-                params.extend(subnet.context_gate_net.parameters())
 
         # Input adapter parameters
         if task_key in self.input_adapters:
@@ -620,15 +597,12 @@ class MoLESpatialAwareNF(nn.Module):
                 if task_key in layer.task_biases:
                     layer.task_biases[task_key].requires_grad = False
 
-            # MoLEContextSubnet: freeze context gating parameters
+            # MoLEContextSubnet: freeze context parameters
             if hasattr(subnet, 'context_conv'):
                 for param in subnet.context_conv.parameters():
                     param.requires_grad = False
             if hasattr(subnet, 'context_scale_param') and subnet.context_scale_param is not None:
                 subnet.context_scale_param.requires_grad = False
-            if hasattr(subnet, 'context_gate_net') and subnet.context_gate_net is not None:
-                for param in subnet.context_gate_net.parameters():
-                    param.requires_grad = False
 
         if task_key in self.input_adapters:
             for param in self.input_adapters[task_key].parameters():
@@ -653,15 +627,12 @@ class MoLESpatialAwareNF(nn.Module):
                 if task_key in layer.task_biases:
                     layer.task_biases[task_key].requires_grad = True
 
-            # MoLEContextSubnet: unfreeze context gating parameters
+            # MoLEContextSubnet: unfreeze context parameters
             if hasattr(subnet, 'context_conv'):
                 for param in subnet.context_conv.parameters():
                     param.requires_grad = True
             if hasattr(subnet, 'context_scale_param') and subnet.context_scale_param is not None:
                 subnet.context_scale_param.requires_grad = True
-            if hasattr(subnet, 'context_gate_net') and subnet.context_gate_net is not None:
-                for param in subnet.context_gate_net.parameters():
-                    param.requires_grad = True
 
         if task_key in self.input_adapters:
             for param in self.input_adapters[task_key].parameters():
@@ -673,51 +644,33 @@ class MoLESpatialAwareNF(nn.Module):
                 param.requires_grad = True
 
     # =========================================================================
-    # Context Gate/Alpha Logging Methods
+    # Context Alpha Logging Methods
     # =========================================================================
 
     def get_context_info(self) -> dict:
         """
-        Get context gate/alpha information for logging.
+        Get context alpha information for logging.
 
         Returns:
-            dict with context statistics:
-            - If using patch-wise gate: 'gate_mean', 'gate_std', 'gate_min', 'gate_max'
-            - If using global alpha: 'alpha' value for each subnet
-            - Empty dict if not using scale context
+            dict with 'alpha_mean', 'alpha_min', 'alpha_max' values
+            or empty dict if not using scale context
         """
         if not self.use_scale_context:
             return {}
 
-        info = {}
+        # Collect alpha from all subnets
+        alphas = []
+        for subnet in self.subnets:
+            if hasattr(subnet, 'get_context_alpha'):
+                alpha = subnet.get_context_alpha()
+                if alpha is not None:
+                    alphas.append(alpha)
 
-        if self.use_context_gate:
-            # Patch-wise gate mode: aggregate stats from all subnets
-            gate_stats = []
-            for i, subnet in enumerate(self.subnets):
-                if hasattr(subnet, 'get_last_gate_stats'):
-                    stats = subnet.get_last_gate_stats()
-                    if stats is not None:
-                        gate_stats.append(stats)
+        if alphas:
+            return {
+                'alpha_mean': sum(alphas) / len(alphas),
+                'alpha_min': min(alphas),
+                'alpha_max': max(alphas)
+            }
 
-            if gate_stats:
-                # Average across all subnets
-                info['gate_mean'] = sum(s['mean'] for s in gate_stats) / len(gate_stats)
-                info['gate_std'] = sum(s['std'] for s in gate_stats) / len(gate_stats)
-                info['gate_min'] = min(s['min'] for s in gate_stats)
-                info['gate_max'] = max(s['max'] for s in gate_stats)
-        else:
-            # Global alpha mode: collect alpha from all subnets
-            alphas = []
-            for i, subnet in enumerate(self.subnets):
-                if hasattr(subnet, 'get_context_alpha'):
-                    alpha = subnet.get_context_alpha()
-                    if alpha is not None:
-                        alphas.append(alpha)
-
-            if alphas:
-                info['alpha_mean'] = sum(alphas) / len(alphas)
-                info['alpha_min'] = min(alphas)
-                info['alpha_max'] = max(alphas)
-
-        return info
+        return {}

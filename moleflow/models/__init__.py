@@ -6,7 +6,6 @@ from moleflow.models.adapters import (
     FeatureStatistics,
     TaskInputAdapter,
     SimpleTaskAdapter,
-    RobustTaskInputAdapter,
     SoftLNTaskInputAdapter,
     SpatialContextMixer,
     create_task_adapter
@@ -21,7 +20,6 @@ __all__ = [
     "FeatureStatistics",
     "TaskInputAdapter",
     "SimpleTaskAdapter",
-    "RobustTaskInputAdapter",
     "SoftLNTaskInputAdapter",
     "SpatialContextMixer",
     "create_task_adapter",
