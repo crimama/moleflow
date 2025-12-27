@@ -32,6 +32,7 @@ except ImportError:
 from moleflow.models.mole_nf import MoLESpatialAwareNF
 from moleflow.models.routing import TaskPrototype, PrototypeRouter
 from moleflow.utils.logger import TrainingLogger
+from moleflow.utils.replay import OrthogonalGradientProjection
 
 if TYPE_CHECKING:
     from moleflow.config.ablation import AblationConfig
@@ -120,12 +121,22 @@ class MoLEContinualTrainer:
             self.use_pos_embedding = True
             self.use_mahalanobis = True
             self.lambda_logdet = 0.0
+            # V3: OGP defaults
+            self.use_ogp = False
+            self.ogp_threshold = 0.99
+            self.ogp_max_rank = 50
+            self.ogp_n_samples = 300
         else:
             self.use_lora = ablation_config.use_lora
             self.use_router = ablation_config.use_router
             self.use_pos_embedding = ablation_config.use_pos_embedding
             self.use_mahalanobis = ablation_config.use_mahalanobis
             self.lambda_logdet = ablation_config.lambda_logdet
+            # V3: OGP settings
+            self.use_ogp = ablation_config.use_ogp
+            self.ogp_threshold = ablation_config.ogp_threshold
+            self.ogp_max_rank = ablation_config.ogp_max_rank
+            self.ogp_n_samples = ablation_config.ogp_n_samples
 
         # Slow-Fast hyperparameters
         self.slow_lr_ratio = slow_lr_ratio
@@ -137,6 +148,17 @@ class MoLEContinualTrainer:
             self.router = PrototypeRouter(device=device, use_mahalanobis=self.use_mahalanobis)
         else:
             self.router = None
+
+        # V3: Initialize OGP (Orthogonal Gradient Projection) if enabled
+        if self.use_ogp:
+            self.ogp = OrthogonalGradientProjection(
+                threshold=self.ogp_threshold,
+                max_rank_per_task=self.ogp_max_rank,
+                device=device
+            )
+            print(f"✅ [V3] OGP enabled: threshold={self.ogp_threshold}, max_rank={self.ogp_max_rank}")
+        else:
+            self.ogp = None
 
         # Task information
         self.task_classes: Dict[int, List[str]] = {}
@@ -174,6 +196,10 @@ class MoLEContinualTrainer:
         # Log logdet regularization
         if self.lambda_logdet > 0:
             print(f"[Regularization] Logdet L2: lambda={self.lambda_logdet:.2e}")
+
+        # V3: Log OGP status
+        if self.use_ogp:
+            print(f"[V3] OGP: threshold={self.ogp_threshold}, max_rank={self.ogp_max_rank}, n_samples={self.ogp_n_samples}")
 
     def _log(self, message: str, level: str = 'info'):
         """Log message using logger if available, otherwise print."""
@@ -306,6 +332,11 @@ class MoLEContinualTrainer:
         # Build prototype for routing (only if router is enabled)
         if self.use_router:
             self._build_prototype(task_id, task_classes, train_loader)
+
+        # V3: Compute and store OGP basis after task training
+        # This captures the important gradient subspace for the completed task
+        if self.use_ogp and self.ogp is not None:
+            self._compute_ogp_basis(task_id, train_loader)
 
         # Log task completion
         if self.logger:
@@ -521,6 +552,12 @@ class MoLEContinualTrainer:
 
                 optimizer.zero_grad()
                 total_loss.backward()
+
+                # V3: Apply OGP gradient projection for Task > 0
+                # This projects gradients to be orthogonal to important subspaces from previous tasks
+                if self.use_ogp and self.ogp is not None and self.ogp.is_initialized:
+                    self.ogp.project_gradient(self.nf_model)
+
                 torch.nn.utils.clip_grad_norm_(list(fast_params), max_norm=0.5)
                 optimizer.step()
 
@@ -535,6 +572,8 @@ class MoLEContinualTrainer:
                         extra_info["Warmup"] = True
                     if logdet_reg is not None:
                         extra_info["logdet_reg"] = logdet_reg.item()
+                    if self.use_ogp and self.ogp is not None and self.ogp.is_initialized:
+                        extra_info["OGP"] = True
 
                     if self.logger:
                         self.logger.log_batch(
@@ -544,8 +583,9 @@ class MoLEContinualTrainer:
                     else:
                         warmup_str = " (warmup)" if epoch < warmup_epochs else ""
                         reg_str = f" | LogdetReg: {logdet_reg.item():.4f}" if logdet_reg is not None else ""
+                        ogp_str = " | OGP" if (self.use_ogp and self.ogp is not None and self.ogp.is_initialized) else ""
                         print(f"  [FAST] Epoch [{epoch+1}/{num_epochs}] Batch [{batch_idx+1}/{len(train_loader)}] "
-                              f"Loss: {nll_loss.item():.4f} | Avg: {avg_loss:.4f}{warmup_str}{reg_str}")
+                              f"Loss: {nll_loss.item():.4f} | Avg: {avg_loss:.4f}{warmup_str}{reg_str}{ogp_str}")
 
             if epoch >= warmup_epochs:
                 scheduler.step()
@@ -702,6 +742,56 @@ class MoLEContinualTrainer:
         else:
             print(f"   ✅ Prototype stored: μ shape={prototype.mean.shape}, "
                   f"n_samples={prototype.n_samples}")
+
+    def _compute_ogp_basis(self, task_id: int, train_loader: DataLoader):
+        """
+        V3: Compute and store OGP gradient basis for completed task.
+
+        This should be called AFTER training on a task is complete.
+        The gradient subspace captures the important directions for this task.
+        For Task > current, gradients will be projected to be orthogonal.
+        """
+        self._log(f"\n📐 [V3] Computing OGP basis for Task {task_id}...")
+
+        # Create a wrapper that provides features in the expected format
+        class FeatureDataLoader:
+            def __init__(self, trainer, data_loader, device):
+                self.trainer = trainer
+                self.data_loader = data_loader
+                self.device = device
+                self._iter = None
+
+            def __iter__(self):
+                for images, _, _, _, _ in self.data_loader:
+                    images = images.to(self.device)
+                    with torch.no_grad():
+                        patch_embeddings, spatial_shape = self.trainer.vit_extractor(
+                            images, return_spatial_shape=True
+                        )
+                        if self.trainer.use_pos_embedding:
+                            features = self.trainer.pos_embed_generator(
+                                spatial_shape, patch_embeddings
+                            )
+                        else:
+                            B = patch_embeddings.shape[0]
+                            H, W = spatial_shape
+                            features = patch_embeddings.reshape(B, H, W, -1)
+                    yield (features,)
+
+        feature_loader = FeatureDataLoader(self, train_loader, self.device)
+
+        # Compute and store basis
+        self.ogp.compute_and_store_basis(
+            model=self.nf_model,
+            data_loader=feature_loader,
+            task_id=task_id,
+            n_samples=self.ogp_n_samples
+        )
+
+        # Log memory usage
+        mem_info = self.ogp.get_memory_usage()
+        self._log(f"   📊 OGP Memory: {mem_info['memory_mb']:.2f} MB "
+                  f"({mem_info['n_params']} params, {mem_info['n_tasks']} tasks)")
 
     def inference(self, images: torch.Tensor, task_id: Optional[int] = None):
         """

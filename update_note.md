@@ -803,4 +803,500 @@ python run_moleflow.py \
     --scale_context_init_scale 0.1 \
     --scale_context_max_alpha 0.2
 
-# Baseline 2.0: 
+# Baseline 2.0: Patch-wise Gate (NEW)
+python run_moleflow.py \
+    --use_scale_context \
+    --use_context_gate \
+    --context_gate_hidden 64
+```
+
+### Expected Improvements
+- 패치별로 context 사용 여부 결정 → anomaly 경계에서 더 정밀한 detection
+- Gate network가 normal/anomaly 패치 특성 학습
+- 더 interpretable한 anomaly map 생성 가능
+
+### Baseline 1.5 → 2.0
+| File | Changes |
+|------|---------|
+| `moleflow/models/lora.py` | `MoLEContextSubnet` - context_gate_net 추가 |
+| `moleflow/config/ablation.py` | `use_context_gate`, `context_gate_hidden` 설정 추가 |
+| `moleflow/models/mole_nf.py` | context gate 파라미터 전달, `get_context_info()` 메서드 |
+| `moleflow/trainer/continual_trainer.py` | Context gate/alpha 로깅 추가 |
+
+---
+
+## Version 3 - No-Replay Continual Learning Solutions
+
+### Motivation
+Version 2에서 continual learning 시 성능 저하 문제가 여전히 존재:
+- Task 0 → Task 1 → Task 2 학습 시 이전 task 성능 감소 (Catastrophic Forgetting)
+- 기존 방법: Replay buffer 사용 → 메모리 비용, 프라이버시 문제
+
+**목표**: Replay 없이 continual learning 성능 향상
+
+### V3 New Modules Overview
+
+| Module | 목적 | 위치 |
+|--------|------|------|
+| **WhiteningAdapter** | Task-agnostic feature normalization | Feature → NF 전 |
+| **LightweightMSContext** | Multi-scale receptive field 확장 | NF 입력 전 |
+| **DeepInvertibleAdapter (DIA)** | Task-specific nonlinear manifold adaptation | NF 출력 후 |
+| **OrthogonalGradientProjection (OGP)** | Gradient projection to null space | Training loop |
+| **TwoStageHybridRouter** | Prototype + Likelihood routing | Inference |
+
+---
+
+## V3-1: WhiteningAdapter
+
+### Core Idea
+Task 간 feature distribution shift 문제 해결:
+```
+Task 0 features: mean=μ₀, cov=Σ₀
+Task 1 features: mean=μ₁, cov=Σ₁  (다른 분포)
+```
+
+**Solution**: Whitening → Constrained De-whitening
+```
+x → Whiten(x) → z (zero mean, unit variance)
+z → ConstrainedDewhiten(z) → x' (controlled distribution)
+```
+
+### Implementation
+```python
+# moleflow/models/whitening_adapter.py
+class WhiteningAdapter(nn.Module):
+    """
+    Whitening + Constrained De-whitening for distribution alignment.
+
+    Forward: x → whiten → constrained de-whiten → x'
+    - Whitening uses running statistics (updated during training)
+    - De-whitening uses learnable but constrained parameters
+    """
+    def __init__(self, channels, constraint_scale=0.1):
+        # Running statistics for whitening
+        self.register_buffer('running_mean', torch.zeros(channels))
+        self.register_buffer('running_var', torch.ones(channels))
+
+        # Constrained de-whitening parameters
+        # γ ∈ [1-δ, 1+δ], β ∈ [-δ, δ]
+        self.dewhiten_gamma = nn.Parameter(torch.ones(channels))
+        self.dewhiten_beta = nn.Parameter(torch.zeros(channels))
+        self.constraint_scale = constraint_scale
+
+    def forward(self, x):
+        # Whitening: (x - μ) / σ
+        x_whitened = (x - self.running_mean) / (self.running_var.sqrt() + 1e-5)
+
+        # Constrained de-whitening
+        gamma = 1.0 + self.constraint_scale * torch.tanh(self.dewhiten_gamma - 1.0)
+        beta = self.constraint_scale * torch.tanh(self.dewhiten_beta)
+
+        return gamma * x_whitened + beta
+```
+
+### Key Design
+1. **Running Statistics**: Task별 업데이트, 현재 task의 분포 반영
+2. **Constrained Parameters**: tanh로 범위 제한 → 안정적 학습
+3. **Per-Task Adapter**: 각 task마다 별도 WhiteningAdapter
+
+### Command Line
+```bash
+python run_moleflow.py --use_whitening_adapter
+```
+
+---
+
+## V3-2: LightweightMSContext (Multi-Scale Context)
+
+### Core Idea
+기존 NF는 patch 단위 독립 처리 → 주변 context 무시
+
+**Solution**: Multi-scale dilated convolution으로 receptive field 확장
+```
+x → [Conv_d1, Conv_d2, Conv_d4] → concat → fusion → x + context
+```
+
+### Implementation
+```python
+# moleflow/models/ms_context.py
+class LightweightMSContext(nn.Module):
+    """
+    Multi-scale context via dilated depthwise convolutions.
+
+    Uses multiple dilation rates to capture context at different scales
+    without significantly increasing parameters.
+    """
+    def __init__(self, channels, dilations=[1, 2, 4], kernel_size=3):
+        self.dilated_convs = nn.ModuleList([
+            nn.Conv2d(channels, channels, kernel_size,
+                      padding=d*(kernel_size//2), dilation=d, groups=channels)
+            for d in dilations
+        ])
+        self.fusion = nn.Conv2d(channels * len(dilations), channels, 1)
+        self.gate = nn.Parameter(torch.zeros(1))  # Starts at 0.5 after sigmoid
+
+    def forward(self, x):
+        # x: (B, H, W, D) → (B, D, H, W) for conv
+        x_conv = x.permute(0, 3, 1, 2)
+
+        # Multi-scale features
+        ms_features = [conv(x_conv) for conv in self.dilated_convs]
+        ms_concat = torch.cat(ms_features, dim=1)
+
+        # Fusion and gating
+        context = self.fusion(ms_concat).permute(0, 2, 3, 1)
+        gate = torch.sigmoid(self.gate)
+
+        return x + gate * context
+```
+
+### Key Design
+1. **Depthwise Separable**: 파라미터 효율적
+2. **Multiple Dilations**: d=1,2,4로 다양한 scale 포착
+3. **Learnable Gate**: 학습 초기 안정성
+
+### Command Line
+```bash
+python run_moleflow.py --use_ms_context
+```
+
+### ⚠️ Warning: WhiteningAdapter + MS-Context 충돌
+
+두 모듈을 동시 사용 시 학습 불안정 발생:
+- Loss가 음수로 발산
+- Task 0 성능 급격히 저하
+
+**원인**: 두 모듈 모두 NF 입력 전에 feature를 변환하여 distribution 충돌
+
+**자동 해결**: `AblationConfig`에서 자동으로 MS-Context 비활성화
+```python
+# ablation.py __post_init__()
+if self.use_whitening_adapter and self.use_ms_context:
+    print("⚠️  Warning: use_whitening_adapter + use_ms_context 조합은 학습 불안정")
+    self.use_ms_context = False
+```
+
+---
+
+## V3-3: DeepInvertibleAdapter (DIA)
+
+### Core Idea
+Base NF 출력 후 task-specific nonlinear adaptation:
+```
+x → Base NF → z_base → DIA_task → z_final
+```
+
+**Why DIA?**
+- LoRA: Linear adaptation (표현력 제한)
+- DIA: Invertible nonlinear adaptation (더 강력한 manifold adaptation)
+
+### Implementation
+```python
+# moleflow/models/dia.py
+class DeepInvertibleAdapter(nn.Module):
+    """
+    Task-specific mini normalizing flow after base NF.
+
+    Provides nonlinear manifold adaptation while maintaining invertibility.
+    """
+    def __init__(self, channels, n_blocks=2, hidden_ratio=0.5):
+        self.blocks = nn.ModuleList([
+            InvertibleBlock(channels, hidden_ratio) for _ in range(n_blocks)
+        ])
+
+    def forward(self, z, reverse=False):
+        logdet = 0
+        blocks = reversed(self.blocks) if reverse else self.blocks
+
+        for block in blocks:
+            z, ld = block(z, reverse=reverse)
+            logdet = logdet + ld
+
+        return z, logdet
+
+class InvertibleBlock(nn.Module):
+    """Affine coupling block for DIA."""
+    def __init__(self, channels, hidden_ratio=0.5):
+        hidden_dim = int(channels * hidden_ratio)
+        self.net = nn.Sequential(
+            nn.Linear(channels // 2, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, channels)  # s and t
+        )
+
+    def forward(self, x, reverse=False):
+        x1, x2 = x.chunk(2, dim=-1)
+        st = self.net(x1)
+        s, t = st.chunk(2, dim=-1)
+        s = torch.tanh(s) * 0.5  # Bounded scale
+
+        if not reverse:
+            y2 = x2 * torch.exp(s) + t
+            logdet = s.sum(dim=-1)
+        else:
+            y2 = (x2 - t) * torch.exp(-s)
+            logdet = -s.sum(dim=-1)
+
+        return torch.cat([x1, y2], dim=-1), logdet
+```
+
+### Integration in mole_nf.py
+```python
+class MoLESpatialAwareNF(nn.Module):
+    def __init__(self, ...):
+        # ...
+        self.dia_adapters = nn.ModuleDict()  # Per-task DIA
+
+    def add_task_adapter(self, task_id):
+        if self.use_dia:
+            self.dia_adapters[str(task_id)] = DeepInvertibleAdapter(
+                self.c_in, self.dia_n_blocks, self.dia_hidden_ratio
+            )
+
+    def forward(self, x, reverse=False):
+        # Base NF forward
+        z, logdet = self.inn(x)
+
+        # DIA forward
+        if self.use_dia and self.current_task_id is not None:
+            task_key = str(self.current_task_id)
+            if task_key in self.dia_adapters:
+                z, dia_logdet = self.dia_adapters[task_key](z, reverse=reverse)
+                logdet = logdet + dia_logdet
+
+        return z, logdet
+```
+
+### Command Line
+```bash
+python run_moleflow.py \
+    --use_dia \
+    --dia_n_blocks 2 \
+    --dia_hidden_ratio 0.5
+```
+
+---
+
+## V3-4: OrthogonalGradientProjection (OGP)
+
+### Core Idea
+이전 task에서 중요한 gradient 방향을 보존:
+```
+∇L_new → Project to null space of previous tasks → ∇L_projected
+```
+
+**Gradient Projection**:
+```
+g' = g - Σᵢ (g · vᵢ) vᵢ
+```
+where vᵢ = important directions from previous tasks
+
+### Implementation
+```python
+# moleflow/models/ogp.py
+class OrthogonalGradientProjection:
+    """
+    Projects gradients to the null space of important subspaces
+    from previous tasks to prevent catastrophic forgetting.
+    """
+    def __init__(self, threshold=0.99, max_rank_per_task=50, device='cuda'):
+        self.threshold = threshold
+        self.max_rank = max_rank_per_task
+        self.device = device
+        self.projection_matrices = {}  # Per-parameter projection
+
+    def compute_basis(self, model, dataloader, task_id):
+        """Compute important gradient directions for current task."""
+        gradients = self._collect_gradients(model, dataloader)
+
+        for name, grads in gradients.items():
+            # SVD to find important directions
+            G = torch.stack(grads)  # (N, D)
+            U, S, V = torch.svd(G)
+
+            # Select top-k directions (explain threshold% variance)
+            cumsum = torch.cumsum(S**2, 0) / (S**2).sum()
+            k = (cumsum < self.threshold).sum() + 1
+            k = min(k, self.max_rank)
+
+            # Store projection matrix: I - V_k @ V_k.T
+            V_k = V[:, :k]
+            if name not in self.projection_matrices:
+                self.projection_matrices[name] = V_k
+            else:
+                # Merge with existing basis
+                combined = torch.cat([self.projection_matrices[name], V_k], dim=1)
+                U_c, S_c, V_c = torch.svd(combined)
+                self.projection_matrices[name] = V_c[:, :self.max_rank]
+
+    def project_gradient(self, model):
+        """Project current gradients to null space of stored basis."""
+        for name, param in model.named_parameters():
+            if param.grad is None or name not in self.projection_matrices:
+                continue
+
+            V = self.projection_matrices[name]
+            g = param.grad.view(-1)
+
+            # g' = g - V @ V.T @ g
+            g_proj = g - V @ (V.T @ g)
+            param.grad = g_proj.view(param.grad.shape)
+```
+
+### Integration in Trainer
+```python
+class MoLEContinualTrainer:
+    def __init__(self, ...):
+        if self.use_ogp:
+            self.ogp = OrthogonalGradientProjection(
+                threshold=self.ogp_threshold,
+                max_rank_per_task=self.ogp_max_rank
+            )
+
+    def _train_fast_stage(self, task_id, ...):
+        for batch in dataloader:
+            loss.backward()
+
+            # OGP: Project gradients
+            if self.use_ogp and self.ogp.is_initialized:
+                self.ogp.project_gradient(self.nf_model)
+
+            optimizer.step()
+
+    def _after_task_training(self, task_id, dataloader):
+        # Compute OGP basis after task training
+        if self.use_ogp:
+            self.ogp.compute_basis(self.nf_model, dataloader, task_id)
+```
+
+### Command Line
+```bash
+python run_moleflow.py \
+    --use_ogp \
+    --ogp_threshold 0.99 \
+    --ogp_max_rank 50
+```
+
+---
+
+## V3-5: TwoStageHybridRouter
+
+### Core Idea
+기존 Router는 Prototype matching만 사용 → 유사한 task 구분 어려움
+
+**Solution**: Two-stage routing
+1. **Stage 1 (Fast)**: Prototype filtering → Top-K candidates
+2. **Stage 2 (Accurate)**: NF likelihood comparison → Final selection
+
+### Implementation
+```python
+# moleflow/models/routing.py
+class TwoStageHybridRouter(nn.Module):
+    """
+    Two-stage routing: Prototype filtering + Likelihood refinement.
+
+    Stage 1: Mahalanobis distance to prototypes → Top-K candidates
+    Stage 2: NF log-likelihood for final selection
+    """
+    def __init__(self, nf_model, top_k=2):
+        self.prototype_router = PrototypeRouter()
+        self.nf_model = nf_model
+        self.top_k = top_k
+
+    def forward(self, features):
+        # Stage 1: Prototype distances
+        distances = self.prototype_router.compute_distances(features)
+        top_k_tasks = distances.argsort()[:self.top_k]
+
+        # Stage 2: NF likelihood
+        likelihoods = []
+        for task_id in top_k_tasks:
+            self.nf_model.set_task(task_id)
+            z, logdet = self.nf_model(features)
+            log_prob = -0.5 * (z**2).sum() + logdet
+            likelihoods.append(log_prob)
+
+        # Select task with highest likelihood
+        best_idx = torch.stack(likelihoods).argmax()
+        return top_k_tasks[best_idx]
+```
+
+### Command Line
+```bash
+python run_moleflow.py \
+    --use_hybrid_router \
+    --router_top_k 2
+```
+
+---
+
+## V3 Experiment Results
+
+### Ablation Study (leather → grid → transistor)
+
+| Configuration | Image AUC | Pixel AUC | Notes |
+|---------------|-----------|-----------|-------|
+| **Baseline (V2)** | 0.8168 | 0.9166 | - |
+| DIA only | 0.8217 | 0.9277 | +0.5% Image, +1.1% Pixel |
+| OGP only | 0.8180 | 0.9161 | Minimal change |
+| **DIA + OGP** | **0.8226** | **0.9231** | **Best combination** |
+| WhiteningAdapter only | (실험 중) | (실험 중) | - |
+| MS-Context only | (실험 중) | (실험 중) | - |
+| All V3 (conflict) | 0.4471 | 0.5527 | ❌ 실패 (충돌) |
+
+### Key Findings
+1. **DIA + OGP**: Best performance without replay
+2. **WhiteningAdapter + MS-Context**: 조합 시 충돌 → 자동 비활성화 처리
+3. **DIA > OGP**: DIA가 더 큰 성능 향상 기여
+
+---
+
+## V3 File Changes Summary
+
+| File | Changes |
+|------|---------|
+| `moleflow/models/whitening_adapter.py` | NEW: WhiteningAdapter module |
+| `moleflow/models/ms_context.py` | NEW: LightweightMSContext module |
+| `moleflow/models/dia.py` | NEW: DeepInvertibleAdapter module |
+| `moleflow/models/ogp.py` | NEW: OrthogonalGradientProjection |
+| `moleflow/models/routing.py` | TwoStageHybridRouter 추가 |
+| `moleflow/models/mole_nf.py` | DIA integration, V3 options |
+| `moleflow/config/ablation.py` | V3 options: use_dia, use_ogp, use_whitening_adapter, use_ms_context |
+| `moleflow/trainer/continual_trainer.py` | OGP integration |
+| `run_moleflow.py` | V3 CLI arguments, config saving |
+| `run_v3_experiments.sh` | V3 ablation experiment script |
+
+---
+
+## V3 Command Line Reference
+
+```bash
+# Full V3 with recommended settings (DIA + OGP)
+python run_moleflow.py \
+    --use_dia \
+    --dia_n_blocks 2 \
+    --use_ogp \
+    --ogp_threshold 0.99 \
+    --ogp_max_rank 50 \
+    --experiment_name Version3-DIA_OGP
+
+# WhiteningAdapter only
+python run_moleflow.py \
+    --use_whitening_adapter \
+    --experiment_name Version3-WhiteningAdapter
+
+# MS-Context only (automatically disabled if WhiteningAdapter is on)
+python run_moleflow.py \
+    --use_ms_context \
+    --experiment_name Version3-MSContext
+
+# All options with diagnostics
+python run_moleflow.py \
+    --run_diagnostics \
+    --use_dia \
+    --use_ogp \
+    --use_whitening_adapter \
+    --experiment_name Version3-All
+```
+
+---

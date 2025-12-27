@@ -12,8 +12,8 @@ from typing import List, Optional, TYPE_CHECKING
 import FrEIA.framework as Ff
 import FrEIA.modules as Fm
 
-from moleflow.models.lora import MoLESubnet, MoLEContextSubnet
-from moleflow.models.adapters import FeatureStatistics, TaskInputAdapter, create_task_adapter, SpatialContextMixer
+from moleflow.models.lora import MoLESubnet, MoLEContextSubnet, LightweightMSContext, TaskConditionedMSContext, DeepInvertibleAdapter
+from moleflow.models.adapters import FeatureStatistics, TaskInputAdapter, create_task_adapter, SpatialContextMixer, WhiteningAdapter
 
 if TYPE_CHECKING:
     from moleflow.config.ablation import AblationConfig
@@ -71,6 +71,22 @@ class MoLESpatialAwareNF(nn.Module):
             self.scale_context_kernel = 3
             self.scale_context_init_scale = 0.1
             self.scale_context_max_alpha = 0.2
+            # V3 defaults (all disabled for backward compatibility)
+            self.use_ms_context = False
+            self.ms_context_dilations = (1, 2, 4)
+            self.ms_context_use_regional = True
+            self.use_whitening_adapter = False
+            self.use_adaptive_unfreeze = False
+            self.adaptive_unfreeze_ratio = 0.4
+            # V3 DIA defaults
+            self.use_dia = False
+            self.dia_n_blocks = 2
+            self.dia_hidden_ratio = 0.5
+            # V3 Task-Conditioned MS Context defaults
+            self.use_task_conditioned_ms_context = False
+            self.tc_ms_context_dilations = (1, 2, 4)
+            self.tc_ms_context_use_regional = True
+            self.tc_ms_context_lora_rank = 16
         else:
             self.use_lora = ablation_config.use_lora
             self.use_task_adapter = ablation_config.use_task_adapter
@@ -85,6 +101,22 @@ class MoLESpatialAwareNF(nn.Module):
             self.scale_context_kernel = ablation_config.scale_context_kernel
             self.scale_context_init_scale = ablation_config.scale_context_init_scale
             self.scale_context_max_alpha = ablation_config.scale_context_max_alpha
+            # V3 settings
+            self.use_ms_context = ablation_config.use_ms_context
+            self.ms_context_dilations = ablation_config.ms_context_dilations
+            self.ms_context_use_regional = ablation_config.ms_context_use_regional
+            self.use_whitening_adapter = ablation_config.use_whitening_adapter
+            self.use_adaptive_unfreeze = ablation_config.use_adaptive_unfreeze
+            self.adaptive_unfreeze_ratio = ablation_config.adaptive_unfreeze_ratio
+            # V3 DIA settings
+            self.use_dia = ablation_config.use_dia
+            self.dia_n_blocks = ablation_config.dia_n_blocks
+            self.dia_hidden_ratio = ablation_config.dia_hidden_ratio
+            # V3 Task-Conditioned MS Context settings
+            self.use_task_conditioned_ms_context = ablation_config.use_task_conditioned_ms_context
+            self.tc_ms_context_dilations = ablation_config.tc_ms_context_dilations
+            self.tc_ms_context_use_regional = ablation_config.tc_ms_context_use_regional
+            self.tc_ms_context_lora_rank = ablation_config.tc_ms_context_lora_rank
 
         # Track tasks
         self.num_tasks = 0
@@ -100,9 +132,38 @@ class MoLESpatialAwareNF(nn.Module):
         # Task-specific input adapters for pre-conditioning
         self.input_adapters = nn.ModuleDict()
 
-        # Spatial Context Mixer (Baseline 1.5)
-        # Shared across all tasks - provides local context for scale(s)
-        if self.use_spatial_context:
+        # V3: Deep Invertible Adapters (DIA) per task
+        # Applied AFTER base NF for nonlinear manifold adaptation
+        self.dia_adapters = nn.ModuleDict()
+
+        # Spatial Context Mixer (Baseline 1.5) or MS-Context (V3)
+        # Priority: TaskConditionedMSContext > LightweightMSContext > SpatialContextMixer
+        if self.use_task_conditioned_ms_context:
+            # V3 Improved: Task-Conditioned MS Context (fundamental solution)
+            # - Shared base frozen after Task 0
+            # - Task-specific adaptation via LoRA
+            self.spatial_mixer = TaskConditionedMSContext(
+                channels=embed_dim,
+                dilations=self.tc_ms_context_dilations,
+                use_regional=self.tc_ms_context_use_regional,
+                regional_grid=4,
+                lora_rank=self.tc_ms_context_lora_rank,
+                lora_alpha=1.0
+            )
+            print(f"✅ [V3] TaskConditionedMSContext enabled: dilations={self.tc_ms_context_dilations}, "
+                  f"regional={self.tc_ms_context_use_regional}, lora_rank={self.tc_ms_context_lora_rank}")
+        elif self.use_ms_context:
+            # V3: Lightweight Multi-Scale Context (supersedes SpatialContextMixer)
+            # WARNING: This has catastrophic forgetting issues - use TaskConditionedMSContext instead
+            self.spatial_mixer = LightweightMSContext(
+                channels=embed_dim,
+                dilations=self.ms_context_dilations,
+                use_regional=self.ms_context_use_regional,
+                regional_grid=4
+            )
+            print(f"⚠️  [V3] LightweightMSContext enabled: dilations={self.ms_context_dilations}, "
+                  f"regional={self.ms_context_use_regional} (WARNING: May cause forgetting)")
+        elif self.use_spatial_context:
             self.spatial_mixer = SpatialContextMixer(
                 channels=embed_dim,
                 mode=self.spatial_context_mode,
@@ -207,6 +268,16 @@ class MoLESpatialAwareNF(nn.Module):
                     soft_ln_init_scale=self.soft_ln_init_scale
                 ).to(self.device)
 
+            # V3: Add DIA for Task 0 (all tasks get DIA for uniform treatment)
+            if self.use_dia:
+                self.dia_adapters[task_key] = DeepInvertibleAdapter(
+                    channels=self.embed_dim,
+                    task_id=task_id,
+                    n_blocks=self.dia_n_blocks,
+                    hidden_ratio=self.dia_hidden_ratio,
+                    clamp_alpha=self.clamp_alpha
+                ).to(self.device)
+
             components = []
             if self.use_lora:
                 components.append(f"LoRA (rank={self.lora_rank})")
@@ -217,15 +288,35 @@ class MoLESpatialAwareNF(nn.Module):
                 if self.adapter_mode == "soft_ln":
                     adapter_info += f" [init_scale={self.soft_ln_init_scale}]"
                 components.append(adapter_info)
+            if self.use_dia:
+                components.append(f"DIA ({self.dia_n_blocks} blocks)")
 
             print(f"✅ Task {task_id}: Base weights trainable + {' + '.join(components) if components else 'no adapters'}")
             print(f"   📊 Feature statistics will be collected during training")
         else:
-            # Task > 0: Freeze base, add LoRA adapters + task biases
-            for subnet in self.subnets:
-                subnet.freeze_base()
-                if self.use_lora or self.use_task_bias:
-                    subnet.add_task_adapter(task_id)
+            # Task > 0: Freeze or partially unfreeze base, add LoRA adapters + task biases
+            if self.use_adaptive_unfreeze:
+                # V3: Adaptive unfreezing - unfreeze later blocks
+                n_blocks = self.coupling_layers
+                n_frozen = int(n_blocks * (1 - self.adaptive_unfreeze_ratio))
+
+                for i, subnet in enumerate(self.subnets):
+                    block_idx = i // 2  # Each block has ~2 subnets
+                    if block_idx < n_frozen:
+                        subnet.freeze_base()
+                    else:
+                        subnet.unfreeze_base()  # Allow later blocks to adapt
+
+                    if self.use_lora or self.use_task_bias:
+                        subnet.add_task_adapter(task_id)
+
+                print(f"   🔓 [V3] Adaptive Unfreeze: {n_frozen}/{n_blocks} blocks frozen, {n_blocks - n_frozen} unfrozen")
+            else:
+                # Standard: Freeze all base weights
+                for subnet in self.subnets:
+                    subnet.freeze_base()
+                    if self.use_lora or self.use_task_bias:
+                        subnet.add_task_adapter(task_id)
 
             # Create input adapter with reference statistics
             if self.use_task_adapter:
@@ -245,6 +336,17 @@ class MoLESpatialAwareNF(nn.Module):
                     soft_ln_init_scale=self.soft_ln_init_scale
                 ).to(self.device)
 
+            # V3: Add DIA for Task > 0 (nonlinear manifold adaptation)
+            if self.use_dia:
+                self.dia_adapters[task_key] = DeepInvertibleAdapter(
+                    channels=self.embed_dim,
+                    task_id=task_id,
+                    n_blocks=self.dia_n_blocks,
+                    hidden_ratio=self.dia_hidden_ratio,
+                    clamp_alpha=self.clamp_alpha
+                ).to(self.device)
+                print(f"   🔄 [V3] DIA added: {self.dia_n_blocks} coupling blocks")
+
             # Print status
             components = []
             if self.use_lora:
@@ -258,11 +360,17 @@ class MoLESpatialAwareNF(nn.Module):
                 elif self.adapter_mode == "no_ln_after_task0":
                     adapter_info += " [LN=OFF]"
                 components.append(adapter_info)
+            if self.use_dia:
+                components.append(f"DIA ({self.dia_n_blocks} blocks)")
 
             if components:
                 print(f"✅ Task {task_id}: Base frozen, {' + '.join(components)} added")
             else:
                 print(f"✅ Task {task_id}: Base frozen (no task-specific components - ablation mode)")
+
+        # V3: Add task to TaskConditionedMSContext (handles its own freeze/unfreeze)
+        if self.use_task_conditioned_ms_context and self.spatial_mixer is not None:
+            self.spatial_mixer.add_task(task_id)
 
         self.num_tasks = task_id + 1
         self.set_active_task(task_id)
@@ -278,6 +386,10 @@ class MoLESpatialAwareNF(nn.Module):
     def set_active_task(self, task_id: Optional[int]):
         """Set the currently active LoRA adapter."""
         self.current_task_id = task_id
+
+        # Set active task for TaskConditionedMSContext
+        if self.use_task_conditioned_ms_context and self.spatial_mixer is not None:
+            self.spatial_mixer.set_active_task(task_id)
 
         if task_id is None:
             for subnet in self.subnets:
@@ -335,6 +447,10 @@ class MoLESpatialAwareNF(nn.Module):
             # Include InputAdapter parameters for Task 0
             if task_key in self.input_adapters:
                 params.extend(self.input_adapters[task_key].parameters())
+
+            # V3: DIA parameters for Task 0
+            if task_key in self.dia_adapters:
+                params.extend(self.dia_adapters[task_key].parameters())
         else:
             # Task > 0: LoRA parameters + Task Biases + Input Adapter
             for subnet in self.subnets:
@@ -362,9 +478,20 @@ class MoLESpatialAwareNF(nn.Module):
             if task_key in self.input_adapters:
                 params.extend(self.input_adapters[task_key].parameters())
 
-        # Spatial mixer parameters (shared, trained with each task)
+            # V3: DIA parameters for Task > 0
+            if task_key in self.dia_adapters:
+                params.extend(self.dia_adapters[task_key].parameters())
+
+        # Spatial mixer parameters
         if self.spatial_mixer is not None:
-            params.extend(self.spatial_mixer.parameters())
+            if self.use_task_conditioned_ms_context:
+                # TaskConditionedMSContext: Use its own get_trainable_params
+                # This properly handles shared vs task-specific params
+                params.extend(self.spatial_mixer.get_trainable_params(task_id))
+            else:
+                # Other spatial mixers (SpatialContextMixer, LightweightMSContext):
+                # Train all params with each task (may cause forgetting for LightweightMSContext)
+                params.extend(self.spatial_mixer.parameters())
 
         return params
 
@@ -428,6 +555,15 @@ class MoLESpatialAwareNF(nn.Module):
 
         # Reshape back to spatial
         z = z_flat.reshape(B, H, W, D)
+
+        # V3: Apply DIA (Deep Invertible Adapter) if enabled
+        # DIA is applied AFTER base NF for nonlinear manifold adaptation
+        if self.use_dia and self.current_task_id is not None:
+            task_key = str(self.current_task_id)
+            if task_key in self.dia_adapters:
+                dia = self.dia_adapters[task_key]
+                z, dia_logdet = dia(z, reverse=reverse)
+                logdet_patch = logdet_patch + dia_logdet
 
         return z, logdet_patch
 
@@ -577,6 +713,10 @@ class MoLESpatialAwareNF(nn.Module):
         if task_key in self.input_adapters:
             params.extend(self.input_adapters[task_key].parameters())
 
+        # V3: DIA parameters (part of FAST stage)
+        if task_key in self.dia_adapters:
+            params.extend(self.dia_adapters[task_key].parameters())
+
         # Spatial mixer parameters (shared, trained with FAST stage)
         if self.spatial_mixer is not None:
             params.extend(self.spatial_mixer.parameters())
@@ -608,6 +748,11 @@ class MoLESpatialAwareNF(nn.Module):
             for param in self.input_adapters[task_key].parameters():
                 param.requires_grad = False
 
+        # V3: Freeze DIA parameters
+        if task_key in self.dia_adapters:
+            for param in self.dia_adapters[task_key].parameters():
+                param.requires_grad = False
+
         # Freeze spatial mixer
         if self.spatial_mixer is not None:
             for param in self.spatial_mixer.parameters():
@@ -636,6 +781,11 @@ class MoLESpatialAwareNF(nn.Module):
 
         if task_key in self.input_adapters:
             for param in self.input_adapters[task_key].parameters():
+                param.requires_grad = True
+
+        # V3: Unfreeze DIA parameters
+        if task_key in self.dia_adapters:
+            for param in self.dia_adapters[task_key].parameters():
                 param.requires_grad = True
 
         # Unfreeze spatial mixer

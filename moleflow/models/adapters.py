@@ -363,7 +363,7 @@ def create_task_adapter(adapter_mode: str, channels: int,
     Factory function to create the appropriate adapter based on mode.
 
     Args:
-        adapter_mode: "soft_ln", "standard", "no_ln_after_task0"
+        adapter_mode: "soft_ln", "standard", "no_ln_after_task0", "whitening"
         channels: Feature dimension
         reference_mean: Reference mean from Task 0
         reference_std: Reference std from Task 0
@@ -373,7 +373,17 @@ def create_task_adapter(adapter_mode: str, channels: int,
     Returns:
         Appropriate adapter module
     """
-    if adapter_mode == "soft_ln":
+    if adapter_mode == "whitening":
+        # V3: Whitening + constrained de-whitening
+        return WhiteningAdapter(
+            channels=channels,
+            task_id=task_id,
+            reference_mean=reference_mean,
+            reference_std=reference_std,
+            gamma_range=kwargs.get('gamma_range', (0.5, 2.0)),
+            beta_max=kwargs.get('beta_max', 2.0)
+        )
+    elif adapter_mode == "soft_ln":
         # SoftLN: Task 0 has learnable LN blend, Task > 0 has blend=0 (LN off)
         return SoftLNTaskInputAdapter(
             channels=channels,
@@ -398,6 +408,127 @@ def create_task_adapter(adapter_mode: str, channels: int,
             reference_std=reference_std,
             use_norm=True
         )
+
+
+# =============================================================================
+# V3 Improvements: Whitening-based Distribution Adapter
+# =============================================================================
+
+class WhiteningAdapter(nn.Module):
+    """
+    Whitening-based Task Adapter (V3 Solution 3).
+
+    Key Design:
+    1. All tasks go through Whitening first (mean=0, std=1)
+    2. Task-specific de-whitening with constrained parameters
+    3. Task 0 stays close to identity (anchor point)
+
+    This ensures:
+    - All tasks have consistent intermediate representation
+    - Base NF receives well-normalized inputs regardless of task
+    - Task-specific adaptation is controlled and stable
+
+    Parameters:
+    - gamma: constrained to [0.5, 2.0] via sigmoid
+    - beta: constrained to [-2.0, 2.0] via tanh
+    """
+
+    def __init__(self, channels: int, task_id: int = 0,
+                 reference_mean: torch.Tensor = None,
+                 reference_std: torch.Tensor = None,
+                 gamma_range: tuple = (0.5, 2.0),
+                 beta_max: float = 2.0):
+        super(WhiteningAdapter, self).__init__()
+
+        self.channels = channels
+        self.task_id = task_id
+        self.gamma_min, self.gamma_max = gamma_range
+        self.beta_max = beta_max
+
+        # Whitening layer (shared across all tasks, no learnable affine)
+        self.whiten = nn.LayerNorm(channels, elementwise_affine=False)
+
+        # Store reference statistics for logging/debugging
+        if reference_mean is not None:
+            self.register_buffer('reference_mean', reference_mean.clone())
+            self.register_buffer('reference_std', reference_std.clone())
+            self.has_reference = True
+        else:
+            self.register_buffer('reference_mean', torch.zeros(channels))
+            self.register_buffer('reference_std', torch.ones(channels))
+            self.has_reference = False
+
+        if task_id == 0:
+            # Task 0: Start very close to identity, learnable but regularized
+            # gamma_raw=0 → sigmoid=0.5 → gamma = 0.5 + 1.5*0.5 = 1.25
+            # We want gamma ≈ 1.0, so init gamma_raw to make sigmoid ≈ 0.33
+            # sigmoid(x) = 0.33 → x ≈ -0.7
+            init_gamma_raw = -0.7 * torch.ones(1, 1, 1, channels)
+            self.gamma_raw = nn.Parameter(init_gamma_raw)
+            self.beta_raw = nn.Parameter(torch.zeros(1, 1, 1, channels))
+            self.identity_reg_weight = 0.1  # Regularize toward identity
+        else:
+            # Task 1+: Learnable, initialized based on reference stats
+            self.gamma_raw = nn.Parameter(torch.zeros(1, 1, 1, channels))
+            self.beta_raw = nn.Parameter(torch.zeros(1, 1, 1, channels))
+            self.identity_reg_weight = 0.0
+
+    @property
+    def gamma(self):
+        """Constrained gamma in [gamma_min, gamma_max]."""
+        gamma_range = self.gamma_max - self.gamma_min
+        return self.gamma_min + gamma_range * torch.sigmoid(self.gamma_raw)
+
+    @property
+    def beta(self):
+        """Constrained beta in [-beta_max, beta_max]."""
+        return self.beta_max * torch.tanh(self.beta_raw)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Apply whitening followed by task-specific de-whitening.
+
+        Args:
+            x: (B, H, W, D) input features
+
+        Returns:
+            Transformed features with same shape
+        """
+        B, H, W, D = x.shape
+
+        # 1. Whitening: normalize to N(0, 1)
+        x_flat = x.reshape(-1, D)
+        x_white = self.whiten(x_flat).reshape(B, H, W, D)
+
+        # 2. Task-specific de-whitening
+        x_out = self.gamma * x_white + self.beta
+
+        return x_out
+
+    def identity_regularization(self) -> torch.Tensor:
+        """
+        Regularization loss to keep Task 0 adapter close to identity.
+
+        Returns:
+            Regularization loss term
+        """
+        if self.identity_reg_weight > 0:
+            # gamma should be close to 1.0
+            gamma_reg = ((self.gamma - 1.0) ** 2).mean()
+            # beta should be close to 0.0
+            beta_reg = (self.beta ** 2).mean()
+            return self.identity_reg_weight * (gamma_reg + beta_reg)
+        return torch.tensor(0.0, device=self.gamma_raw.device)
+
+    def get_stats(self) -> dict:
+        """Get current adapter statistics for logging."""
+        with torch.no_grad():
+            return {
+                'gamma_mean': self.gamma.mean().item(),
+                'gamma_std': self.gamma.std().item(),
+                'beta_mean': self.beta.mean().item(),
+                'beta_std': self.beta.std().item(),
+            }
 
 
 class SpatialContextMixer(nn.Module):
