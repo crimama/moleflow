@@ -467,12 +467,8 @@ class MoLESpatialAwareNF(nn.Module):
                     if task_key in layer.task_biases:
                         params.append(layer.task_biases[task_key])
 
-                # MoLEContextSubnet: context_conv and context scaling parameters
-                # (shared across tasks but still trainable)
-                if hasattr(subnet, 'context_conv'):
-                    params.extend(subnet.context_conv.parameters())
-                if hasattr(subnet, 'context_scale_param') and subnet.context_scale_param is not None:
-                    params.append(subnet.context_scale_param)
+                # V4.1: MoLEContextSubnet context parameters are frozen for Task > 0
+                # They are only trained in Task 0 (see the task_id == 0 block above)
 
             # Input adapter parameters
             if task_key in self.input_adapters:
@@ -703,11 +699,14 @@ class MoLESpatialAwareNF(nn.Module):
                 if task_key in layer.task_biases:
                     params.append(layer.task_biases[task_key])
 
-            # MoLEContextSubnet: context_conv and context scaling parameters
-            if hasattr(subnet, 'context_conv'):
-                params.extend(subnet.context_conv.parameters())
-            if hasattr(subnet, 'context_scale_param') and subnet.context_scale_param is not None:
-                params.append(subnet.context_scale_param)
+            # V4.1: MoLEContextSubnet context parameters - only trained in Task 0
+            # context_conv and context_scale_param are shared across tasks
+            # Freezing after Task 0 prevents representation drift
+            if task_id == 0:
+                if hasattr(subnet, 'context_conv'):
+                    params.extend(subnet.context_conv.parameters())
+                if hasattr(subnet, 'context_scale_param') and subnet.context_scale_param is not None:
+                    params.append(subnet.context_scale_param)
 
         # Input adapter parameters
         if task_key in self.input_adapters:
@@ -740,12 +739,13 @@ class MoLESpatialAwareNF(nn.Module):
                 if task_key in layer.task_biases:
                     layer.task_biases[task_key].requires_grad = False
 
-            # MoLEContextSubnet: freeze context parameters
-            if hasattr(subnet, 'context_conv'):
-                for param in subnet.context_conv.parameters():
-                    param.requires_grad = False
-            if hasattr(subnet, 'context_scale_param') and subnet.context_scale_param is not None:
-                subnet.context_scale_param.requires_grad = False
+            # V4.1: MoLEContextSubnet context parameters - only freeze for Task 0
+            if task_id == 0:
+                if hasattr(subnet, 'context_conv'):
+                    for param in subnet.context_conv.parameters():
+                        param.requires_grad = False
+                if hasattr(subnet, 'context_scale_param') and subnet.context_scale_param is not None:
+                    subnet.context_scale_param.requires_grad = False
 
         if task_key in self.input_adapters:
             for param in self.input_adapters[task_key].parameters():
@@ -775,12 +775,13 @@ class MoLESpatialAwareNF(nn.Module):
                 if task_key in layer.task_biases:
                     layer.task_biases[task_key].requires_grad = True
 
-            # MoLEContextSubnet: unfreeze context parameters
-            if hasattr(subnet, 'context_conv'):
-                for param in subnet.context_conv.parameters():
-                    param.requires_grad = True
-            if hasattr(subnet, 'context_scale_param') and subnet.context_scale_param is not None:
-                subnet.context_scale_param.requires_grad = True
+            # V4.1: MoLEContextSubnet context parameters - only unfreeze for Task 0
+            if task_id == 0:
+                if hasattr(subnet, 'context_conv'):
+                    for param in subnet.context_conv.parameters():
+                        param.requires_grad = True
+                if hasattr(subnet, 'context_scale_param') and subnet.context_scale_param is not None:
+                    subnet.context_scale_param.requires_grad = True
 
         if task_key in self.input_adapters:
             for param in self.input_adapters[task_key].parameters():

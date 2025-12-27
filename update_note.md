@@ -1831,3 +1831,125 @@ python run_moleflow.py \
 | `run.sh` | V4 실험 스크립트: `Version4-CompleteSeparation_all_classes_alphabet` |
 
 ---
+
+## V4 Experiment Results (15 Classes)
+
+### Catastrophic Forgetting 해결 ✅
+
+| 순서 | Task 0 | V3 After Task 14 | V4 After Task 14 | 개선 |
+|------|--------|------------------|------------------|------|
+| Original | leather | 0.07 (-93%) | **1.00 (0%)** | ✅ 완전 해결 |
+| Alphabet | bottle | 0.30 (-70%) | **0.999 (-0.08%)** | ✅ 완전 해결 |
+
+### 전체 성능 비교
+
+| 지표 | V3 Original | V4 Original | V4 Alphabet |
+|------|-------------|-------------|-------------|
+| Mean Image AUC | 0.7716 | **0.8636** | 0.8564 |
+| Mean Pixel AUC | 0.9009 | **0.9272** | 0.9245 |
+| Routing Acc | 99.76% | 99.76% | 99.76% |
+
+**V4 vs V3: Mean Image AUC +12% 향상**
+
+### 클래스별 상세 결과 (V4 Original Order)
+
+| Class | Task ID | Image AUC | Pixel AUC | Gap |
+|-------|---------|-----------|-----------|-----|
+| leather | 0 | 1.000 | 0.972 | +0.03 |
+| grid | 1 | 0.842 | 0.908 | -0.07 |
+| transistor | 2 | 0.773 | 0.926 | -0.15 |
+| carpet | 3 | 0.968 | 0.965 | +0.00 |
+| zipper | 4 | 0.935 | 0.853 | +0.08 |
+| hazelnut | 5 | 0.952 | 0.968 | -0.02 |
+| toothbrush | 6 | 0.775 | 0.946 | -0.17 |
+| metal_nut | 7 | 0.946 | 0.978 | -0.03 |
+| screw | 8 | **0.420** | 0.856 | **-0.44** |
+| wood | 9 | 0.979 | 0.895 | +0.08 |
+| tile | 10 | 1.000 | 0.883 | +0.12 |
+| capsule | 11 | 0.670 | 0.939 | -0.27 |
+| pill | 12 | 0.819 | 0.951 | -0.13 |
+| cable | 13 | 0.875 | 0.910 | -0.03 |
+| bottle | 14 | 0.999 | 0.958 | +0.04 |
+
+### 발견된 문제
+
+#### 1. 미세 성능 변화 (context_conv 공유)
+
+grid Image AUC 추적:
+```
+After Task  1: 0.8463
+After Task 14: 0.8421 (-0.42%)
+```
+
+**원인**: `context_conv`와 `context_scale_param`이 여전히 모든 task에서 학습됨
+```python
+# mole_nf.py:706-710 (V4)
+if hasattr(subnet, 'context_conv'):
+    params.extend(subnet.context_conv.parameters())  # 모든 task에서 학습!
+```
+
+#### 2. Image AUC << Pixel AUC 문제
+
+| Class | Image AUC | Pixel AUC | Gap | 원인 |
+|-------|-----------|-----------|-----|------|
+| screw | 0.42 | 0.86 | -0.44 | 미세 결함, normal도 high score |
+| capsule | 0.67 | 0.94 | -0.27 | 형상 유사성 |
+| toothbrush | 0.78 | 0.95 | -0.17 | 텍스처 유사 |
+
+**원인 분석:**
+- Image Score = max(patch scores) 또는 99th percentile
+- Normal 이미지의 일부 패치가 높은 anomaly score를 가짐
+- Anomaly/Normal 이미지의 max score 분포가 중첩
+- Pixel-level은 개별 패치 단위로 평가되어 분리가 잘 됨
+
+---
+
+## V4.1 - True Complete Separation
+
+### 변경 이유
+
+V4에서 `context_conv`가 여전히 공유되어 미세 성능 저하 발생
+
+### 핵심 변경
+
+| 컴포넌트 | V4 | V4.1 |
+|----------|-----|------|
+| SpatialMixer | Task 0 이후 freeze | Task 0 이후 freeze |
+| **context_conv** | 모든 task 학습 | **Task 0 이후 freeze** |
+| **context_scale_param** | 모든 task 학습 | **Task 0 이후 freeze** |
+
+### 구현 변경
+
+#### mole_nf.py - get_fast_params()
+
+```python
+# V4.1: MoLEContextSubnet context parameters - only trained in Task 0
+if task_id == 0:
+    if hasattr(subnet, 'context_conv'):
+        params.extend(subnet.context_conv.parameters())
+    if hasattr(subnet, 'context_scale_param') and subnet.context_scale_param is not None:
+        params.append(subnet.context_scale_param)
+```
+
+#### mole_nf.py - get_trainable_params() (Task > 0 블록)
+
+```python
+# V4.1: MoLEContextSubnet context parameters are frozen for Task > 0
+# They are only trained in Task 0 (see the task_id == 0 block above)
+```
+
+### V4.1 File Changes
+
+| File | Changes |
+|------|---------|
+| `moleflow/models/mole_nf.py` | `get_fast_params()`, `get_trainable_params()`, `freeze_fast_params()`, `unfreeze_fast_params()` - context_conv도 task_id == 0일 때만 학습 |
+| `run.sh` | V4.1 실험 스크립트 추가 |
+
+### 예상 결과
+
+| 지표 | V4 | V4.1 예상 |
+|------|-----|-----------|
+| Task 성능 변화 | -0.42% | **0%** (완전 고정) |
+| 학습 파라미터 | LoRA + DIA + WhiteningAdapter + context_conv | LoRA + DIA + WhiteningAdapter |
+
+---
