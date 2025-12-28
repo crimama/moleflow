@@ -363,7 +363,7 @@ def create_task_adapter(adapter_mode: str, channels: int,
     Factory function to create the appropriate adapter based on mode.
 
     Args:
-        adapter_mode: "soft_ln", "standard", "no_ln_after_task0", "whitening"
+        adapter_mode: "soft_ln", "standard", "no_ln_after_task0", "no_ln", "whitening", "whitening_no_ln"
         channels: Feature dimension
         reference_mean: Reference mean from Task 0
         reference_std: Reference std from Task 0
@@ -376,6 +376,17 @@ def create_task_adapter(adapter_mode: str, channels: int,
     if adapter_mode == "whitening":
         # V3: Whitening + constrained de-whitening
         return WhiteningAdapter(
+            channels=channels,
+            task_id=task_id,
+            reference_mean=reference_mean,
+            reference_std=reference_std,
+            gamma_range=kwargs.get('gamma_range', (0.5, 2.0)),
+            beta_max=kwargs.get('beta_max', 2.0)
+        )
+    elif adapter_mode == "whitening_no_ln":
+        # Ablation: Same as whitening but WITHOUT LayerNorm
+        # Tests the effect of LayerNorm in isolation
+        return WhiteningAdapterNoLN(
             channels=channels,
             task_id=task_id,
             reference_mean=reference_mean,
@@ -400,6 +411,14 @@ def create_task_adapter(adapter_mode: str, channels: int,
             reference_mean=reference_mean,
             reference_std=reference_std,
             use_norm=use_norm
+        )
+    elif adapter_mode == "no_ln":
+        # No LN for ALL tasks (ablation study)
+        return TaskInputAdapter(
+            channels=channels,
+            reference_mean=reference_mean,
+            reference_std=reference_std,
+            use_norm=False
         )
     else:  # "standard"
         return TaskInputAdapter(
@@ -516,6 +535,101 @@ class WhiteningAdapter(nn.Module):
             # gamma should be close to 1.0
             gamma_reg = ((self.gamma - 1.0) ** 2).mean()
             # beta should be close to 0.0
+            beta_reg = (self.beta ** 2).mean()
+            return self.identity_reg_weight * (gamma_reg + beta_reg)
+        return torch.tensor(0.0, device=self.gamma_raw.device)
+
+    def get_stats(self) -> dict:
+        """Get current adapter statistics for logging."""
+        with torch.no_grad():
+            return {
+                'gamma_mean': self.gamma.mean().item(),
+                'gamma_std': self.gamma.std().item(),
+                'beta_mean': self.beta.mean().item(),
+                'beta_std': self.beta.std().item(),
+            }
+
+
+class WhiteningAdapterNoLN(nn.Module):
+    """
+    WhiteningAdapter WITHOUT LayerNorm (Ablation Study).
+
+    Same structure as WhiteningAdapter but without the whitening step.
+    This allows testing the effect of LayerNorm in isolation.
+
+    Forward: x -> gamma * x + beta (NO LayerNorm)
+
+    Compare with WhiteningAdapter:
+    Forward: x -> LayerNorm(x) -> gamma * LN(x) + beta
+    """
+
+    def __init__(self, channels: int, task_id: int = 0,
+                 reference_mean: torch.Tensor = None,
+                 reference_std: torch.Tensor = None,
+                 gamma_range: tuple = (0.5, 2.0),
+                 beta_max: float = 2.0):
+        super(WhiteningAdapterNoLN, self).__init__()
+
+        self.channels = channels
+        self.task_id = task_id
+        self.gamma_min, self.gamma_max = gamma_range
+        self.beta_max = beta_max
+
+        # NO whitening layer (key difference from WhiteningAdapter)
+
+        # Store reference statistics for logging/debugging
+        if reference_mean is not None:
+            self.register_buffer('reference_mean', reference_mean.clone())
+            self.register_buffer('reference_std', reference_std.clone())
+            self.has_reference = True
+        else:
+            self.register_buffer('reference_mean', torch.zeros(channels))
+            self.register_buffer('reference_std', torch.ones(channels))
+            self.has_reference = False
+
+        if task_id == 0:
+            # Task 0: Start very close to identity
+            init_gamma_raw = -0.7 * torch.ones(1, 1, 1, channels)
+            self.gamma_raw = nn.Parameter(init_gamma_raw)
+            self.beta_raw = nn.Parameter(torch.zeros(1, 1, 1, channels))
+            self.identity_reg_weight = 0.1
+        else:
+            # Task 1+: Learnable, initialized at midpoint
+            self.gamma_raw = nn.Parameter(torch.zeros(1, 1, 1, channels))
+            self.beta_raw = nn.Parameter(torch.zeros(1, 1, 1, channels))
+            self.identity_reg_weight = 0.0
+
+    @property
+    def gamma(self):
+        """Constrained gamma in [gamma_min, gamma_max]."""
+        gamma_range = self.gamma_max - self.gamma_min
+        return self.gamma_min + gamma_range * torch.sigmoid(self.gamma_raw)
+
+    @property
+    def beta(self):
+        """Constrained beta in [-beta_max, beta_max]."""
+        return self.beta_max * torch.tanh(self.beta_raw)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Apply task-specific scaling WITHOUT whitening.
+
+        Args:
+            x: (B, H, W, D) input features
+
+        Returns:
+            Transformed features with same shape
+        """
+        # NO whitening - direct gamma/beta application
+        # This preserves: ||x||, mean(x), std(x) information
+        x_out = self.gamma * x + self.beta
+
+        return x_out
+
+    def identity_regularization(self) -> torch.Tensor:
+        """Regularization loss to keep Task 0 adapter close to identity."""
+        if self.identity_reg_weight > 0:
+            gamma_reg = ((self.gamma - 1.0) ** 2).mean()
             beta_reg = (self.beta ** 2).mean()
             return self.identity_reg_weight * (gamma_reg + beta_reg)
         return torch.tensor(0.0, device=self.gamma_raw.device)

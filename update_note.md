@@ -1954,7 +1954,7 @@ if task_id == 0:
 
 ---
 
-## V5 - Score Aggregation Improvements
+## V4,3 - Score Aggregation Improvements
 
 ### Motivation
 
@@ -2012,7 +2012,7 @@ image_score = top_k_scores.mean(dim=1)
 
 새로운 config 옵션 추가:
 ```python
-# V5 Score Aggregation
+# V4.3 Score Aggregation
 score_aggregation_mode: str = "percentile"  # percentile, top_k, top_k_percent, max, mean
 score_aggregation_percentile: float = 0.99  # For percentile mode
 score_aggregation_top_k: int = 10           # For top_k mode
@@ -2066,7 +2066,7 @@ def _aggregate_patch_scores(self, patch_scores: torch.Tensor) -> torch.Tensor:
 python run_moleflow.py \
     --score_aggregation_mode top_k \
     --score_aggregation_top_k 10 \
-    --experiment_name V5-TopK10
+    --experiment_name V4.3-TopK10
 ```
 
 ### Aggregation Modes 비교
@@ -2096,13 +2096,13 @@ python run_moleflow.py --score_aggregation_mode top_k --score_aggregation_top_k 
 - Top-K percent (5%)
 - Lower percentile (95%)
 
-### V5 File Changes Summary
+### V4.3 File Changes Summary
 
 | File | Changes |
 |------|---------|
 | `moleflow/config/ablation.py` | V5 Score Aggregation config options 추가 (lines 136-151), CLI arguments 추가 (lines 631-652), `parse_ablation_args()` 업데이트 (lines 817-827) |
 | `moleflow/trainer/continual_trainer.py` | `_aggregate_patch_scores()` 메서드 추가, `_compute_anomaly_scores()` 수정하여 aggregation 호출 |
-| `run.sh` | V5 실험 스크립트 추가 |
+| `run.sh` | V4.3 실험 스크립트 추가 |
 
 ### 예상 결과
 
@@ -2112,5 +2112,301 @@ python run_moleflow.py --score_aggregation_mode top_k --score_aggregation_top_k 
 | Image AUC (capsule) | 0.67 | 0.75+ |
 | Mean Image AUC | 0.87 | **0.90+** |
 | Image AUC std | 0.1532 | 0.10 미만 |
+
+---
+
+## V4.4 - LayerNorm Ablation Study
+
+### 배경
+
+V4.2/V4.3 실험 후 Image AUC가 Pixel AUC보다 낮은 문제의 원인으로 **LayerNorm이 anomaly 신호를 약화시킨다**는 가설을 세움.
+
+가설의 근거:
+- LayerNorm은 patch별 에너지(||x||), 평균(mean), 분산(std)을 제거
+- 이 정보들이 anomaly 탐지에 중요할 수 있음
+- WhiteningAdapter가 `nn.LayerNorm(channels, elementwise_affine=False)` 사용
+
+### 실험 설계
+
+**공정한 비교를 위해 WhiteningAdapterNoLN 구현:**
+
+```python
+class WhiteningAdapterNoLN(nn.Module):
+    """WhiteningAdapter WITHOUT LayerNorm"""
+
+    def forward(self, x):
+        # LayerNorm 없이 바로 gamma/beta 적용
+        # ||x||, mean(x), std(x) 정보 보존
+        return self.gamma * x + self.beta
+```
+
+비교 대상:
+| Adapter | LayerNorm | gamma/beta |
+|---------|-----------|------------|
+| WhiteningAdapter | ✅ ON | constrained [0.5, 2.0] |
+| WhiteningAdapterNoLN | ❌ OFF | constrained [0.5, 2.0] |
+
+### 실험 결과
+
+| 실험 | LayerNorm | Mean Image AUC | Mean Pixel AUC |
+|------|-----------|----------------|----------------|
+| V4.2-topk3 | ✅ ON | **0.8903** | **0.9357** |
+| V4.4-whitening_no_ln | ❌ OFF | 0.8476 | 0.9222 |
+| **차이** | | **-4.8%** | **-1.4%** |
+
+클래스별 비교:
+| Class | Image AUC (LN) | Image AUC (No LN) | 변화 |
+|-------|----------------|-------------------|------|
+| leather | 1.0000 | 1.0000 | 0% |
+| grid | 0.8956 | 0.8145 | **-9.1%** |
+| transistor | 0.7754 | 0.7283 | **-6.1%** |
+
+### 결론
+
+**가설 기각: LayerNorm은 병목이 아님**
+
+1. LayerNorm 제거 시 성능 **하락** (특히 Image AUC -4.8%)
+2. LayerNorm이 오히려 학습 안정성에 기여
+3. Image AUC 하락이 Pixel AUC보다 큼 → 불안정한 patch score가 aggregation에서 더 큰 영향
+
+### File Changes
+
+| File | Changes |
+|------|---------|
+| `moleflow/models/adapters.py` | `WhiteningAdapterNoLN` 클래스 추가, `create_task_adapter()`에 `whitening_no_ln` 옵션 추가 |
+| `moleflow/config/ablation.py` | CLI choices에 `whitening_no_ln` 추가 |
+
+---
+
+## V4.3 All Classes 분석 - 클래스별 성능 편차
+
+### 15 클래스 전체 실험 결과
+
+**V4.3-topk3_all_classes (기본 순서):**
+
+| Task ID | Class | Image AUC | Pixel AUC | 비고 |
+|---------|-------|-----------|-----------|------|
+| 0 | leather | 1.0000 | 0.9720 | ✅ 최고 |
+| 1 | grid | 0.8956 | 0.9082 | |
+| 2 | transistor | 0.7754 | 0.9270 | ⚠️ 낮음 |
+| 3 | carpet | 0.9755 | 0.9648 | ✅ 우수 |
+| 4 | zipper | 0.9288 | 0.8550 | |
+| 5 | hazelnut | 0.9529 | 0.9682 | ✅ 우수 |
+| 6 | toothbrush | 0.7861 | 0.9459 | ⚠️ 낮음 |
+| 7 | metal_nut | 0.9565 | 0.9776 | ✅ 우수 |
+| 8 | **screw** | **0.4575** | 0.8573 | ❌ **매우 낮음** |
+| 9 | wood | 0.9798 | 0.8949 | ✅ 우수 |
+| 10 | tile | 1.0000 | 0.8843 | ✅ 최고 |
+| 11 | capsule | 0.6881 | 0.9388 | ⚠️ 낮음 |
+| 12 | pill | 0.8391 | 0.9513 | |
+| 13 | cable | 0.8771 | 0.9102 | |
+| 14 | bottle | 0.9992 | 0.9571 | ✅ 최고 |
+| **Mean** | | **0.8741** | **0.9275** | |
+
+### 성능 분포 분석
+
+**Image AUC 기준 분류:**
+- 🟢 **우수 (≥0.95)**: leather, tile, bottle, carpet, wood, metal_nut, hazelnut (7개)
+- 🟡 **보통 (0.80~0.95)**: grid, zipper, pill, cable (4개)
+- 🟠 **낮음 (0.65~0.80)**: transistor, toothbrush, capsule (3개)
+- 🔴 **매우 낮음 (<0.65)**: **screw** (1개)
+
+**통계:**
+- Mean Image AUC: 0.8741
+- Std: ~0.15 (높은 편차)
+- Min: 0.4575 (screw)
+- Max: 1.0000 (leather, tile)
+
+### 문제 클래스 분석
+
+#### 1. Screw (Image AUC: 0.4575) - 가장 심각
+
+**특성:**
+- 매우 작은 결함 (스크래치, 스레드 손상)
+- 결함이 전체 이미지에서 매우 작은 비율 차지
+- Normal과 Anomaly의 시각적 차이가 미미
+
+**추정 원인:**
+- Top-K(K=3) aggregation으로도 부족
+- 작은 결함이 patch score에서 충분히 두드러지지 않음
+- Pixel AUC (0.86)는 양호 → 위치는 찾지만 image-level 판단 실패
+
+#### 2. Transistor (Image AUC: 0.7754)
+
+**특성:**
+- 다양한 결함 유형 (misplaced, bent, damaged)
+- 결함 위치와 형태가 다양
+
+**추정 원인:**
+- Task 순서상 초기(Task 2)에 학습되어 Base NF와 함께 최적화
+- 하지만 후속 task 학습 시 representation drift 가능성
+
+#### 3. Capsule (Image AUC: 0.6881)
+
+**특성:**
+- 반투명한 객체, 내부 결함
+- 미묘한 색상/텍스처 변화
+
+**추정 원인:**
+- ViT feature가 반투명 객체의 미묘한 차이를 포착하기 어려움
+- 결함이 전역적 패턴보다 국소적 변화로 나타남
+
+#### 4. Toothbrush (Image AUC: 0.7861)
+
+**특성:**
+- 가는 bristle 구조
+- 결함이 매우 작은 영역에 집중
+
+**추정 원인:**
+- 고해상도 feature가 필요하지만 ViT patch size(16x16)로 인한 정보 손실
+
+### 핵심 문제 정리
+
+1. **Image AUC << Pixel AUC Gap**
+   - Pixel은 잘 찾지만 Image-level 판단 실패
+   - Aggregation 방식의 한계
+
+2. **클래스별 편차가 큼**
+   - Std ~0.15 (목표: 0.05 이하)
+   - 특정 클래스(screw)가 전체 평균을 크게 낮춤
+
+3. **작은 결함 탐지 어려움**
+   - screw, capsule, toothbrush 공통점: 작거나 미묘한 결함
+   - Top-K aggregation으로도 해결 안 됨
+
+---
+
+## 성능 개선 방향 분석
+
+### 현재 아키텍처 리뷰
+
+```
+ViT Backbone (frozen)
+    ↓
+Multi-block Feature Aggregation (blocks 8,9,10,11)
+    ↓
+Positional Embedding (sin/cos)
+    ↓
+WhiteningAdapter (task-specific, LayerNorm + gamma/beta)
+    ↓
+SpatialMixer (frozen after Task 0)
+    ↓
+Normalizing Flow + LoRA (task-specific)
+    ↓
+DIA (task-specific invertible adapter)
+    ↓
+Anomaly Score = -log p(z) - log|det J|
+    ↓
+Aggregation (top-k mean)
+    ↓
+Image Score
+```
+
+### 병목 후보 분석
+
+#### A. Feature Extraction Level
+
+| 요소 | 현재 상태 | 잠재적 문제 |
+|------|----------|-------------|
+| ViT backbone | frozen, 224x224 | 해상도 제한, 작은 결함 miss |
+| Multi-block | blocks 8,9,10,11 | 이미 다중 스케일 사용 중 |
+| Patch size | 16x16 | 작은 결함이 patch 내에서 희석 |
+
+#### B. Adapter/Preprocessing Level
+
+| 요소 | 현재 상태 | 잠재적 문제 |
+|------|----------|-------------|
+| WhiteningAdapter | LN + constrained gamma/beta | ✅ 검증됨 (제거 시 성능 하락) |
+| SpatialMixer | 3x3 depthwise conv | Local context만 사용 |
+| Positional Embedding | sin/cos 고정 | 문제 없음 |
+
+#### C. Flow Level
+
+| 요소 | 현재 상태 | 잠재적 문제 |
+|------|----------|-------------|
+| Coupling layers | 8 layers | 표현력 제한 가능 |
+| LoRA rank | 64 | Task별 적응력 제한 가능 |
+| DIA | 2 blocks | 분포 정렬 표현력 제한 |
+
+#### D. Scoring Level
+
+| 요소 | 현재 상태 | 잠재적 문제 |
+|------|----------|-------------|
+| Patch score | -log p(z) - log|det J| | 표준 NLL |
+| Aggregation | top-k mean (k=3) | **작은 결함에 부족** |
+| Calibration | 없음 | **Task별 score scale 불일치** |
+
+### 개선 방향 제안
+
+#### 방향 1: Adaptive Aggregation (클래스 난이도 기반)
+
+**문제**: 고정 K값이 모든 클래스에 적합하지 않음
+- Screw: 결함이 매우 작음 → K=1~2 필요
+- Carpet: 결함이 넓음 → K=5~10 적합
+
+**제안**:
+```python
+# 학습된 aggregation weight
+class AdaptiveAggregation(nn.Module):
+    def forward(self, patch_scores):
+        # Attention-based weighted sum
+        weights = self.attention(patch_scores)  # 학습
+        return (weights * patch_scores).sum()
+```
+
+#### 방향 2: Score Calibration (Task별 정규화)
+
+**문제**: Task별 score 분포가 다름
+- Task 0 (leather): score range [0, 5]
+- Task 8 (screw): score range [0, 20]
+
+**제안**:
+```python
+# Task별 정상 score 통계 저장
+class ScoreCalibrator:
+    def __init__(self):
+        self.task_stats = {}  # {task_id: (mean, std)}
+
+    def calibrate(self, score, task_id):
+        mean, std = self.task_stats[task_id]
+        return (score - mean) / std  # Z-score 정규화
+```
+
+#### 방향 3: Multi-scale Patch Analysis
+
+**문제**: 16x16 patch가 작은 결함을 놓침
+
+**제안**: 다중 해상도 feature 사용
+- 원본 patch (16x16)
+- Overlapping patches
+- 또는 더 작은 patch size backbone
+
+#### 방향 4: Contrastive/Margin Loss 추가
+
+**문제**: NLL만으로는 Normal/Anomaly 분리력 부족
+
+**제안**:
+```python
+# Pseudo-anomaly로 margin loss 추가
+loss = nll_loss + lambda * margin_loss(normal_scores, pseudo_anomaly_scores)
+```
+
+#### 방향 5: DIA 표현력 확대
+
+**문제**: 2 blocks DIA가 분포 차이가 큰 task에 부족
+
+**제안**:
+- Task 난이도 기반 blocks 수 조정
+- 또는 더 expressive한 flow 구조
+
+### 우선순위 추천
+
+| 순위 | 방향 | 기대 효과 | 구현 난이도 |
+|------|------|----------|------------|
+| 1 | Score Calibration | 클래스별 편차 완화 | 낮음 |
+| 2 | Adaptive Aggregation | screw 등 개선 | 중간 |
+| 3 | DIA 표현력 확대 | 전반적 향상 | 낮음 |
+| 4 | Contrastive Loss | 분리력 향상 | 중간 |
+| 5 | Multi-scale Patch | 작은 결함 탐지 | 높음 |
 
 ---

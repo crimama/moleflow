@@ -30,6 +30,7 @@ class AblationConfig:
         "soft_ln": SoftLNTaskInputAdapter (default) - optional/weak LayerNorm for Task > 0
         "standard": Original FiLM-style TaskInputAdapter
         "no_ln_after_task0": Disable LN for Task > 0 (quick ablation)
+        "no_ln": Disable LN completely for all tasks (ablation study)
         "whitening": V3 WhiteningAdapter - Whitening + constrained de-whitening
 
     V3 Improvements (--use_* flags):
@@ -427,8 +428,8 @@ def add_ablation_args(parser):
     # Adapter mode options
     ablation_group.add_argument(
         '--adapter_mode', type=str, default='soft_ln',
-        choices=['soft_ln', 'standard', 'no_ln_after_task0'],
-        help='Adapter mode: soft_ln (default, weak LN), standard (FiLM), no_ln_after_task0'
+        choices=['soft_ln', 'standard', 'no_ln_after_task0', 'no_ln', 'whitening_no_ln'],
+        help='Adapter mode: soft_ln (default), standard (FiLM), no_ln, whitening_no_ln (whitening structure without LN)'
     )
     ablation_group.add_argument(
         '--soft_ln_init_scale', type=float, default=0.01,

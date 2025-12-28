@@ -32,30 +32,40 @@
 # Pilot experiments (3 classes: leather, grid, transistor)
 # Run in parallel to compare aggregation methods
 
-CUDA_VISIBLE_DEVICES=1 python run_moleflow.py --run_diagnostics \
-      --use_whitening_adapter --use_dia \
-      --score_aggregation_mode top_k \
-      --score_aggregation_top_k 10 \
-      --experiment_name Version4.2-ScoreAgg_topk10
+# V4.4: LayerNorm Ablation (Fair Comparison)
+# ============================================
+# Compare WhiteningAdapter (with LN) vs WhiteningAdapterNoLN (without LN)
+# Same architecture except for LayerNorm
 
+CUDA_VISIBLE_DEVICES=0 python run_moleflow.py --run_diagnostics \
+      --use_dia \
+      --score_aggregation_mode top_k \
+      --score_aggregation_top_k 3 \
+      --adapter_mode whitening_no_ln \
+      --experiment_name Version4.4-whitening_no_ln
+
+# Baseline for comparison (already exists: Version4.2-ScoreAgg_topk3)
+# Uses --use_whitening_adapter which sets adapter_mode=whitening
 
 # # GPU 0: Baseline (percentile 99%)
 # (
 #   CUDA_VISIBLE_DEVICES=0 python run_moleflow.py --run_diagnostics \
+#       --task_classes leather grid transistor carpet zipper hazelnut toothbrush metal_nut screw wood tile capsule pill cable bottle \
 #       --use_whitening_adapter --use_dia \
-#       --score_aggregation_mode percentile \
-#       --score_aggregation_percentile 0.99 \
-#       --experiment_name Version5-ScoreAgg_percentile99
+#       --score_aggregation_mode top_k \
+#       --score_aggregation_top_k 3 \
+#       --experiment_name Version5.1-ScoreAgg_topk3_all_classes
 # ) &
 
 # # GPU 1: Top-K averaging (K=10)
 # (
 #   CUDA_VISIBLE_DEVICES=1 python run_moleflow.py --run_diagnostics \
+#       --task_classes bottle cable capsule carpet grid hazelnut leather metal_nut pill screw tile toothbrush transistor wood zipper \
 #       --use_whitening_adapter --use_dia \
 #       --score_aggregation_mode top_k \
-#       --score_aggregation_top_k 10 \
-#       --experiment_name Version5-ScoreAgg_topk10
+#       --score_aggregation_top_k 3 \
+#       --experiment_name Version5.2-ScoreAgg_topk3_all_classes_alphabet_order
 # ) &
 
 # wait
-# echo "V5 Pilot 완료"
+# echo "V4.3 Pilot 완료"
