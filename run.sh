@@ -32,20 +32,27 @@
 # Pilot experiments (3 classes: leather, grid, transistor)
 # Run in parallel to compare aggregation methods
 
+# V4.2: Score Aggregation with Top-K (K=3)
+# ========================================
+# Baseline configuration with whitening adapter and top-k aggregation
+
+CUDA_VISIBLE_DEVICES=0 python run_moleflow.py --run_diagnostics \
+      --use_whitening_adapter --use_dia \
+      --score_aggregation_mode top_k \
+      --score_aggregation_top_k 3 \
+      --experiment_name Version4.2-ScoreAgg_topk3
+
 # V4.4: LayerNorm Ablation (Fair Comparison)
 # ============================================
 # Compare WhiteningAdapter (with LN) vs WhiteningAdapterNoLN (without LN)
 # Same architecture except for LayerNorm
 
-CUDA_VISIBLE_DEVICES=0 python run_moleflow.py --run_diagnostics \
-      --use_dia \
-      --score_aggregation_mode top_k \
-      --score_aggregation_top_k 3 \
-      --adapter_mode whitening_no_ln \
-      --experiment_name Version4.4-whitening_no_ln
-
-# Baseline for comparison (already exists: Version4.2-ScoreAgg_topk3)
-# Uses --use_whitening_adapter which sets adapter_mode=whitening
+# CUDA_VISIBLE_DEVICES=0 python run_moleflow.py --run_diagnostics \
+#       --use_dia \
+#       --score_aggregation_mode top_k \
+#       --score_aggregation_top_k 3 \
+#       --adapter_mode whitening_no_ln \
+#       --experiment_name Version4.4-whitening_no_ln
 
 # # GPU 0: Baseline (percentile 99%)
 # (
