@@ -105,13 +105,37 @@ Training logs and results are saved to `--log_dir` (default: `./logs/`). Each ex
 
 ## Development Workflow
 
-### Progress Tracking (IMPORTANT)
+### Progress Tracking (CRITICAL - MUST FOLLOW)
 
-**Always record progress and analysis in `update_note.md`**:
-- When analyzing experimental results, document findings in update_note.md
-- When identifying problems or root causes, record them with evidence
-- When proposing or implementing solutions, document the approach and rationale
-- When completing version changes, summarize what was changed and why
-- Include quantitative results (metrics, performance numbers) when available
+**ALWAYS record progress and analysis in `update_note.md`**:
+
+1. **실험 결과 분석 시**: 결과 테이블과 분석 내용을 기록
+2. **문제 발견 시**: 문제 원인과 근거를 기록
+3. **해결책 구현 시**: 접근법과 변경 내용을 기록
+4. **버전 변경 완료 시**: 변경 사항 요약과 이유 기록
+5. **버그 수정 시**: 에러 내용과 수정 방법 기록
+
+**기록 형식**:
+```markdown
+## V{버전} - {기능명}
+
+### 실험 결과
+| Task | Metric | Value |
+|------|--------|-------|
+| ... | ... | ... |
+
+### 분석
+- 문제점: ...
+- 원인: ...
+
+### 해결책
+- 변경 사항: ...
+- 수정된 파일: ...
+```
+
+**중요**:
+- 매 작업 세션마다 update_note.md에 진행 상황 기록
+- 실험 실패도 기록 (왜 실패했는지, 무엇을 배웠는지)
+- 다음 세션에서 컨텍스트를 잃지 않도록 충분히 상세하게 기록
 
 This ensures continuity across sessions and maintains a clear history of the project's evolution.

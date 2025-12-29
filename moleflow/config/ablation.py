@@ -145,11 +145,128 @@ class AblationConfig:
     #   "top_k_percent": Average of top K% highest scoring patches
     #   "max": Maximum patch score
     #   "mean": Mean of all patch scores
-    #   "adaptive": Per-class optimal percentile (requires validation set)
+    #   "spatial_cluster": Cluster-aware aggregation (V5 improvement)
     score_aggregation_mode: str = "percentile"
     score_aggregation_percentile: float = 0.99    # For "percentile" mode
     score_aggregation_top_k: int = 10             # For "top_k" mode
     score_aggregation_top_k_percent: float = 0.05 # For "top_k_percent" mode (top 5%)
+
+    # ==========================================================================
+    # V5 Structural Improvements
+    # ==========================================================================
+
+    # --- Phase 1: Loss & Scoring ---
+    # Tail-Aware Loss: Train with focus on extreme patches (not just mean)
+    use_tail_aware_loss: bool = False
+    tail_weight: float = 0.3                      # Weight for tail loss (λ)
+    tail_top_k_ratio: float = 0.05                # Top k% patches for tail loss
+
+    # Spatial Clustering Score: Cluster-aware image score aggregation
+    # (enabled via score_aggregation_mode="spatial_cluster")
+    cluster_weight: float = 0.5                   # Bonus weight for clustered anomalies
+    cluster_high_score_percentile: float = 0.9   # Threshold for high-score region
+
+    # --- Phase 2: Semantic & Context ---
+    # Semantic Projector: Position-agnostic semantic feature extraction
+    use_semantic_projector: bool = False
+    semantic_bottleneck_ratio: float = 0.5        # Bottleneck dim = channels * ratio
+
+    # Task-Adaptive Context: Task-specific adaptation of frozen SpatialMixer
+    use_task_adaptive_context: bool = False
+
+    # --- Phase 3: Global Context ---
+    # Global Context Module: Long-range dependency via cross-attention
+    use_global_context: bool = False
+    global_context_regions: int = 4               # Number of regional tokens (R×R)
+    global_context_reduction: int = 4             # Channel reduction factor
+
+    # ==========================================================================
+    # V5.5: Position-Agnostic Improvements (Rotation Invariance)
+    # ==========================================================================
+    # These address the fundamental problem: absolute position encoding causes
+    # failures on rotation-variant classes (e.g., screw with random rotation)
+
+    # --- Direction 1: Relative Position Encoding ---
+    # Replace absolute positional embedding with relative position attention
+    use_relative_position: bool = False
+    relative_position_max_dist: int = 7           # Max relative distance to consider
+    relative_position_num_heads: int = 4          # Number of attention heads
+
+    # --- Direction 2: Dual Branch Scoring ---
+    # Two parallel NF branches: with position and without position
+    # Learns per-patch α to blend: α*pos_score + (1-α)*nopos_score
+    use_dual_branch: bool = False
+
+    # --- Direction 3: Local Consistency Calibration ---
+    # Calibrate patch scores based on local consistency
+    # Down-weights isolated high scores (likely rotation noise)
+    use_local_consistency: bool = False
+    local_consistency_kernel: int = 3             # Kernel size for consistency check
+    local_consistency_temperature: float = 1.0   # Temperature for weighting
+
+    # ==========================================================================
+    # V5.6 Improved Position-Agnostic Solutions
+    # ==========================================================================
+
+    # --- Improved Direction 2: Anti-Collapse Dual Branch ---
+    # Fixes V5.5 α collapse problem with:
+    # 1. α initialized to 0.7 (prefer position branch)
+    # 2. α clamped to [min_alpha, max_alpha] to prevent collapse
+    # 3. Score difference as additional input
+    # 4. Regularization loss to encourage balanced α
+    use_improved_dual_branch: bool = False
+    dual_branch_init_alpha: float = 0.7           # Initial α value (prefer pos)
+    dual_branch_min_alpha: float = 0.3            # Minimum α (ensure pos contribution)
+    dual_branch_max_alpha: float = 0.9            # Maximum α (ensure nopos contribution)
+
+    # --- Alternative Direction 2: Score-Guided Branch ---
+    # Simpler approach: use score difference to guide α directly
+    # α = sigmoid(temp * (bias - score_diff))
+    use_score_guided_dual: bool = False
+    score_guided_temperature: float = 1.0
+    score_guided_min_alpha: float = 0.2
+
+    # --- Improved Direction 3: Multi-Scale Consistency ---
+    # Multi-scale consistency check (3x3, 5x5, 7x7)
+    # Learnable scale fusion weights
+    use_multiscale_consistency: bool = False
+    multiscale_kernel_sizes: str = "3,5,7"        # Comma-separated kernel sizes
+
+    # ==========================================================================
+    # V5.7 Rotation-Invariant Position Encoding
+    # ==========================================================================
+
+    # --- Direction C: Multi-Orientation Ensemble ---
+    # Test-time rotation ensemble: apply NF at multiple orientations
+    # Take minimum score (most "normal" orientation)
+    use_multi_orientation: bool = False
+    multi_orientation_n: int = 4                  # Number of orientations (4 = 0,90,180,270)
+
+    # --- Direction D: Content-Based PE ---
+    # Replace grid PE with semantic prototype-based PE
+    # "Where am I in the object?" instead of "Where am I in the grid?"
+    use_content_based_pe: bool = False
+    content_pe_n_prototypes: int = 16             # Number of semantic prototypes
+    content_pe_temperature: float = 0.1           # Softmax temperature
+    content_pe_blend_grid: bool = True            # Blend with grid PE
+
+    # --- Direction E: Hybrid PE ---
+    # Per-patch selection between content PE and grid PE
+    # Learns when to use rotation-invariant vs position-aware encoding
+    use_hybrid_pe: bool = False
+    hybrid_pe_n_prototypes: int = 16              # Number of prototypes for content PE
+
+    # ==========================================================================
+    # V5.8 Task-Adaptive Position Encoding (TAPE)
+    # ==========================================================================
+    # 핵심 통찰: Task-level에서 PE 강도를 학습 (patch-level 아님)
+    # - 각 Task마다 learnable gate (scalar)
+    # - NLL loss가 직접 gradient 제공 → 명확한 학습 신호
+    # - Screw: PE ↓ (rotation tolerance), Leather: PE ↑ (spatial consistency)
+    use_tape: bool = False
+    tape_init_value: float = 0.0                  # sigmoid(0) = 0.5 (50% PE로 시작)
+                                                  # 2.0 → ~0.88 (기존 동작에 가깝게)
+                                                  # -2.0 → ~0.12 (minimal PE)
 
     # ==========================================================================
     # V3 No-Replay Solutions: DIA + OGP
@@ -636,7 +753,7 @@ def add_ablation_args(parser):
 
     score_group.add_argument(
         '--score_aggregation_mode', type=str, default='percentile',
-        choices=['percentile', 'top_k', 'top_k_percent', 'max', 'mean'],
+        choices=['percentile', 'top_k', 'top_k_percent', 'max', 'mean', 'spatial_cluster'],
         help='[V5] Score aggregation mode (default: percentile)'
     )
     score_group.add_argument(
@@ -650,6 +767,209 @@ def add_ablation_args(parser):
     score_group.add_argument(
         '--score_aggregation_top_k_percent', type=float, default=0.05,
         help='Percentage for top_k_percent mode (default: 0.05 = top 5%%)'
+    )
+
+    # =========================================================================
+    # V5 Structural Improvements
+    # =========================================================================
+    v5_group = parser.add_argument_group('V5 Structural Improvements')
+
+    # Phase 1: Tail-Aware Loss
+    v5_group.add_argument(
+        '--use_tail_aware_loss', action='store_true',
+        help='[V5] Use tail-aware loss for training (Phase 1)'
+    )
+    v5_group.add_argument(
+        '--tail_weight', type=float, default=0.3,
+        help='Weight for tail loss component (default: 0.3)'
+    )
+    v5_group.add_argument(
+        '--tail_top_k_ratio', type=float, default=0.05,
+        help='Ratio of top patches for tail loss (default: 0.05 = top 5%%)'
+    )
+
+    # Phase 1: Spatial Clustering Score
+    v5_group.add_argument(
+        '--cluster_weight', type=float, default=0.5,
+        help='Bonus weight for clustered anomalies (default: 0.5)'
+    )
+    v5_group.add_argument(
+        '--cluster_high_score_percentile', type=float, default=0.9,
+        help='Percentile threshold for high-score regions (default: 0.9)'
+    )
+
+    # Phase 2: Semantic Projector
+    v5_group.add_argument(
+        '--use_semantic_projector', action='store_true',
+        help='[V5] Use semantic projector for position-agnostic features (Phase 2)'
+    )
+    v5_group.add_argument(
+        '--semantic_bottleneck_ratio', type=float, default=0.5,
+        help='Bottleneck ratio for semantic projector (default: 0.5)'
+    )
+
+    # Phase 2: Task-Adaptive Context
+    v5_group.add_argument(
+        '--use_task_adaptive_context', action='store_true',
+        help='[V5] Use task-adaptive context mixer (Phase 2)'
+    )
+
+    # Phase 3: Global Context
+    v5_group.add_argument(
+        '--use_global_context', action='store_true',
+        help='[V5] Use global context module for long-range dependency (Phase 3)'
+    )
+    v5_group.add_argument(
+        '--global_context_regions', type=int, default=4,
+        help='Number of regional tokens for global context (default: 4)'
+    )
+    v5_group.add_argument(
+        '--global_context_reduction', type=int, default=4,
+        help='Channel reduction factor for global context (default: 4)'
+    )
+
+    # =========================================================================
+    # V5.5: Position-Agnostic Improvements (Rotation Invariance)
+    # =========================================================================
+    v55_group = parser.add_argument_group('V5.5 Position-Agnostic Improvements')
+
+    # Direction 1: Relative Position Encoding
+    v55_group.add_argument(
+        '--use_relative_position', action='store_true',
+        help='[V5.5] Use relative position encoding instead of absolute (Direction 1)'
+    )
+    v55_group.add_argument(
+        '--relative_position_max_dist', type=int, default=7,
+        help='Max relative distance for position encoding (default: 7)'
+    )
+    v55_group.add_argument(
+        '--relative_position_num_heads', type=int, default=4,
+        help='Number of attention heads for relative position (default: 4)'
+    )
+
+    # Direction 2: Dual Branch Scoring
+    v55_group.add_argument(
+        '--use_dual_branch', action='store_true',
+        help='[V5.5] Use dual branch scoring (pos + nopos) (Direction 2)'
+    )
+
+    # Direction 3: Local Consistency Calibration
+    v55_group.add_argument(
+        '--use_local_consistency', action='store_true',
+        help='[V5.5] Use local consistency score calibration (Direction 3)'
+    )
+    v55_group.add_argument(
+        '--local_consistency_kernel', type=int, default=3,
+        help='Kernel size for local consistency check (default: 3)'
+    )
+    v55_group.add_argument(
+        '--local_consistency_temperature', type=float, default=1.0,
+        help='Temperature for consistency weighting (default: 1.0)'
+    )
+
+    # =========================================================================
+    # V5.6: Improved Position-Agnostic Solutions
+    # =========================================================================
+    v56_group = parser.add_argument_group('V5.6 Improved Position-Agnostic')
+
+    # Improved Direction 2: Anti-Collapse Dual Branch
+    v56_group.add_argument(
+        '--use_improved_dual_branch', action='store_true',
+        help='[V5.6] Use improved dual branch with anti-collapse mechanism'
+    )
+    v56_group.add_argument(
+        '--dual_branch_init_alpha', type=float, default=0.7,
+        help='Initial alpha value for dual branch (default: 0.7, prefer pos)'
+    )
+    v56_group.add_argument(
+        '--dual_branch_min_alpha', type=float, default=0.3,
+        help='Minimum alpha to prevent collapse (default: 0.3)'
+    )
+    v56_group.add_argument(
+        '--dual_branch_max_alpha', type=float, default=0.9,
+        help='Maximum alpha (default: 0.9)'
+    )
+
+    # Alternative Direction 2: Score-Guided Branch
+    v56_group.add_argument(
+        '--use_score_guided_dual', action='store_true',
+        help='[V5.6] Use score-guided dual branch (simpler alternative)'
+    )
+    v56_group.add_argument(
+        '--score_guided_temperature', type=float, default=1.0,
+        help='Temperature for score-guided alpha (default: 1.0)'
+    )
+    v56_group.add_argument(
+        '--score_guided_min_alpha', type=float, default=0.2,
+        help='Minimum alpha for score-guided (default: 0.2)'
+    )
+
+    # Improved Direction 3: Multi-Scale Consistency
+    v56_group.add_argument(
+        '--use_multiscale_consistency', action='store_true',
+        help='[V5.6] Use multi-scale local consistency (3x3, 5x5, 7x7)'
+    )
+    v56_group.add_argument(
+        '--multiscale_kernel_sizes', type=str, default='3,5,7',
+        help='Comma-separated kernel sizes for multi-scale (default: 3,5,7)'
+    )
+
+    # =========================================================================
+    # V5.7: Rotation-Invariant Position Encoding
+    # =========================================================================
+    v57_group = parser.add_argument_group('V5.7 Rotation-Invariant PE')
+
+    # Direction C: Multi-Orientation Ensemble
+    v57_group.add_argument(
+        '--use_multi_orientation', action='store_true',
+        help='[V5.7] Use multi-orientation ensemble (test-time rotation)'
+    )
+    v57_group.add_argument(
+        '--multi_orientation_n', type=int, default=4,
+        help='Number of orientations (default: 4 = 0,90,180,270)'
+    )
+
+    # Direction D: Content-Based PE
+    v57_group.add_argument(
+        '--use_content_based_pe', action='store_true',
+        help='[V5.7] Use content-based positional embedding'
+    )
+    v57_group.add_argument(
+        '--content_pe_n_prototypes', type=int, default=16,
+        help='Number of semantic prototypes (default: 16)'
+    )
+    v57_group.add_argument(
+        '--content_pe_temperature', type=float, default=0.1,
+        help='Softmax temperature for prototype matching (default: 0.1)'
+    )
+    v57_group.add_argument(
+        '--content_pe_blend_grid', action='store_true', default=True,
+        help='Blend content PE with grid PE (default: True)'
+    )
+    v57_group.add_argument(
+        '--no_content_pe_blend_grid', action='store_false', dest='content_pe_blend_grid',
+        help='Do not blend content PE with grid PE'
+    )
+
+    # Direction E: Hybrid PE
+    v57_group.add_argument(
+        '--use_hybrid_pe', action='store_true',
+        help='[V5.7] Use hybrid PE (per-patch content vs grid selection)'
+    )
+    v57_group.add_argument(
+        '--hybrid_pe_n_prototypes', type=int, default=16,
+        help='Number of prototypes for hybrid PE (default: 16)'
+    )
+
+    # V5.8 Task-Adaptive Position Encoding (TAPE)
+    v58_group = parser.add_argument_group('V5.8 TAPE (Task-Adaptive PE)')
+    v58_group.add_argument(
+        '--use_tape', action='store_true',
+        help='[V5.8] Use Task-Adaptive Position Encoding (learns optimal PE strength per task)'
+    )
+    v58_group.add_argument(
+        '--tape_init_value', type=float, default=0.0,
+        help='TAPE gate init value (sigmoid applied). 0=50%%, 2=88%%, -2=12%% (default: 0.0)'
     )
 
     return parser
@@ -826,6 +1146,122 @@ def parse_ablation_args(parsed_args) -> AblationConfig:
         config.score_aggregation_top_k = parsed_args.score_aggregation_top_k
     if hasattr(parsed_args, 'score_aggregation_top_k_percent'):
         config.score_aggregation_top_k_percent = parsed_args.score_aggregation_top_k_percent
+
+    # =========================================================================
+    # V5 Structural Improvements
+    # =========================================================================
+    # Phase 1: Tail-Aware Loss
+    if hasattr(parsed_args, 'use_tail_aware_loss') and parsed_args.use_tail_aware_loss:
+        config.use_tail_aware_loss = True
+    if hasattr(parsed_args, 'tail_weight'):
+        config.tail_weight = parsed_args.tail_weight
+    if hasattr(parsed_args, 'tail_top_k_ratio'):
+        config.tail_top_k_ratio = parsed_args.tail_top_k_ratio
+
+    # Phase 1: Spatial Clustering Score
+    if hasattr(parsed_args, 'cluster_weight'):
+        config.cluster_weight = parsed_args.cluster_weight
+    if hasattr(parsed_args, 'cluster_high_score_percentile'):
+        config.cluster_high_score_percentile = parsed_args.cluster_high_score_percentile
+
+    # Phase 2: Semantic Projector
+    if hasattr(parsed_args, 'use_semantic_projector') and parsed_args.use_semantic_projector:
+        config.use_semantic_projector = True
+    if hasattr(parsed_args, 'semantic_bottleneck_ratio'):
+        config.semantic_bottleneck_ratio = parsed_args.semantic_bottleneck_ratio
+
+    # Phase 2: Task-Adaptive Context
+    if hasattr(parsed_args, 'use_task_adaptive_context') and parsed_args.use_task_adaptive_context:
+        config.use_task_adaptive_context = True
+
+    # Phase 3: Global Context
+    if hasattr(parsed_args, 'use_global_context') and parsed_args.use_global_context:
+        config.use_global_context = True
+    if hasattr(parsed_args, 'global_context_regions'):
+        config.global_context_regions = parsed_args.global_context_regions
+    if hasattr(parsed_args, 'global_context_reduction'):
+        config.global_context_reduction = parsed_args.global_context_reduction
+
+    # =========================================================================
+    # V5.5: Position-Agnostic Improvements
+    # =========================================================================
+    # Direction 1: Relative Position Encoding
+    if hasattr(parsed_args, 'use_relative_position') and parsed_args.use_relative_position:
+        config.use_relative_position = True
+    if hasattr(parsed_args, 'relative_position_max_dist'):
+        config.relative_position_max_dist = parsed_args.relative_position_max_dist
+    if hasattr(parsed_args, 'relative_position_num_heads'):
+        config.relative_position_num_heads = parsed_args.relative_position_num_heads
+
+    # Direction 2: Dual Branch Scoring
+    if hasattr(parsed_args, 'use_dual_branch') and parsed_args.use_dual_branch:
+        config.use_dual_branch = True
+
+    # Direction 3: Local Consistency Calibration
+    if hasattr(parsed_args, 'use_local_consistency') and parsed_args.use_local_consistency:
+        config.use_local_consistency = True
+    if hasattr(parsed_args, 'local_consistency_kernel'):
+        config.local_consistency_kernel = parsed_args.local_consistency_kernel
+    if hasattr(parsed_args, 'local_consistency_temperature'):
+        config.local_consistency_temperature = parsed_args.local_consistency_temperature
+
+    # =========================================================================
+    # V5.6: Improved Position-Agnostic Solutions
+    # =========================================================================
+    # Improved Direction 2: Anti-Collapse Dual Branch
+    if hasattr(parsed_args, 'use_improved_dual_branch') and parsed_args.use_improved_dual_branch:
+        config.use_improved_dual_branch = True
+    if hasattr(parsed_args, 'dual_branch_init_alpha'):
+        config.dual_branch_init_alpha = parsed_args.dual_branch_init_alpha
+    if hasattr(parsed_args, 'dual_branch_min_alpha'):
+        config.dual_branch_min_alpha = parsed_args.dual_branch_min_alpha
+    if hasattr(parsed_args, 'dual_branch_max_alpha'):
+        config.dual_branch_max_alpha = parsed_args.dual_branch_max_alpha
+
+    # Alternative Direction 2: Score-Guided Branch
+    if hasattr(parsed_args, 'use_score_guided_dual') and parsed_args.use_score_guided_dual:
+        config.use_score_guided_dual = True
+    if hasattr(parsed_args, 'score_guided_temperature'):
+        config.score_guided_temperature = parsed_args.score_guided_temperature
+    if hasattr(parsed_args, 'score_guided_min_alpha'):
+        config.score_guided_min_alpha = parsed_args.score_guided_min_alpha
+
+    # Improved Direction 3: Multi-Scale Consistency
+    if hasattr(parsed_args, 'use_multiscale_consistency') and parsed_args.use_multiscale_consistency:
+        config.use_multiscale_consistency = True
+    if hasattr(parsed_args, 'multiscale_kernel_sizes'):
+        config.multiscale_kernel_sizes = parsed_args.multiscale_kernel_sizes
+
+    # =========================================================================
+    # V5.7: Rotation-Invariant Position Encoding
+    # =========================================================================
+    # Direction C: Multi-Orientation Ensemble
+    if hasattr(parsed_args, 'use_multi_orientation') and parsed_args.use_multi_orientation:
+        config.use_multi_orientation = True
+    if hasattr(parsed_args, 'multi_orientation_n'):
+        config.multi_orientation_n = parsed_args.multi_orientation_n
+
+    # Direction D: Content-Based PE
+    if hasattr(parsed_args, 'use_content_based_pe') and parsed_args.use_content_based_pe:
+        config.use_content_based_pe = True
+    if hasattr(parsed_args, 'content_pe_n_prototypes'):
+        config.content_pe_n_prototypes = parsed_args.content_pe_n_prototypes
+    if hasattr(parsed_args, 'content_pe_temperature'):
+        config.content_pe_temperature = parsed_args.content_pe_temperature
+    if hasattr(parsed_args, 'content_pe_blend_grid'):
+        config.content_pe_blend_grid = parsed_args.content_pe_blend_grid
+
+    # Direction E: Hybrid PE
+    if hasattr(parsed_args, 'use_hybrid_pe') and parsed_args.use_hybrid_pe:
+        config.use_hybrid_pe = True
+    if hasattr(parsed_args, 'hybrid_pe_n_prototypes'):
+        config.hybrid_pe_n_prototypes = parsed_args.hybrid_pe_n_prototypes
+
+    # V5.8 TAPE
+    if hasattr(parsed_args, 'use_tape') and parsed_args.use_tape:
+        config.use_tape = True
+    if hasattr(parsed_args, 'tape_init_value'):
+        config.tape_init_value = parsed_args.tape_init_value
 
     # Re-run __post_init__ to apply all validation/conflict resolution logic
     # This is necessary because __post_init__ was called when config was created (with default values)

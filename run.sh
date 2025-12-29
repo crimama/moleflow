@@ -1,78 +1,32 @@
 #!/bin/bash
 
-# MoLE-Flow: Continual Anomaly Detection
-# =======================================
-# All settings below are now defaults - just run: python run_moleflow.py
+# MoLE-Flow: Version 5 Final - Best Configuration
+# =============================================================
 #
-# Default configuration:
-# - Backbone: vit_base_patch16_224.augreg2_in21k_ft_in1k
-# - Image size: 224
-# - Adapter mode: soft_ln (SoftLN init_scale=0.01)
-# - Spatial context: enabled (depthwise_residual, kernel=3)
-# - Scale context: enabled (s-network only)
-
-# Classes: leather grid transistor carpet zipper hazelnut toothbrush metal_nut screw wood tile capsule pill cable bottle
-
-# Basic run with all defaults
-# CUDA_VISIBLE_DEVICES=0 python run_moleflow.py \    
-#     --experiment_name Version2-CouplingLayers_16
-
-# V5: Score Aggregation Experiments
-# ==================================
-# Test different aggregation methods for image-level anomaly score
-# Hypothesis: top-k averaging is more robust than 99th percentile
+# Version 5 실험 요약:
+#   - V5.1a: Tail-Aware Loss + Top-K aggregation (best baseline)
+#   - V5.5: Position-Agnostic approaches (Dual Branch failed)
+#   - V5.6: Improved Dual Branch (still failed - no gradient signal)
+#   - V5.7: Multi-Orientation Ensemble (no improvement for screw)
+#   - V5.8: TAPE (learned wrong direction - NLL ≠ AD performance)
 #
-# Modes:
-#   percentile: Use p-th percentile (current default, p=0.99)
-#   top_k: Average of top K patches (e.g., K=10)
-#   top_k_percent: Average of top K% patches (e.g., 5%)
-#   max: Maximum patch score
-#   mean: Mean of all patches
+# 결론: Position Encoding 관련 접근법은 normal-only training의 한계로 실패
+# Best Config: V5.1a baseline (LocalConsistency 선택적 사용)
 
-# Pilot experiments (3 classes: leather, grid, transistor)
-# Run in parallel to compare aggregation methods
+TASK_CLASSES="bottle cable capsule carpet grid hazelnut leather metal_nut pill screw tile toothbrush transistor wood zipper"
+# TASK_CLASSES="leather grid transistor screw"
 
-# V4.2: Score Aggregation with Top-K (K=3)
-# ========================================
-# Baseline configuration with whitening adapter and top-k aggregation
+echo "Starting MoLE-Flow training..."
+echo "Task classes: $TASK_CLASSES"
 
-CUDA_VISIBLE_DEVICES=0 python run_moleflow.py --run_diagnostics \
-      --use_whitening_adapter --use_dia \
-      --score_aggregation_mode top_k \
-      --score_aggregation_top_k 3 \
-      --experiment_name Version4.2-ScoreAgg_topk3
+# Best configuration from Version 5
+BASELINE_OPTS="--use_whitening_adapter --use_dia --score_aggregation_mode top_k --score_aggregation_top_k 3 --use_tail_aware_loss --tail_weight 0.3"
 
-# V4.4: LayerNorm Ablation (Fair Comparison)
-# ============================================
-# Compare WhiteningAdapter (with LN) vs WhiteningAdapterNoLN (without LN)
-# Same architecture except for LayerNorm
+# Main experiment: Best V5 configuration
+CUDA_VISIBLE_DEVICES=1 python run_moleflow.py --run_diagnostics \
+    --task_classes $TASK_CLASSES \
+    $BASELINE_OPTS \
+    --num_epochs 60 \
+    --experiment_name Version5-Final-60epochs_all_classes_alphabet_order
 
-# CUDA_VISIBLE_DEVICES=0 python run_moleflow.py --run_diagnostics \
-#       --use_dia \
-#       --score_aggregation_mode top_k \
-#       --score_aggregation_top_k 3 \
-#       --adapter_mode whitening_no_ln \
-#       --experiment_name Version4.4-whitening_no_ln
-
-# # GPU 0: Baseline (percentile 99%)
-# (
-#   CUDA_VISIBLE_DEVICES=0 python run_moleflow.py --run_diagnostics \
-#       --task_classes leather grid transistor carpet zipper hazelnut toothbrush metal_nut screw wood tile capsule pill cable bottle \
-#       --use_whitening_adapter --use_dia \
-#       --score_aggregation_mode top_k \
-#       --score_aggregation_top_k 3 \
-#       --experiment_name Version5.1-ScoreAgg_topk3_all_classes
-# ) &
-
-# # GPU 1: Top-K averaging (K=10)
-# (
-#   CUDA_VISIBLE_DEVICES=1 python run_moleflow.py --run_diagnostics \
-#       --task_classes bottle cable capsule carpet grid hazelnut leather metal_nut pill screw tile toothbrush transistor wood zipper \
-#       --use_whitening_adapter --use_dia \
-#       --score_aggregation_mode top_k \
-#       --score_aggregation_top_k 3 \
-#       --experiment_name Version5.2-ScoreAgg_topk3_all_classes_alphabet_order
-# ) &
-
-# wait
-# echo "V4.3 Pilot 완료"
+echo "Training completed!"

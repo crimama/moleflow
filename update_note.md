@@ -2276,9 +2276,301 @@ class WhiteningAdapterNoLN(nn.Module):
 
 ---
 
-## 성능 개선 방향 분석
+## Version 5 - 구조적 문제 해결을 위한 개선
 
-### 현재 아키텍처 리뷰
+### 근본 문제 분석
+
+#### 1. 학습 목표 vs 평가 목표 불일치 (The Objective Gap)
+
+**현상**:
+- NF 학습: 평균적 피팅 (`log p(x)` 최대화) - 모든 패치의 합을 평균
+- 평가: 분포의 꼬리(Tail)에 있는 극값(Top-k)으로 결정
+
+**원인** (`continual_trainer.py:226-265`):
+```python
+# 학습: 모든 패치의 평균
+log_px_image = log_px_patch.sum(dim=(1, 2))  # 전체 합
+nll_loss = -log_px_image.mean()
+
+# 평가: 극값 기반
+image_scores = torch.quantile(flat_scores, 0.99, dim=1)  # percentile
+# 또는
+top_k_scores, _ = torch.topk(flat_scores, k, dim=1)      # top_k
+```
+
+**결과**: 평균적으로 정상 분포는 좋아졌지만 극값에 대한 대응이 없어 Image AUC가 낮음
+
+#### 2. 기하학적 정렬 부재 (Geometric Misalignment) - Screw 문제
+
+**현상**:
+- Screw 클래스의 무작위 회전이 복잡한 매니폴드를 형성
+- 모델이 결함 대신 회전(SE(2))을 학습하는 데 용량 소진
+
+**원인**:
+- 코드 전체에서 회전 불변성/등변성 처리 메커니즘 없음
+- ViT feature, SpatialMixer, NF coupling 모두 회전에 민감
+
+#### 3. 논리적 이상 미탐지 (Logical Anomaly) - Transistor 문제
+
+**현상**:
+- 부품 누락/오배치 등 텍스처는 정상이지만 전역 구조가 깨진 경우 탐지 실패
+
+**원인** (`adapters.py:673`, `lora.py:249`):
+```python
+# SpatialContextMixer: 3x3 kernel
+kernel_size: int = 3  # 3x3 receptive field
+
+# LightweightMSContext
+dilations = (1, 2, 4)  # 최대 9x9 effective RF
+```
+
+- 37x37 patches에서 9x9는 전체의 0.6%만 커버 → 전역 문맥 부재
+
+#### 4. Pixel-Image AUC 격차 (Statistical Aggregation Error)
+
+**현상**:
+- Pixel AUC는 높으나 Image AUC가 현저히 낮음
+- 정상 이미지에서도 outlier patch 발생 → image score 분포 overlap
+
+**원인**:
+- 기존 Max/Top-k 방식은 산발적 노이즈에 취약
+- 실제 결함이 갖는 위상학적 군집성(Topological Clustering)을 반영하지 못함
+
+#### 5. SpatialMixer 고정 문제
+
+**현상**:
+- Task 0에 최적화된 context filter가 이후 task에서 고정
+
+**원인** (`mole_nf.py:719-726`):
+```python
+# V4 Complete Separation: Spatial mixer only trained in Task 0
+if self.spatial_mixer is not None and task_id == 0:
+    params.extend(self.spatial_mixer.parameters())
+```
+
+---
+
+### Version 5 해결책
+
+#### 문제-해결책 매핑
+
+| 순위 | 문제점 | 해결책 | 난이도 | 기대 효과 |
+|:----:|--------|--------|:------:|:---------:|
+| **1** | 학습-평가 불일치 | Tail-Aware Loss | ⭐⭐ | ⭐⭐⭐⭐⭐ |
+| **2** | Image AUC 붕괴 | Spatial Clustering Score | ⭐⭐ | ⭐⭐⭐⭐ |
+| **3** | SpatialMixer 고정 | Task-Adaptive Context | ⭐⭐⭐ | ⭐⭐⭐ |
+| **4** | Long-range Dependency | Global Context Module | ⭐⭐⭐ | ⭐⭐⭐ |
+| **5** | Geometry-Semantic Entanglement | Semantic Projector | ⭐⭐~⭐⭐⭐ | ⭐⭐⭐⭐ |
+
+---
+
+### Solution 1: Tail-Aware Loss (Phase 1)
+
+**핵심**: 학습 시에도 극값을 고려하는 손실 함수
+
+```python
+def _compute_tail_aware_loss(self, z, logdet_patch,
+                              tail_weight=0.3, top_k_ratio=0.05):
+    """
+    L = (1 - λ) * L_mean + λ * L_tail
+    """
+    # Patch-wise NLL
+    nll_patch = -(log_pz + logdet_patch)  # (B, H, W)
+
+    # 1. Mean loss (기존)
+    nll_mean = nll_patch.mean()
+
+    # 2. Tail loss (상위 k% 패치)
+    flat_nll = nll_patch.reshape(B, -1)
+    k = max(1, int(flat_nll.shape[1] * top_k_ratio))
+    top_k_nll, _ = torch.topk(flat_nll, k, dim=1)
+    nll_tail = top_k_nll.mean()
+
+    # Combined
+    total_loss = (1 - tail_weight) * nll_mean + tail_weight * nll_tail
+    return total_loss
+```
+
+**Config 옵션**:
+```python
+use_tail_aware_loss: bool = True
+tail_weight: float = 0.3
+tail_top_k_ratio: float = 0.05
+```
+
+---
+
+### Solution 2: Spatial Clustering Score (Phase 1)
+
+**핵심**: 산발적 노이즈 vs 실제 결함(cluster) 구분
+
+```python
+def _aggregate_with_spatial_clustering(self, patch_scores,
+                                        cluster_weight=0.5):
+    """실제 결함은 cluster 형성, 노이즈는 산발적"""
+    # 1. 기본 top-k score
+    top_k_score = torch.topk(flat_scores, k=10, dim=1)[0].mean(dim=1)
+
+    # 2. High-score region의 connectivity 측정
+    high_mask = patch_scores > threshold
+    eroded = -F.max_pool2d(-mask, kernel_size=3, stride=1, padding=1)
+    dilated = F.max_pool2d(eroded, kernel_size=3, stride=1, padding=1)
+
+    cluster_ratio = dilated.sum() / mask.sum()
+
+    # 3. Cluster bonus: 진짜 결함이면 점수 증폭
+    image_score = top_k_score * (1 + cluster_weight * cluster_ratio)
+    return image_score
+```
+
+**Config 옵션**:
+```python
+score_aggregation_mode: str = "spatial_cluster"
+cluster_weight: float = 0.5
+```
+
+---
+
+### Solution 3: Task-Adaptive Context (Phase 2)
+
+**핵심**: Frozen base mixer + Task-specific lightweight adapter
+
+```python
+class TaskAdaptiveContextMixer(nn.Module):
+    """
+    Base SpatialMixer (frozen after Task 0) + Task-specific gate/scale/bias
+    """
+    def __init__(self, channels, base_mixer):
+        self.base_mixer = base_mixer
+        self.task_gates = nn.ParameterDict()
+        self.task_scales = nn.ParameterDict()
+        self.task_biases = nn.ParameterDict()
+
+    def forward(self, x, task_id):
+        base_out = self.base_mixer(x)
+        gate = torch.sigmoid(self.task_gates[str(task_id)])
+        scale = self.task_scales[str(task_id)]
+        bias = self.task_biases[str(task_id)]
+
+        adapted = scale * base_out + bias
+        return (1 - gate) * x + gate * adapted
+```
+
+**Config 옵션**:
+```python
+use_task_adaptive_context: bool = True
+```
+
+---
+
+### Solution 4: Global Context Module (Phase 3)
+
+**핵심**: Regional pooling + Cross-attention으로 전역 문맥 추출
+
+```python
+class LightweightGlobalContext(nn.Module):
+    """O(N * R²) 복잡도로 global context"""
+    def __init__(self, channels, num_regions=4, reduction=4):
+        self.region_proj = nn.Linear(channels, channels // reduction)
+        self.query_proj = nn.Linear(channels, channels // reduction)
+        self.out_proj = nn.Linear(channels // reduction, channels)
+        self.gate = nn.Parameter(torch.tensor([0.1]))
+
+    def forward(self, x):
+        # 1. Regional tokens via pooling
+        regions = F.adaptive_avg_pool2d(x_4d, (R, R))
+
+        # 2. Cross-attention
+        Q = self.query_proj(x_flat)
+        K, V = self.key_proj(regions), self.value_proj(regions)
+        attn = softmax(Q @ K.T / sqrt(d))
+        global_ctx = attn @ V
+
+        # 3. Gated residual
+        return x + sigmoid(self.gate) * global_ctx
+```
+
+**Config 옵션**:
+```python
+use_global_context: bool = True
+global_context_regions: int = 4
+```
+
+---
+
+### Solution 5: Semantic Projector (Phase 2)
+
+**핵심**: Permutation-invariant pooling으로 positional info 제거, semantic 학습
+
+```python
+class SemanticProjector(nn.Module):
+    """Position-agnostic semantic feature extraction"""
+    def __init__(self, channels, bottleneck_ratio=0.5):
+        self.patch_encoder = nn.Sequential(...)  # Per-patch
+        self.global_encoder = nn.Sequential(...)  # Set function
+        self.global_decoder = nn.Sequential(...)
+        self.gate = nn.Parameter(torch.tensor([0.3]))
+
+    def forward(self, x):
+        # 1. Per-patch semantic
+        x_semantic = self.patch_encoder(x)
+
+        # 2. Global context (permutation-invariant)
+        global_feat = self.global_encoder(x).mean(dim=1)  # Position 제거
+        global_ctx = self.global_decoder(global_feat)
+
+        # 3. Combine
+        return x_semantic + sigmoid(self.gate) * global_ctx
+```
+
+**Config 옵션**:
+```python
+use_semantic_projector: bool = True
+semantic_bottleneck_ratio: float = 0.5
+```
+
+---
+
+### 구현 로드맵
+
+```
+Phase 1 (즉시 적용, 높은 효과)
+├── Tail-Aware Loss
+└── Spatial Clustering Score
+
+Phase 2 (단기, 구조 수정)
+├── Semantic Projector
+└── Task-Adaptive Context
+
+Phase 3 (중기)
+└── Global Context Module
+```
+
+### 기대 효과
+
+| 해결책 | Image AUC | Pixel AUC | 클래스 편차 | Screw | Transistor |
+|--------|:---------:|:---------:|:----------:|:-----:|:----------:|
+| Tail-Aware Loss | ⬆️⬆️⬆️ | ⬆️ | ⬆️⬆️ | ⬆️ | ⬆️ |
+| Spatial Clustering | ⬆️⬆️⬆️ | - | ⬆️⬆️ | ⬆️ | ⬆️ |
+| Task-Adaptive Ctx | ⬆️ | ⬆️ | ⬆️⬆️⬆️ | ⬆️ | ⬆️ |
+| Global Context | ⬆️ | ⬆️ | ⬆️ | ⬆️ | ⬆️⬆️⬆️ |
+| Semantic Projector | ⬆️⬆️ | ⬆️ | ⬆️⬆️ | ⬆️⬆️⬆️ | ⬆️⬆️ |
+
+### File Changes Summary
+
+| File | Changes |
+|------|---------|
+| `moleflow/config/ablation.py` | V5 config options 추가 |
+| `moleflow/trainer/continual_trainer.py` | Tail-Aware Loss, Spatial Clustering Score |
+| `moleflow/models/adapters.py` | SemanticProjector, TaskAdaptiveContextMixer, LightweightGlobalContext |
+| `moleflow/models/mole_nf.py` | 새 모듈 통합 |
+| `run.sh` | V5 실험 스크립트 |
+
+---
+
+## 이전 분석 (참고용)
+
+### V4.3 이전 아키텍처 리뷰
 
 ```
 ViT Backbone (frozen)
@@ -2302,25 +2594,9 @@ Aggregation (top-k mean)
 Image Score
 ```
 
-### 병목 후보 분석
+### 병목 후보 분석 (V4 기준)
 
 #### A. Feature Extraction Level
-
-| 요소 | 현재 상태 | 잠재적 문제 |
-|------|----------|-------------|
-| ViT backbone | frozen, 224x224 | 해상도 제한, 작은 결함 miss |
-| Multi-block | blocks 8,9,10,11 | 이미 다중 스케일 사용 중 |
-| Patch size | 16x16 | 작은 결함이 patch 내에서 희석 |
-
-#### B. Adapter/Preprocessing Level
-
-| 요소 | 현재 상태 | 잠재적 문제 |
-|------|----------|-------------|
-| WhiteningAdapter | LN + constrained gamma/beta | ✅ 검증됨 (제거 시 성능 하락) |
-| SpatialMixer | 3x3 depthwise conv | Local context만 사용 |
-| Positional Embedding | sin/cos 고정 | 문제 없음 |
-
-#### C. Flow Level
 
 | 요소 | 현재 상태 | 잠재적 문제 |
 |------|----------|-------------|
@@ -2408,5 +2684,688 @@ loss = nll_loss + lambda * margin_loss(normal_scores, pseudo_anomaly_scores)
 | 3 | DIA 표현력 확대 | 전반적 향상 | 낮음 |
 | 4 | Contrastive Loss | 분리력 향상 | 중간 |
 | 5 | Multi-scale Patch | 작은 결함 탐지 | 높음 |
+
+---
+## V5.5 - Position-Agnostic Improvements (2025-12-28)
+
+### Problem Identified
+
+V5 experiments revealed screw class remains at ~0.40-0.44 Image AUC (worse than random).
+
+**Root Cause Analysis**:
+- Pixel AUC for screw: ~0.85 (decent - patch detection works)
+- Image AUC for screw: ~0.41 (terrible - worse than random)
+- **Key Insight**: The problem is NOT in anomaly detection, but in aggregation
+- Screw has random orientations → normal rotated patches get high anomaly scores → false positive noise dominates top-k aggregation
+
+**Fundamental Issue**: Position-dependent learning
+- NF learns "pattern at position (x,y)" instead of "pattern regardless of position"
+- Works for fixed-position objects (leather, grid) but breaks for rotated objects (screw)
+
+### V5.5 Implementation: 3 Class-Agnostic Directions
+
+All directions use V5.1a-TailAwareLoss as baseline and address the position problem without class-specific hacks.
+
+#### Direction 1: Relative Position Encoding (`--use_relative_position`)
+**Idea**: Replace absolute PE with relative position attention
+- Instead of "what is at (5,5)?", ask "what is the relationship between neighboring patches?"
+- Relative patterns (thread spacing) are rotation-invariant
+- **Implementation**: `RelativePositionEmbedding` in adapters.py
+  - Learnable relative position bias table
+  - Query/Key projection for attention
+  - Blend gate to combine with absolute PE
+
+#### Direction 2: Dual Branch Scoring (`--use_dual_branch`)
+**Idea**: Two parallel NF branches, learn when to trust each
+- Position Branch: Standard NF with PE (good for aligned objects)
+- No-Position Branch: NF without PE (good for rotated objects)
+- Final score = α * pos_score + (1-α) * nopos_score
+- α is learned per-patch based on local pattern consistency
+- **Implementation**: `DualBranchScorer` in adapters.py
+  - Alpha predictor network
+  - Dual forward pass in `_compute_anomaly_scores()`
+
+#### Direction 3: Local Consistency Calibration (`--use_local_consistency`)
+**Idea**: Down-weight isolated high scores (likely rotation noise)
+- Real anomalies have spatially consistent high scores
+- False positives (rotation artifacts) are isolated
+- **Implementation**: `LocalConsistencyCalibrator` in adapters.py
+  - 3x3 consistency convolution
+  - Learnable temperature and minimum weight
+
+### Experiment Setup (run.sh)
+
+```bash
+# GPU 0: Dir1 - Relative Position
+--use_relative_position --relative_position_max_dist 7
+
+# GPU 1: Dir3 - Local Consistency
+--use_local_consistency --local_consistency_kernel 3
+
+# GPU 4: Dir1+Dir3 Combined (most promising)
+--use_relative_position --use_local_consistency
+
+# GPU 5: Dir2 - Dual Branch
+--use_dual_branch
+```
+
+### Files Modified
+
+1. **adapters.py**: Added 3 new modules
+   - `RelativePositionEmbedding`
+   - `DualBranchScorer`
+   - `LocalConsistencyCalibrator`
+
+2. **ablation.py**: Added V5.5 config options and CLI args
+
+3. **mole_nf.py**: Integrated V5.5 modules in forward pass
+
+4. **continual_trainer.py**: 
+   - Added V5.5 settings
+   - Integrated LocalConsistency in `_aggregate_patch_scores()`
+   - Implemented dual-branch scoring in `_compute_anomaly_scores()`
+
+---
+
+### V5.5 실험 결과 (2025-12-28)
+
+#### 결과 테이블 (Image AUC)
+
+| Experiment | leather | grid | transistor | screw | Mean |
+|------------|---------|------|------------|-------|------|
+| Baseline (V4.3) | 1.00 | 0.90 | 0.78 | 0.46 | 0.87 |
+| Dir1-RelativePosition | 1.00 | 0.87 | 0.76 | 0.39 | 0.75 |
+| Dir2-DualBranch | 0.17 | 0.35 | 0.52 | **0.91** | 0.49 |
+| **Dir3-LocalConsistency** | 1.00 | **0.92** | **0.81** | 0.43 | **0.79** |
+| Dir1+Dir3-Combined | 1.00 | 0.84 | 0.77 | 0.40 | 0.75 |
+
+#### 핵심 발견
+
+**1. Dir2 (DualBranch)가 가설을 증명함**
+```
+Screw Image AUC: 0.39 → 0.91 (2.3배 향상!)
+
+그러나 다른 클래스 붕괴:
+- leather: 1.00 → 0.17
+- grid: 0.90 → 0.35
+- transistor: 0.78 → 0.52
+```
+
+**해석**:
+- 위치 정보 제거가 screw 문제의 해결책임을 확인
+- α predictor가 제대로 학습되지 않음
+- no-position 브랜치가 과도하게 지배하면서 고정 방향 클래스 성능 붕괴
+
+**2. Dir3 (LocalConsistency)가 가장 균형잡힌 접근법**
+```
+Grid: 0.90 → 0.92 (개선)
+Transistor: 0.78 → 0.81 (개선)
+Screw: 0.46 → 0.43 (미미한 변화)
+Mean: 0.79 (baseline 0.87보다 낮지만 4클래스 중 가장 높음)
+```
+
+**3. Dir1 (RelativePosition)은 효과 없음**
+- 상대 위치 인코딩만으로는 rotation invariance 달성 불가
+- Screw 오히려 악화: 0.46 → 0.39
+
+**4. Combined (Dir1+Dir3)는 Dir3 단독보다 나쁨**
+- Dir1이 오히려 방해 요소로 작용
+
+#### 실패 원인 분석
+
+**Dir2 α predictor 실패 원인**:
+```python
+# 현재 구조
+self.alpha_net = nn.Sequential(
+    nn.Linear(channels * 2, channels // 2),
+    nn.LayerNorm(channels // 2),
+    nn.GELU(),
+    nn.Linear(channels // 2, 1),
+    nn.Sigmoid()  # α ∈ [0, 1]
+)
+# 초기화: α ≈ 0.5로 시작
+
+문제:
+1. 학습 초기 no-pos 브랜치 loss가 더 낮음 (위치 에러 없으므로)
+2. Gradient가 α를 0 방향으로 빠르게 이동
+3. 일단 α → 0이 되면 pos 브랜치 gradient 소실
+4. 결과: α ≈ 0 고정 (no-pos만 사용)
+```
+
+#### 다음 단계 제안
+
+1. **Dir2 개선안**:
+   - α 초기값을 0.7-0.8로 설정 (pos 브랜치 선호)
+   - α에 regularization 추가: loss += λ * |α - 0.5|
+   - Warm-up: 초기 N epochs는 α 고정
+
+2. **Dir3 확장**:
+   - 커널 크기 실험: 5x5, 7x7
+   - Temperature 조정 실험
+
+3. **새로운 방향**:
+   - Task-aware α: 각 task별로 다른 α 학습
+   - Rotation augmentation + contrastive learning
+
+---
+
+## V5.6 - Improved Position-Agnostic Solutions (2025-12-28)
+
+### 1. V5.5 실패 원인 분석
+
+#### Dir2 (DualBranchScorer) 실패 분석
+
+**현상**: Screw 0.91 달성했으나 다른 클래스 붕괴 (leather 0.17)
+
+**원인 분석**:
+```
+학습 초기:
+  - pos_score: 위치 정보 기반 → 일부 패치 높은 error
+  - nopos_score: 위치 정보 없음 → 전반적으로 낮은 error
+  
+  → nopos 브랜치의 loss가 더 낮음
+  → Gradient가 α를 0 방향으로 업데이트
+  → α ≈ 0이 되면 pos 브랜치 gradient 소실
+  → 결과: α → 0 고정 (no-position만 사용)
+
+문제점:
+  1. 초기값 α=0.5가 불안정
+  2. α에 제약 없어 극단값으로 수렴
+  3. 한 번 붕괴하면 회복 불가
+```
+
+#### Dir3 (LocalConsistency) 한계
+
+**현상**: 가장 좋았으나 screw 개선 미미 (0.43)
+
+**원인**:
+- 단일 3x3 커널은 결함 크기 다양성 미반영
+- 큰 결함은 5x5나 7x7 커널 필요
+- 작은 결함은 3x3이 적합
+
+### 2. V5.6 개선 방안
+
+#### 2.1 ImprovedDualBranchScorer (Anti-Collapse)
+
+**핵심 개선**:
+```python
+class ImprovedDualBranchScorer(nn.Module):
+    def __init__(self, channels, init_alpha=0.7, min_alpha=0.3, max_alpha=0.9):
+        # 1. 초기값 0.7 (pos 브랜치 선호로 시작)
+        init_logit = log(init_alpha / (1 - init_alpha))
+        nn.init.constant_(self.alpha_net[-1].bias, init_logit)
+        
+        # 2. α clamp로 collapse 방지
+        self.min_alpha = min_alpha  # 최소 30% pos 사용
+        self.max_alpha = max_alpha  # 최대 90% pos 사용
+    
+    def forward(self, z_pos, z_nopos, score_pos, score_nopos):
+        # 3. Score 차이를 추가 입력으로 활용
+        score_diff = (score_pos - score_nopos) / (|score_pos| + |score_nopos| + ε)
+        combined_input = cat([z_pos, z_nopos, score_diff], dim=-1)
+        
+        # 4. α를 [min, max] 범위로 제한
+        alpha_raw = sigmoid(self.alpha_net(combined_input))
+        alpha = min_alpha + (max_alpha - min_alpha) * alpha_raw
+        
+        return alpha * score_pos + (1 - alpha) * score_nopos
+```
+
+**기대 효과**:
+- α가 0으로 붕괴하지 않음 (min=0.3 보장)
+- pos 브랜치가 항상 최소 30% 기여
+- Score 차이 입력으로 더 informative한 α 예측
+
+#### 2.2 ScoreGuidedDualBranch (Alternative)
+
+**더 단순한 접근**:
+```python
+class ScoreGuidedDualBranch(nn.Module):
+    """
+    Latent 대신 score 차이로 직접 α 결정.
+    
+    아이디어:
+    - score_pos < score_nopos → pos 브랜치가 더 좋음 → α ↑
+    - score_pos > score_nopos → nopos 브랜치가 더 좋음 → α ↓
+    """
+    
+    def forward(self, z_pos, z_nopos, score_pos, score_nopos):
+        score_diff = score_pos - score_nopos
+        normalized_diff = score_diff / score_magnitude
+        
+        # diff > 0 (pos가 worse) → α 감소
+        # diff < 0 (pos가 better) → α 증가
+        alpha = sigmoid(temp * (bias - normalized_diff))
+        alpha = clamp(alpha, min=min_alpha, max=1-min_alpha)
+        
+        return alpha * score_pos + (1 - alpha) * score_nopos
+```
+
+**장점**:
+- Latent 기반보다 직접적
+- Gradient가 score로 직접 전파
+- 더 interpretable
+
+#### 2.3 MultiScaleLocalConsistency
+
+**Multi-scale 분석**:
+```python
+class MultiScaleLocalConsistency(nn.Module):
+    def __init__(self, kernel_sizes=[3, 5, 7], temperature=1.0):
+        # 각 스케일별 learnable parameters
+        self.temperatures = [Parameter for each kernel]
+        self.min_weights = [Parameter for each kernel]
+        self.scale_weights = Parameter([1/3, 1/3, 1/3])  # 융합 가중치
+        
+        # Score-adaptive fusion
+        self.adaptive_net = Linear(n_scales, n_scales) + Softmax
+    
+    def forward(self, patch_scores):
+        # 각 스케일에서 consistency 계산
+        weights_3x3 = compute_consistency(scores, kernel=3)
+        weights_5x5 = compute_consistency(scores, kernel=5)
+        weights_7x7 = compute_consistency(scores, kernel=7)
+        
+        # Adaptive fusion (스케일별 중요도 학습)
+        scale_means = stack([w.mean() for w in weights]).T
+        fusion_weights = adaptive_net(scale_means)  # Softmax
+        
+        combined = sum(w * fw for w, fw in zip(all_weights, fusion_weights))
+        return patch_scores * combined
+```
+
+**기대 효과**:
+- 작은 결함 (3x3) + 중간 (5x5) + 큰 결함 (7x7) 모두 커버
+- Learnable fusion으로 최적 조합 학습
+- V5.5 Dir3 대비 다양한 결함 크기 대응
+
+### 3. 실험 구성 (run.sh)
+
+| GPU | 실험 | 핵심 설정 |
+|-----|------|----------|
+| 0 | ImprovedDualBranch | init=0.7, α∈[0.3, 0.9] |
+| 1 | ScoreGuidedDual | temp=1.0, min_α=0.2 |
+| 4 | MultiScaleConsistency | kernels=[3,5,7] |
+| 5 | Combined | ImprovedDual + MultiScale |
+
+### 4. 수정된 파일
+
+1. **adapters.py**:
+   - `ImprovedDualBranchScorer`: Anti-collapse dual branch
+   - `ScoreGuidedDualBranch`: Score-guided alternative
+   - `MultiScaleLocalConsistency`: Multi-scale consistency
+
+2. **ablation.py**:
+   - V5.6 config options 추가
+   - CLI arguments 추가
+
+3. **mole_nf.py**:
+   - V5.6 모듈 imports
+   - V5.6 settings 처리
+   - 모듈 인스턴스 생성
+   - get_trainable_params에 V5.6 파라미터 추가
+
+4. **continual_trainer.py**:
+   - V5.6 settings 처리
+   - _compute_anomaly_scores에서 V5.6 dual branch 처리
+   - _aggregate_patch_scores에서 multiscale consistency 처리
+
+5. **run.sh**:
+   - V5.6 실험 4개 구성
+
+---
+
+### V5.6 실험 결과 (2025-12-28)
+
+#### 결과 테이블 (Image AUC)
+
+| Experiment | leather | grid | transistor | screw | Mean |
+|------------|---------|------|------------|-------|------|
+| Baseline (V5.5-Dir3) | 1.00 | 0.92 | 0.81 | 0.43 | **0.79** |
+| V5.6-ImprovedDualBranch | 0.47 | 0.40 | 0.60 | **0.90** | 0.59 |
+| V5.6-ScoreGuidedDual | 0.14 | 0.49 | 0.57 | **0.90** | 0.52 |
+| **V5.6-MultiScaleConsistency** | **1.00** | **0.92** | **0.81** | 0.39 | **0.78** |
+| V5.6-Combined | 0.12 | 0.44 | 0.54 | **0.90** | 0.50 |
+
+#### 분석
+
+**1. Dual Branch 개선 실패**
+- α clamping [0.3, 0.9]도 collapse 방지 실패
+- Screw는 0.90으로 좋지만 다른 클래스 붕괴
+- **근본 원인**: 정상 데이터만으로는 pos/nopos 구분 학습 불가
+
+**2. MultiScaleConsistency 유지**
+- V5.5-Dir3와 거의 동일 (0.78 vs 0.79)
+- Multi-scale이 single-scale 대비 큰 개선 없음
+- Screw는 여전히 0.39
+
+**3. Dual Branch 실패 근본 원인**
+```
+학습 데이터: 정상 이미지만 사용
+  ↓
+pos_score ≈ nopos_score (정상은 둘 다 낮음)
+  ↓
+α 학습에 유의미한 신호 없음
+  ↓
+α가 임의 방향으로 수렴
+  ↓
+테스트 시 의미있는 선택 불가
+```
+
+#### 결론
+
+- **Dual Branch 접근법 포기**: 정상 데이터만으로는 pos/nopos 선택 학습 불가
+- **MultiScaleConsistency**: V5.5-Dir3와 동등, 추가 개선 없음
+- **새로운 방향 필요**:
+  1. Task-level α (각 task마다 고정 α 학습)
+  2. Pseudo-anomaly 기반 contrastive learning
+  3. Position encoding 자체를 rotation-invariant하게 설계
+
+---
+
+## V5.7 - Rotation-Invariant Position Encoding
+
+### V5.7-DirC-MultiOrientation 결과 (All Classes)
+
+| Task ID | Class | Routing Acc | Image AUC | Pixel AUC |
+|---------|-------|-------------|-----------|-----------|
+| 0 | bottle | 100.00 | 1.0000 | 0.9469 |
+| 1 | cable | 100.00 | 0.9162 | 0.9042 |
+| 2 | capsule | 100.00 | 0.7276 | 0.9203 |
+| 3 | carpet | 100.00 | 0.9755 | 0.9643 |
+| 4 | grid | 100.00 | 0.8989 | 0.8937 |
+| 5 | hazelnut | 100.00 | 0.9625 | 0.9646 |
+| 6 | leather | 100.00 | 1.0000 | 0.9699 |
+| 7 | metal_nut | 100.00 | 0.9717 | 0.9654 |
+| 8 | pill | 98.80 | 0.8568 | 0.9438 |
+| 9 | screw | 100.00 | **0.3484** | 0.8168 |
+| 10 | tile | 100.00 | 1.0000 | 0.8794 |
+| 11 | toothbrush | 97.62 | 0.8417 | 0.9414 |
+| 12 | transistor | 100.00 | 0.7967 | 0.9456 |
+| 13 | wood | 100.00 | 0.9553 | 0.8811 |
+| 14 | zipper | 100.00 | 0.9278 | 0.8629 |
+| **Mean** | Overall | 99.76 | **0.8786** | 0.9200 |
+
+### V5.7 분석
+
+**Multi-Orientation Ensemble 효과 없음**:
+- Mean 0.88로 좋아 보이지만 **Screw 0.35로 여전히 문제**
+- Feature 회전 ≠ 의미있는 다른 시점
+- Position Embedding이 이미 feature에 baked-in 되어 있음
+- 4배 inference cost만 발생, 개선 없음
+
+**ContentBasedPE/HybridPE**:
+- Pilot 실험에서 0.75 mean으로 baseline보다 나쁨
+- 학습 없이 inference-time에 prototype 매칭은 불안정
+
+---
+
+## V5.8 - TAPE (Task-Adaptive Position Encoding) 구현
+
+### 핵심 아이디어
+
+이전 접근법의 실패 원인 분석:
+```
+V5.5/V5.6 Dual Branch:
+  - Patch-level α decision
+  - 정상 데이터: pos_score ≈ nopos_score → No gradient signal
+  - α가 collapse하거나 랜덤하게 수렴
+
+V5.7 Multi-Orientation:
+  - Inference-time rotation
+  - 학습에 반영 안됨 → Cannot learn
+  - Feature에 PE가 이미 적용되어 있어 rotation 무의미
+```
+
+**TAPE 해결책**:
+```
+Task-level PE strength + Training-time learning
+  ↓
+NLL loss provides direct gradient
+  ↓
+각 task가 최적의 PE strength 자동 학습
+```
+
+### 설계
+
+```python
+class TaskAdaptivePositionEncoding(nn.Module):
+    """
+    V5.8: TAPE - Task별 PE 강도 학습
+
+    - pe_gates: {task_id: learnable gate}
+    - alpha = sigmoid(gate) → PE strength (0~1)
+    - features_with_pe = raw_features + alpha * grid_pe
+    """
+    def __init__(self, init_value: float = 0.0):
+        self.init_value = init_value
+        self.pe_gates = nn.ParameterDict()
+
+    def add_task(self, task_id: int):
+        self.pe_gates[str(task_id)] = nn.Parameter(
+            torch.tensor([self.init_value])
+        )
+
+    def forward(self, features, grid_pe, task_id):
+        gate = self.pe_gates[str(task_id)]
+        alpha = torch.sigmoid(gate)  # 0~1
+        return features + alpha * grid_pe
+```
+
+### 기대 효과
+
+| Task | 예상 PE Strength | 이유 |
+|------|------------------|------|
+| Screw | ~0.1-0.3 (낮음) | 회전 불변 → PE 약하게 |
+| Leather | ~0.8-1.0 (높음) | 공간 일관성 중요 → PE 강하게 |
+| Grid | ~0.5-0.7 (중간) | 어느 정도 위치 정보 필요 |
+
+### 수정된 파일
+
+1. **adapters.py**: `TaskAdaptivePositionEncoding` 클래스 추가
+2. **ablation.py**: `use_tape`, `tape_init_value` config 추가
+3. **mole_nf.py**: TAPE 통합 (초기화, add_task, forward)
+4. **continual_trainer.py**:
+   - TAPE 활성화 시 raw features 전달 (PE는 NF 내부에서 적용)
+   - Task 훈련 후 PE strength 로깅
+
+### 실행 방법
+
+```bash
+# TAPE 기본 실험
+python run_moleflow.py --run_diagnostics \
+    --use_tape \
+    --tape_init_value 0.0 \
+    --experiment_name Version5.8-TAPE
+
+# TAPE + LocalConsistency
+python run_moleflow.py --run_diagnostics \
+    --use_tape \
+    --tape_init_value 0.0 \
+    --use_local_consistency \
+    --local_consistency_kernel 3 \
+    --experiment_name Version5.8-TAPE-LocalConsistency
+```
+
+### 핵심 차별점 (vs 이전 접근법)
+
+| 측면 | V5.5/V5.6 | V5.7 | V5.8 TAPE |
+|------|-----------|------|-----------|
+| Decision Level | Patch | Image | **Task** |
+| Learning | Training | Inference | **Training** |
+| Gradient | None (normal≈normal) | None | **Clear (NLL)** |
+| 복잡도 | Moderate | High (4x inference) | **Low** |
+
+---
+
+### V5.8-TAPE v1 실험 결과 (Pilot)
+
+| Task | Class | Image AUC | PE Strength |
+|------|-------|-----------|-------------|
+| 0 | leather | 1.0000 | 0.5028 |
+| 1 | grid | 0.9365 | 0.5000 |
+| 2 | transistor | 0.8087 | 0.5000 |
+| 3 | screw | 0.3900 | 0.5000 |
+| **Mean** | | **0.7838** | |
+
+### 문제 발견: PE Strength가 학습되지 않음
+
+**증상**: 모든 Task의 PE strength가 초기값 0.5에서 거의 변하지 않음
+
+**원인 분석**:
+1. TAPE gate는 **단일 스칼라** 파라미터
+2. 다른 수천 개 파라미터와 **동일한 learning rate** 사용
+3. NLL loss에서 PE 기여도가 다른 파라미터에 비해 작음
+4. Gradient가 너무 작아서 학습이 일어나지 않음
+
+### V5.8-TAPE v2: LR Multiplier 추가
+
+**해결책**: TAPE gate에 별도의 높은 learning rate 적용
+
+**수정 내용**:
+
+1. **ablation.py**:
+   - `tape_lr_multiplier: float = 100.0` 추가
+   - CLI argument `--tape_lr_multiplier` 추가
+
+2. **continual_trainer.py**:
+   - `_train_base_task`: Parameter groups로 분리, TAPE에 100x LR
+   - `_train_fast_stage`: 동일하게 적용
+   - Warmup도 각 그룹별로 적절히 처리
+
+```python
+# 수정된 optimizer 생성 코드
+if self.use_tape:
+    tape_params = self.nf_model.tape.get_trainable_params(task_id)
+    other_params = [p for p in trainable_params if id(p) not in tape_param_ids]
+
+    param_groups = [
+        {'params': other_params, 'lr': lr},
+        {'params': tape_params, 'lr': lr * self.tape_lr_multiplier}  # 100x
+    ]
+    optimizer = create_optimizer(param_groups, lr=lr)
+```
+
+**기대 효과**:
+- 기본 LR이 1e-4면, TAPE gate는 1e-2로 학습
+- PE strength가 실제로 각 task 특성에 맞게 변화할 것
+- Screw: 0.5 → ~0.2 (PE 감소), Leather: 0.5 → ~0.8 (PE 유지/증가)
+
+### V5.8-TAPE v2 실험 결과
+
+| Task | Class | PE Strength | Image AUC | vs v1 |
+|------|-------|-------------|-----------|-------|
+| 0 | leather | 0.3257 | 1.0000 | = |
+| 1 | grid | 0.9748 | 0.9165 | ↓0.02 |
+| 2 | transistor | 0.9426 | 0.7963 | ↓0.01 |
+| 3 | screw | 0.3082 | 0.3753 | ↓0.01 |
+| **Mean** | | | **0.7720** | ↓0.01 |
+
+### 분석: TAPE 학습 방향 문제
+
+**발견 1**: PE strength가 이제 학습됨 (v1의 0.5에서 변화)
+- Screw: 0.31 (낮음) ← 의도대로!
+- Leather: 0.33 (낮음) ← **반대로 학습됨!**
+- Grid/Transistor: 0.94-0.97 (높음)
+
+**발견 2**: 성능은 오히려 저하됨
+- v1 Mean: 0.7838 → v2 Mean: 0.7720 (↓)
+- 모든 metric에서 소폭 하락
+
+**근본 원인: NLL Loss ≠ Anomaly Detection**
+
+```
+NLL Loss 최소화 방향:
+  - 낮은 PE → 더 자유로운 fit → 더 낮은 NLL
+  - 모델은 PE를 낮추는 방향으로 학습
+
+Anomaly Detection 최적화 방향:
+  - 클래스 특성에 맞는 PE 필요
+  - Leather: 높은 PE (공간 구조 중요)
+  - Screw: 낮은 PE (회전 불변 필요)
+
+→ 두 목표가 정렬되지 않음!
+```
+
+**Leather가 낮은 PE로 학습된 이유**:
+- Leather의 정상 이미지는 texture가 균일
+- PE 없이도 쉽게 fit 가능 → 낮은 NLL
+- 하지만 anomaly detection에서는 위치 정보가 필요할 수 있음
+
+### 결론: TAPE 접근법의 한계
+
+**Normal-only training의 근본적 한계**:
+1. V5.5/V5.6: Patch-level α → No gradient (pos≈nopos for normal)
+2. V5.8 TAPE: Task-level α → Gradient exists but **wrong direction**
+
+NLL loss만으로는 anomaly detection에 최적인 PE strength를 학습할 수 없음.
+
+**가능한 대안**:
+1. **Prior knowledge 주입**: 클래스 타입별 PE 고정 (texture→high, object→low)
+2. **Pseudo-anomaly 사용**: 가짜 anomaly로 contrastive learning
+3. **Validation-based tuning**: Anomaly detection 성능으로 PE 튜닝
+
+---
+
+## Version 5 최종 정리
+
+### Version 5 실험 요약
+
+| Version | 접근법 | 결과 | 문제점 |
+|---------|--------|------|--------|
+| V5.1a | Tail-Aware Loss + Top-K | **Best baseline** | Screw 여전히 낮음 |
+| V5.5 | Dual Branch (pos/nopos) | 실패 | No gradient signal |
+| V5.6 | Improved Dual Branch | 실패 | Collapse to one branch |
+| V5.7 | Multi-Orientation Ensemble | 개선 없음 | Feature rotation ≠ viewpoint |
+| V5.8 | TAPE (Task-Adaptive PE) | 역효과 | NLL ≠ AD performance |
+
+### 핵심 교훈: Normal-Only Training의 한계
+
+**Position Encoding 최적화 시도 실패 원인**:
+
+```
+문제 정의:
+  - Screw: 회전에 불변해야 함 → PE 약하게
+  - Leather: 공간 구조 중요 → PE 강하게
+
+시도한 접근법들:
+  1. Patch-level α (V5.5/V5.6)
+     - 정상 데이터: pos_score ≈ nopos_score
+     - → α에 gradient 신호 없음
+     - → 학습 불가
+
+  2. Inference-time 조정 (V5.7)
+     - Feature에 PE가 이미 baked-in
+     - → rotation 무의미
+     - → 개선 없음
+
+  3. Task-level 학습 (V5.8)
+     - NLL loss는 "정상 fit" 최적화
+     - → PE 낮추는 방향으로 학습 (더 자유로운 fit)
+     - → Anomaly detection과 역방향
+```
+
+**근본적 한계**:
+- Anomaly detection에 최적인 PE를 찾으려면 **anomaly 정보 필요**
+- Normal-only training으로는 불가능
+
+### Best Configuration (Version 5 Final)
+
+```bash
+python run_moleflow.py \
+    --use_whitening_adapter \
+    --use_dia \
+    --score_aggregation_mode top_k \
+    --score_aggregation_top_k 3 \
+    --use_tail_aware_loss \
+    --tail_weight 0.3 \
+    --experiment_name Version5-Final
+```
+
+### 남은 과제
+
+1. **Screw 클래스 성능 개선**: PE 외 다른 접근 필요
+2. **Pseudo-anomaly training**: CutPaste 등으로 anomaly 신호 제공
+3. **Class-specific 처리**: Object vs Texture 클래스 구분
 
 ---

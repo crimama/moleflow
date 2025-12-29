@@ -131,6 +131,29 @@ class MoLEContinualTrainer:
             self.score_aggregation_percentile = 0.99
             self.score_aggregation_top_k = 10
             self.score_aggregation_top_k_percent = 0.05
+            # V5: Structural improvements defaults
+            self.use_tail_aware_loss = False
+            self.tail_weight = 0.3
+            self.tail_top_k_ratio = 0.05
+            self.cluster_weight = 0.5
+            self.cluster_high_score_percentile = 0.9
+            # V5.5: Position-Agnostic defaults
+            self.use_relative_position = False
+            self.use_dual_branch = False
+            self.use_local_consistency = False
+            self.local_consistency_kernel = 3
+            self.local_consistency_temperature = 1.0
+            # V5.6: Improved Position-Agnostic defaults
+            self.use_improved_dual_branch = False
+            self.use_score_guided_dual = False
+            self.use_multiscale_consistency = False
+            # V5.7: Rotation-Invariant PE defaults
+            self.use_multi_orientation = False
+            self.multi_orientation_n = 4
+            self.use_content_based_pe = False
+            self.use_hybrid_pe = False
+            # V5.8: TAPE defaults
+            self.use_tape = False
         else:
             self.use_lora = ablation_config.use_lora
             self.use_router = ablation_config.use_router
@@ -147,6 +170,29 @@ class MoLEContinualTrainer:
             self.score_aggregation_percentile = ablation_config.score_aggregation_percentile
             self.score_aggregation_top_k = ablation_config.score_aggregation_top_k
             self.score_aggregation_top_k_percent = ablation_config.score_aggregation_top_k_percent
+            # V5: Structural improvements settings
+            self.use_tail_aware_loss = ablation_config.use_tail_aware_loss
+            self.tail_weight = ablation_config.tail_weight
+            self.tail_top_k_ratio = ablation_config.tail_top_k_ratio
+            self.cluster_weight = ablation_config.cluster_weight
+            self.cluster_high_score_percentile = ablation_config.cluster_high_score_percentile
+            # V5.5: Position-Agnostic settings
+            self.use_relative_position = ablation_config.use_relative_position
+            self.use_dual_branch = ablation_config.use_dual_branch
+            self.use_local_consistency = ablation_config.use_local_consistency
+            self.local_consistency_kernel = ablation_config.local_consistency_kernel
+            self.local_consistency_temperature = ablation_config.local_consistency_temperature
+            # V5.6: Improved Position-Agnostic settings
+            self.use_improved_dual_branch = ablation_config.use_improved_dual_branch
+            self.use_score_guided_dual = ablation_config.use_score_guided_dual
+            self.use_multiscale_consistency = ablation_config.use_multiscale_consistency
+            # V5.7: Rotation-Invariant PE settings
+            self.use_multi_orientation = ablation_config.use_multi_orientation
+            self.multi_orientation_n = ablation_config.multi_orientation_n
+            self.use_content_based_pe = ablation_config.use_content_based_pe
+            self.use_hybrid_pe = ablation_config.use_hybrid_pe
+            # V5.8: TAPE settings
+            self.use_tape = ablation_config.use_tape
 
         # Slow-Fast hyperparameters
         self.slow_lr_ratio = slow_lr_ratio
@@ -264,6 +310,52 @@ class MoLEContinualTrainer:
 
         return nll_loss
 
+    def _compute_tail_aware_loss(self, z: torch.Tensor, logdet_patch: torch.Tensor):
+        """
+        V5: Compute Tail-Aware Loss to align training with evaluation objective.
+
+        Problem: Standard NLL minimizes mean, but evaluation uses top-k/percentile.
+        Solution: Combined loss = (1-w) * mean_loss + w * tail_loss
+
+        This encourages the model to also minimize the high-scoring patches,
+        which are what determine the image-level anomaly score during evaluation.
+
+        Args:
+            z: Latent tensor [B, H, W, D]
+            logdet_patch: Patch-wise log Jacobian determinant [B, H, W]
+
+        Returns:
+            combined_loss: Tail-aware NLL loss (scalar)
+        """
+        B, H, W, D = z.shape
+
+        # Patch-wise log p(z): (B, H, W)
+        log_pz_patch = -0.5 * (z ** 2).sum(dim=-1) - 0.5 * D * math.log(2 * math.pi)
+
+        # Patch-wise log p(x) = log p(z) + log|det J|: (B, H, W)
+        log_px_patch = log_pz_patch + logdet_patch
+
+        # Patch-wise NLL: (B, H, W)
+        nll_patch = -log_px_patch
+
+        # Flatten for aggregation
+        flat_nll = nll_patch.reshape(B, -1)  # (B, H*W)
+        num_patches = flat_nll.shape[1]
+
+        # Standard mean loss (averaged over all patches and batch)
+        mean_loss = flat_nll.mean()
+
+        # Tail loss: average of top-k% highest NLL patches per image
+        k = max(1, int(num_patches * self.tail_top_k_ratio))
+        top_k_nll, _ = torch.topk(flat_nll, k, dim=1)  # (B, k)
+        tail_loss = top_k_nll.mean()
+
+        # Combined loss
+        w = self.tail_weight
+        combined_loss = (1 - w) * mean_loss + w * tail_loss
+
+        return combined_loss
+
     def train_task(self,
                    task_id: int,
                    task_classes: List[str],
@@ -348,6 +440,15 @@ class MoLEContinualTrainer:
         if self.use_ogp and self.ogp is not None:
             self._compute_ogp_basis(task_id, train_loader)
 
+        # V5.8: Log TAPE PE strength after training
+        if self.use_tape and hasattr(self.nf_model, 'tape') and self.nf_model.tape is not None:
+            pe_strength = self.nf_model.tape.get_pe_strength(task_id)
+            tape_msg = f"   📐 [V5.8] TAPE PE strength for Task {task_id}: {pe_strength:.4f}"
+            if self.logger:
+                self.logger.info(tape_msg)
+            else:
+                print(tape_msg)
+
         # Log task completion
         if self.logger:
             self.logger.log_task_complete(task_id)
@@ -400,8 +501,16 @@ class MoLEContinualTrainer:
                     patch_embeddings, spatial_shape = self.vit_extractor(
                         images, return_spatial_shape=True
                     )
-                    # Apply positional embedding only if enabled
-                    if self.use_pos_embedding:
+                    # V5.7/V5.8: Skip standard PE when custom PE is enabled
+                    # NF will apply PE internally (ContentBasedPE, HybridPE, or TAPE)
+                    use_custom_pe = self.use_content_based_pe or self.use_hybrid_pe or self.use_tape
+                    if use_custom_pe:
+                        # Pass raw features (no PE) - NF will apply custom PE
+                        B = patch_embeddings.shape[0]
+                        H, W = spatial_shape
+                        patch_embeddings_with_pos = patch_embeddings.reshape(B, H, W, -1)
+                    elif self.use_pos_embedding:
+                        # Standard: Apply grid positional embedding
                         patch_embeddings_with_pos = self.pos_embed_generator(
                             spatial_shape, patch_embeddings
                         )
@@ -416,8 +525,16 @@ class MoLEContinualTrainer:
                 # Forward through NF to get latent z and patch-wise logdet
                 z, logdet_patch = self.nf_model.forward(patch_embeddings_with_pos, reverse=False)
 
-                # Compute NLL loss with optional logdet regularization
-                if self.lambda_logdet > 0:
+                # V5: Compute loss (tail-aware or standard NLL)
+                if self.use_tail_aware_loss:
+                    nll_loss = self._compute_tail_aware_loss(z, logdet_patch)
+                    total_loss = nll_loss
+                    logdet_reg = None
+                    # Add logdet regularization if enabled
+                    if self.lambda_logdet > 0:
+                        logdet_reg = (logdet_patch ** 2).mean()
+                        total_loss = total_loss + self.lambda_logdet * logdet_reg
+                elif self.lambda_logdet > 0:
                     nll_loss, logdet_reg = self._compute_nll_loss(z, logdet_patch, return_logdet_reg=True)
                     total_loss = nll_loss + self.lambda_logdet * logdet_reg
                 else:
@@ -439,6 +556,8 @@ class MoLEContinualTrainer:
                 if (batch_idx + 1) % log_interval == 0:
                     avg_loss = epoch_loss / num_batches
                     extra_info = {}
+                    if self.use_tail_aware_loss:
+                        extra_info["tail_aware"] = True
                     if logdet_reg is not None:
                         extra_info["logdet_reg"] = logdet_reg.item()
                     if self.logger:
@@ -535,8 +654,13 @@ class MoLEContinualTrainer:
                     patch_embeddings, spatial_shape = self.vit_extractor(
                         images, return_spatial_shape=True
                     )
-                    # Apply positional embedding only if enabled
-                    if self.use_pos_embedding:
+                    # V5.7/V5.8: Skip standard PE when custom PE is enabled
+                    use_custom_pe = self.use_content_based_pe or self.use_hybrid_pe or self.use_tape
+                    if use_custom_pe:
+                        B = patch_embeddings.shape[0]
+                        H, W = spatial_shape
+                        patch_embeddings_with_pos = patch_embeddings.reshape(B, H, W, -1)
+                    elif self.use_pos_embedding:
                         patch_embeddings_with_pos = self.pos_embed_generator(
                             spatial_shape, patch_embeddings
                         )
@@ -548,8 +672,16 @@ class MoLEContinualTrainer:
                 # Forward through NF to get latent z and patch-wise logdet
                 z, logdet_patch = self.nf_model.forward(patch_embeddings_with_pos, reverse=False)
 
-                # Compute NLL loss with optional logdet regularization
-                if self.lambda_logdet > 0:
+                # V5: Compute loss (tail-aware or standard NLL)
+                if self.use_tail_aware_loss:
+                    nll_loss = self._compute_tail_aware_loss(z, logdet_patch)
+                    total_loss = nll_loss
+                    logdet_reg = None
+                    # Add logdet regularization if enabled
+                    if self.lambda_logdet > 0:
+                        logdet_reg = (logdet_patch ** 2).mean()
+                        total_loss = total_loss + self.lambda_logdet * logdet_reg
+                elif self.lambda_logdet > 0:
                     nll_loss, logdet_reg = self._compute_nll_loss(z, logdet_patch, return_logdet_reg=True)
                     total_loss = nll_loss + self.lambda_logdet * logdet_reg
                 else:
@@ -578,6 +710,8 @@ class MoLEContinualTrainer:
                     avg_loss = epoch_loss / num_batches
                     current_lr = optimizer.param_groups[0]['lr']
                     extra_info = {"LR": current_lr}
+                    if self.use_tail_aware_loss:
+                        extra_info["tail_aware"] = True
                     if epoch < warmup_epochs:
                         extra_info["Warmup"] = True
                     if logdet_reg is not None:
@@ -661,8 +795,13 @@ class MoLEContinualTrainer:
                     patch_embeddings, spatial_shape = self.vit_extractor(
                         images, return_spatial_shape=True
                     )
-                    # Apply positional embedding only if enabled
-                    if self.use_pos_embedding:
+                    # V5.7/V5.8: Skip standard PE when custom PE is enabled
+                    use_custom_pe = self.use_content_based_pe or self.use_hybrid_pe or self.use_tape
+                    if use_custom_pe:
+                        B = patch_embeddings.shape[0]
+                        H, W = spatial_shape
+                        patch_embeddings_with_pos = patch_embeddings.reshape(B, H, W, -1)
+                    elif self.use_pos_embedding:
                         patch_embeddings_with_pos = self.pos_embed_generator(
                             spatial_shape, patch_embeddings
                         )
@@ -778,7 +917,13 @@ class MoLEContinualTrainer:
                         patch_embeddings, spatial_shape = self.trainer.vit_extractor(
                             images, return_spatial_shape=True
                         )
-                        if self.trainer.use_pos_embedding:
+                        # V5.7: Skip standard PE when ContentBasedPE or HybridPE is enabled
+                        use_v57_pe = self.trainer.use_content_based_pe or self.trainer.use_hybrid_pe
+                        if use_v57_pe:
+                            B = patch_embeddings.shape[0]
+                            H, W = spatial_shape
+                            features = patch_embeddings.reshape(B, H, W, -1)
+                        elif self.trainer.use_pos_embedding:
                             features = self.trainer.pos_embed_generator(
                                 spatial_shape, patch_embeddings
                             )
@@ -856,19 +1001,29 @@ class MoLEContinualTrainer:
                 patch_embeddings, spatial_shape = self.vit_extractor(
                     task_images, return_spatial_shape=True
                 )
-                # Apply positional embedding only if enabled
-                if self.use_pos_embedding:
+                B_task = patch_embeddings.shape[0]
+                H, W = spatial_shape
+
+                # V5.7/V5.8: Skip standard PE when custom PE is enabled
+                use_custom_pe = self.use_content_based_pe or self.use_hybrid_pe or self.use_tape
+                if use_custom_pe:
+                    patch_embeddings_with_pos = patch_embeddings.reshape(B_task, H, W, -1)
+                elif self.use_pos_embedding:
                     patch_embeddings_with_pos = self.pos_embed_generator(
                         spatial_shape, patch_embeddings
                     )
                 else:
-                    B_task = patch_embeddings.shape[0]
-                    H, W = spatial_shape
                     patch_embeddings_with_pos = patch_embeddings.reshape(B_task, H, W, -1)
+
+                # V5.5/V5.6: For dual-branch, also create no-position version
+                patch_embeddings_nopos = None
+                use_any_dual = (self.use_dual_branch or self.use_improved_dual_branch or self.use_score_guided_dual)
+                if use_any_dual:
+                    patch_embeddings_nopos = patch_embeddings.reshape(B_task, H, W, -1)
 
                 # Compute anomaly scores
                 task_anomaly_scores, task_image_scores = self._compute_anomaly_scores(
-                    patch_embeddings_with_pos
+                    patch_embeddings_with_pos, patch_embeddings_nopos
                 )
 
                 # Resize if needed
@@ -881,27 +1036,68 @@ class MoLEContinualTrainer:
 
         return anomaly_scores, image_scores, predicted_tasks
 
-    def _compute_anomaly_scores(self, patch_embeddings_with_pos: torch.Tensor):
+    def _compute_anomaly_scores(self, patch_embeddings_with_pos: torch.Tensor,
+                                  patch_embeddings_nopos: torch.Tensor = None):
         """
         Compute anomaly scores from patch embeddings.
 
         Now uses patch-wise log|det J| directly for proper spatial localization.
         This preserves the Flow's spatial information in the anomaly map.
+
+        V5.5: Optional dual-branch scoring when patch_embeddings_nopos is provided.
+        V5.7: Multi-Orientation Ensemble for rotation-invariant detection.
         """
         B, H, W, D = patch_embeddings_with_pos.shape
 
+        # V5.7: Multi-Orientation Ensemble (Direction C)
+        # Test-time rotation ensemble: take minimum score across orientations
+        if self.use_multi_orientation and hasattr(self.nf_model, 'multi_orientation') and self.nf_model.multi_orientation is not None:
+            return self._compute_multi_orientation_scores(patch_embeddings_with_pos, patch_embeddings_nopos)
+
         # Forward through NF - now returns patch-wise logdet: (B, H, W)
-        z, logdet_patch = self.nf_model.forward(patch_embeddings_with_pos, reverse=False)
+        z_pos, logdet_pos = self.nf_model.forward(patch_embeddings_with_pos, reverse=False)
 
         # Patch-wise log p(z): (B, H, W)
-        log_pz_patch = -0.5 * (z ** 2).sum(dim=-1) - 0.5 * D * math.log(2 * math.pi)
+        log_pz_pos = -0.5 * (z_pos ** 2).sum(dim=-1) - 0.5 * D * math.log(2 * math.pi)
 
         # Patch-wise log p(x) = log p(z) + log|det J|: (B, H, W)
-        # Now each patch has its own log|det J| value, preserving spatial variation
-        patch_log_prob = log_pz_patch + logdet_patch
+        patch_log_prob_pos = log_pz_pos + logdet_pos
 
         # Anomaly score = -log p(x)
-        anomaly_scores = -patch_log_prob
+        anomaly_scores_pos = -patch_log_prob_pos
+
+        # V5.5/V5.6: Dual-Branch Scoring (Direction 2)
+        # Run NF twice: with and without positional embedding, blend scores
+        use_any_dual = (self.use_dual_branch or self.use_improved_dual_branch or self.use_score_guided_dual)
+        if use_any_dual and patch_embeddings_nopos is not None:
+            # Forward through NF without positional embedding
+            z_nopos, logdet_nopos = self.nf_model.forward(patch_embeddings_nopos, reverse=False)
+
+            # Compute no-position branch scores
+            log_pz_nopos = -0.5 * (z_nopos ** 2).sum(dim=-1) - 0.5 * D * math.log(2 * math.pi)
+            patch_log_prob_nopos = log_pz_nopos + logdet_nopos
+            anomaly_scores_nopos = -patch_log_prob_nopos
+
+            # V5.6: Use improved dual branch scorer (anti-collapse)
+            if self.use_improved_dual_branch and hasattr(self.nf_model, 'improved_dual_branch') and self.nf_model.improved_dual_branch is not None:
+                anomaly_scores = self.nf_model.improved_dual_branch(
+                    z_pos, z_nopos, anomaly_scores_pos, anomaly_scores_nopos
+                )
+            # V5.6: Use score-guided dual branch (simpler alternative)
+            elif self.use_score_guided_dual and hasattr(self.nf_model, 'score_guided_dual') and self.nf_model.score_guided_dual is not None:
+                anomaly_scores = self.nf_model.score_guided_dual(
+                    z_pos, z_nopos, anomaly_scores_pos, anomaly_scores_nopos
+                )
+            # V5.5: Original dual branch scorer
+            elif self.use_dual_branch and hasattr(self.nf_model, 'dual_branch_scorer') and self.nf_model.dual_branch_scorer is not None:
+                anomaly_scores = self.nf_model.dual_branch_scorer(
+                    z_pos, z_nopos, anomaly_scores_pos, anomaly_scores_nopos
+                )
+            else:
+                # Fallback: simple average
+                anomaly_scores = 0.5 * anomaly_scores_pos + 0.5 * anomaly_scores_nopos
+        else:
+            anomaly_scores = anomaly_scores_pos
 
         # V5: Image-level score aggregation (configurable)
         image_scores = self._aggregate_patch_scores(anomaly_scores)
@@ -913,6 +1109,7 @@ class MoLEContinualTrainer:
         Aggregate patch-level anomaly scores to image-level scores.
 
         V5 Feature: Multiple aggregation modes for better image-level detection.
+        V5.5 Feature: Local consistency calibration before aggregation.
 
         Args:
             patch_scores: (B, H, W) patch-level anomaly scores
@@ -920,6 +1117,14 @@ class MoLEContinualTrainer:
         Returns:
             image_scores: (B,) image-level anomaly scores
         """
+        # V5.6: Apply Multi-Scale Consistency (Improved Direction 3)
+        if self.use_multiscale_consistency and hasattr(self.nf_model, 'multiscale_consistency') and self.nf_model.multiscale_consistency is not None:
+            patch_scores = self.nf_model.multiscale_consistency(patch_scores)
+        # V5.5: Apply Local Consistency Calibration (Direction 3)
+        # Down-weights isolated high scores that are likely rotation noise
+        elif self.use_local_consistency and hasattr(self.nf_model, 'local_consistency') and self.nf_model.local_consistency is not None:
+            patch_scores = self.nf_model.local_consistency(patch_scores)
+
         B = patch_scores.shape[0]
         flat_scores = patch_scores.reshape(B, -1)  # (B, H*W)
         num_patches = flat_scores.shape[1]
@@ -951,8 +1156,150 @@ class MoLEContinualTrainer:
             # Mean of all patch scores
             image_scores = flat_scores.mean(dim=1)
 
+        elif mode == "spatial_cluster":
+            # V5: Spatial Clustering Score
+            # Real defects form spatial clusters, noise is randomly distributed
+            # Score = cluster_weight * clustered_score + (1 - cluster_weight) * top_k_score
+            image_scores = self._compute_spatial_cluster_score(patch_scores)
+
         else:
             # Default fallback to percentile
             image_scores = torch.quantile(flat_scores, 0.99, dim=1)
 
         return image_scores
+
+    def _compute_spatial_cluster_score(self, patch_scores: torch.Tensor) -> torch.Tensor:
+        """
+        V5: Compute spatial clustering-aware anomaly score.
+
+        Key Insight: Real defects form spatially clustered high-score regions,
+        while noise produces randomly scattered high scores.
+
+        Algorithm:
+        1. Identify high-scoring patches (above threshold)
+        2. Compute connectivity score based on 8-connected neighbors
+        3. Weight clustered high scores more heavily
+
+        Args:
+            patch_scores: (B, H, W) patch-level anomaly scores
+
+        Returns:
+            image_scores: (B,) cluster-aware image-level scores
+        """
+        B, H, W = patch_scores.shape
+        device = patch_scores.device
+
+        # Step 1: Determine high-score threshold per image
+        flat_scores = patch_scores.reshape(B, -1)
+        threshold = torch.quantile(flat_scores, self.cluster_high_score_percentile, dim=1, keepdim=True)
+        threshold = threshold.reshape(B, 1, 1)  # (B, 1, 1)
+
+        # Step 2: Create binary mask for high-scoring patches
+        high_score_mask = (patch_scores > threshold).float()  # (B, H, W)
+
+        # Step 3: Count connected high-scoring neighbors (8-connectivity)
+        # Pad to handle boundary conditions
+        padded_mask = torch.nn.functional.pad(high_score_mask, (1, 1, 1, 1), mode='constant', value=0)
+
+        # Sum of 8 neighbors (excluding self)
+        neighbor_count = torch.zeros_like(high_score_mask)
+        for di in [-1, 0, 1]:
+            for dj in [-1, 0, 1]:
+                if di == 0 and dj == 0:
+                    continue
+                neighbor_count += padded_mask[:, 1+di:1+di+H, 1+dj:1+dj+W]
+
+        # Connectivity score: high when patch is part of a cluster
+        # Range: 0 (isolated) to 8 (fully surrounded)
+        connectivity = neighbor_count * high_score_mask  # Only count for high-scoring patches
+        max_connectivity = connectivity.reshape(B, -1).max(dim=1)[0].clamp(min=1)  # Prevent div by zero
+
+        # Step 4: Compute cluster-weighted scores
+        # Normalize connectivity to [0, 1] range
+        normalized_connectivity = connectivity / 8.0
+
+        # Cluster-weighted score: high scores with high connectivity count more
+        weight = 1.0 + normalized_connectivity  # Range: [1, 2]
+        weighted_scores = patch_scores * weight
+        weighted_flat = weighted_scores.reshape(B, -1)
+
+        # Take top-k weighted scores
+        k = max(1, int(H * W * self.tail_top_k_ratio))
+        top_k_weighted, _ = torch.topk(weighted_flat, k, dim=1)
+        clustered_score = top_k_weighted.mean(dim=1)
+
+        # Also compute standard top-k for comparison
+        top_k_standard, _ = torch.topk(flat_scores, k, dim=1)
+        standard_score = top_k_standard.mean(dim=1)
+
+        # Step 5: Combine scores
+        w = self.cluster_weight
+        image_scores = w * clustered_score + (1 - w) * standard_score
+
+        return image_scores
+
+    def _compute_multi_orientation_scores(self, patch_embeddings_with_pos: torch.Tensor,
+                                           patch_embeddings_nopos: torch.Tensor = None):
+        """
+        V5.7 Direction C: Multi-Orientation Ensemble for rotation-invariant detection.
+
+        핵심 아이디어:
+        - Test time에 여러 회전 방향에서 NF 적용
+        - 각 방향에서 anomaly score 계산
+        - 가장 낮은 score 선택 (가장 "정상"인 방향)
+
+        직관:
+        - 정상 이미지: 최소 1개 방향에서 낮은 score → min 낮음
+        - 비정상 이미지: 모든 방향에서 높은 score → min도 높음
+
+        이점:
+        - 학습 변경 없음 (inference만 수정)
+        - 완벽한 rotation invariance 보장
+        - 단점: N배 inference 비용
+
+        Args:
+            patch_embeddings_with_pos: (B, H, W, D) features with positional embedding
+            patch_embeddings_nopos: (B, H, W, D) features without positional embedding (optional)
+
+        Returns:
+            anomaly_scores: (B, H, W) patch-level anomaly scores
+            image_scores: (B,) image-level anomaly scores
+        """
+        B, H, W, D = patch_embeddings_with_pos.shape
+        multi_orientation = self.nf_model.multi_orientation
+
+        # Get rotation angles
+        angles = multi_orientation.get_orientations()
+
+        # Store scores for each orientation
+        all_anomaly_scores = []
+
+        for angle in angles:
+            # Rotate features
+            rotated_features = multi_orientation.rotate_features(patch_embeddings_with_pos, angle)
+
+            # Forward through NF
+            z, logdet = self.nf_model.forward(rotated_features, reverse=False)
+
+            # Compute anomaly scores
+            log_pz = -0.5 * (z ** 2).sum(dim=-1) - 0.5 * D * math.log(2 * math.pi)
+            patch_log_prob = log_pz + logdet
+            anomaly_scores = -patch_log_prob  # (B, H, W)
+
+            # Inverse rotate scores to original orientation
+            anomaly_scores = multi_orientation.inverse_rotate_scores(anomaly_scores, angle)
+
+            all_anomaly_scores.append(anomaly_scores)
+
+        # Stack: (N_orientations, B, H, W)
+        stacked_scores = torch.stack(all_anomaly_scores, dim=0)
+
+        # Take minimum across orientations (most "normal" score)
+        # 정상: 최소 1개 방향에서 잘 맞음 → min 낮음
+        # 비정상: 모든 방향에서 안 맞음 → min도 높음
+        min_scores, _ = stacked_scores.min(dim=0)  # (B, H, W)
+
+        # Aggregate to image-level
+        image_scores = self._aggregate_patch_scores(min_scores)
+
+        return min_scores, image_scores

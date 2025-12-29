@@ -12,8 +12,17 @@ from typing import List, Optional, TYPE_CHECKING
 import FrEIA.framework as Ff
 import FrEIA.modules as Fm
 
+from moleflow.models.position_embedding import positionalencoding2d
+
 from moleflow.models.lora import MoLESubnet, MoLEContextSubnet, LightweightMSContext, TaskConditionedMSContext, DeepInvertibleAdapter
-from moleflow.models.adapters import FeatureStatistics, TaskInputAdapter, create_task_adapter, SpatialContextMixer, WhiteningAdapter
+from moleflow.models.adapters import (
+    FeatureStatistics, TaskInputAdapter, create_task_adapter, SpatialContextMixer, WhiteningAdapter,
+    SemanticProjector, TaskAdaptiveContextMixer, LightweightGlobalContext,  # V5 modules
+    RelativePositionEmbedding, DualBranchScorer, LocalConsistencyCalibrator,  # V5.5 modules
+    ImprovedDualBranchScorer, MultiScaleLocalConsistency, ScoreGuidedDualBranch,  # V5.6 modules
+    MultiOrientationEnsemble, ContentBasedPositionalEmbedding, HybridRotationInvariantPE,  # V5.7 modules
+    TaskAdaptivePositionEncoding  # V5.8 TAPE
+)
 
 if TYPE_CHECKING:
     from moleflow.config.ablation import AblationConfig
@@ -87,6 +96,43 @@ class MoLESpatialAwareNF(nn.Module):
             self.tc_ms_context_dilations = (1, 2, 4)
             self.tc_ms_context_use_regional = True
             self.tc_ms_context_lora_rank = 16
+            # V5 Structural Improvements defaults
+            self.use_semantic_projector = False
+            self.semantic_bottleneck_ratio = 0.5
+            self.use_task_adaptive_context = False
+            self.use_global_context = False
+            self.global_context_regions = 4
+            self.global_context_reduction = 4
+            # V5.5 Position-Agnostic defaults
+            self.use_relative_position = False
+            self.relative_position_max_dist = 7
+            self.relative_position_num_heads = 4
+            self.use_dual_branch = False
+            self.use_local_consistency = False
+            self.local_consistency_kernel = 3
+            self.local_consistency_temperature = 1.0
+            # V5.6 Improved Position-Agnostic defaults
+            self.use_improved_dual_branch = False
+            self.dual_branch_init_alpha = 0.7
+            self.dual_branch_min_alpha = 0.3
+            self.dual_branch_max_alpha = 0.9
+            self.use_score_guided_dual = False
+            self.score_guided_temperature = 1.0
+            self.score_guided_min_alpha = 0.2
+            self.use_multiscale_consistency = False
+            self.multiscale_kernel_sizes = [3, 5, 7]
+            # V5.7 Rotation-Invariant PE defaults
+            self.use_multi_orientation = False
+            self.multi_orientation_n = 4
+            self.use_content_based_pe = False
+            self.content_pe_n_prototypes = 16
+            self.content_pe_temperature = 0.1
+            self.content_pe_blend_grid = True
+            self.use_hybrid_pe = False
+            self.hybrid_pe_n_prototypes = 16
+            # V5.8 TAPE defaults
+            self.use_tape = False
+            self.tape_init_value = 0.0
         else:
             self.use_lora = ablation_config.use_lora
             self.use_task_adapter = ablation_config.use_task_adapter
@@ -117,6 +163,45 @@ class MoLESpatialAwareNF(nn.Module):
             self.tc_ms_context_dilations = ablation_config.tc_ms_context_dilations
             self.tc_ms_context_use_regional = ablation_config.tc_ms_context_use_regional
             self.tc_ms_context_lora_rank = ablation_config.tc_ms_context_lora_rank
+            # V5 Structural Improvements settings
+            self.use_semantic_projector = ablation_config.use_semantic_projector
+            self.semantic_bottleneck_ratio = ablation_config.semantic_bottleneck_ratio
+            self.use_task_adaptive_context = ablation_config.use_task_adaptive_context
+            self.use_global_context = ablation_config.use_global_context
+            self.global_context_regions = ablation_config.global_context_regions
+            self.global_context_reduction = ablation_config.global_context_reduction
+            # V5.5 Position-Agnostic settings
+            self.use_relative_position = ablation_config.use_relative_position
+            self.relative_position_max_dist = ablation_config.relative_position_max_dist
+            self.relative_position_num_heads = ablation_config.relative_position_num_heads
+            self.use_dual_branch = ablation_config.use_dual_branch
+            self.use_local_consistency = ablation_config.use_local_consistency
+            self.local_consistency_kernel = ablation_config.local_consistency_kernel
+            self.local_consistency_temperature = ablation_config.local_consistency_temperature
+            # V5.6 Improved Position-Agnostic settings
+            self.use_improved_dual_branch = ablation_config.use_improved_dual_branch
+            self.dual_branch_init_alpha = ablation_config.dual_branch_init_alpha
+            self.dual_branch_min_alpha = ablation_config.dual_branch_min_alpha
+            self.dual_branch_max_alpha = ablation_config.dual_branch_max_alpha
+            self.use_score_guided_dual = ablation_config.use_score_guided_dual
+            self.score_guided_temperature = ablation_config.score_guided_temperature
+            self.score_guided_min_alpha = ablation_config.score_guided_min_alpha
+            self.use_multiscale_consistency = ablation_config.use_multiscale_consistency
+            # Parse kernel sizes from string
+            kernel_str = ablation_config.multiscale_kernel_sizes
+            self.multiscale_kernel_sizes = [int(k) for k in kernel_str.split(',')]
+            # V5.7 Rotation-Invariant PE settings
+            self.use_multi_orientation = ablation_config.use_multi_orientation
+            self.multi_orientation_n = ablation_config.multi_orientation_n
+            self.use_content_based_pe = ablation_config.use_content_based_pe
+            self.content_pe_n_prototypes = ablation_config.content_pe_n_prototypes
+            self.content_pe_temperature = ablation_config.content_pe_temperature
+            self.content_pe_blend_grid = ablation_config.content_pe_blend_grid
+            self.use_hybrid_pe = ablation_config.use_hybrid_pe
+            self.hybrid_pe_n_prototypes = ablation_config.hybrid_pe_n_prototypes
+            # V5.8 TAPE settings
+            self.use_tape = ablation_config.use_tape
+            self.tape_init_value = ablation_config.tape_init_value
 
         # Track tasks
         self.num_tasks = 0
@@ -173,6 +258,138 @@ class MoLESpatialAwareNF(nn.Module):
             print(f"✅ SpatialContextMixer enabled: mode={self.spatial_context_mode}, kernel={self.spatial_context_kernel}")
         else:
             self.spatial_mixer = None
+
+        # V5: Semantic Projector (Position-agnostic feature extraction)
+        if self.use_semantic_projector:
+            self.semantic_projector = SemanticProjector(
+                channels=embed_dim,
+                bottleneck_ratio=self.semantic_bottleneck_ratio
+            )
+            print(f"✅ [V5] SemanticProjector enabled: bottleneck_ratio={self.semantic_bottleneck_ratio}")
+        else:
+            self.semantic_projector = None
+
+        # V5: Task-Adaptive Context Mixer (wraps frozen SpatialMixer)
+        # Created in add_task when use_task_adaptive_context=True and task_id > 0
+        self.task_adaptive_mixer = None  # Will be created if needed
+
+        # V5: Global Context Module (long-range dependency)
+        if self.use_global_context:
+            self.global_context = LightweightGlobalContext(
+                channels=embed_dim,
+                num_regions=self.global_context_regions,
+                reduction=self.global_context_reduction
+            )
+            print(f"✅ [V5] LightweightGlobalContext enabled: regions={self.global_context_regions}, reduction={self.global_context_reduction}")
+        else:
+            self.global_context = None
+
+        # V5.5: Relative Position Encoding (Direction 1)
+        if self.use_relative_position:
+            self.relative_position = RelativePositionEmbedding(
+                channels=embed_dim,
+                max_relative_distance=self.relative_position_max_dist,
+                num_heads=self.relative_position_num_heads
+            )
+            print(f"✅ [V5.5] RelativePositionEmbedding enabled: max_dist={self.relative_position_max_dist}, heads={self.relative_position_num_heads}")
+        else:
+            self.relative_position = None
+
+        # V5.5: Dual Branch Scorer (Direction 2)
+        if self.use_dual_branch:
+            self.dual_branch_scorer = DualBranchScorer(channels=embed_dim)
+            print(f"✅ [V5.5] DualBranchScorer enabled: learns α to blend pos/nopos branches")
+        else:
+            self.dual_branch_scorer = None
+
+        # V5.5: Local Consistency Calibrator (Direction 3)
+        if self.use_local_consistency:
+            self.local_consistency = LocalConsistencyCalibrator(
+                kernel_size=self.local_consistency_kernel,
+                temperature=self.local_consistency_temperature
+            )
+            print(f"✅ [V5.5] LocalConsistencyCalibrator enabled: kernel={self.local_consistency_kernel}, temp={self.local_consistency_temperature}")
+        else:
+            self.local_consistency = None
+
+        # V5.6: Improved Dual Branch Scorer (fixes α collapse)
+        if self.use_improved_dual_branch:
+            self.improved_dual_branch = ImprovedDualBranchScorer(
+                channels=embed_dim,
+                init_alpha=self.dual_branch_init_alpha,
+                min_alpha=self.dual_branch_min_alpha,
+                max_alpha=self.dual_branch_max_alpha
+            )
+            print(f"✅ [V5.6] ImprovedDualBranchScorer enabled: init_α={self.dual_branch_init_alpha}, "
+                  f"α∈[{self.dual_branch_min_alpha}, {self.dual_branch_max_alpha}]")
+        else:
+            self.improved_dual_branch = None
+
+        # V5.6: Score-Guided Dual Branch (alternative, simpler)
+        if self.use_score_guided_dual:
+            self.score_guided_dual = ScoreGuidedDualBranch(
+                temperature=self.score_guided_temperature,
+                min_alpha=self.score_guided_min_alpha
+            )
+            print(f"✅ [V5.6] ScoreGuidedDualBranch enabled: temp={self.score_guided_temperature}, min_α={self.score_guided_min_alpha}")
+        else:
+            self.score_guided_dual = None
+
+        # V5.6: Multi-Scale Local Consistency
+        if self.use_multiscale_consistency:
+            self.multiscale_consistency = MultiScaleLocalConsistency(
+                kernel_sizes=self.multiscale_kernel_sizes,
+                temperature=self.local_consistency_temperature
+            )
+            print(f"✅ [V5.6] MultiScaleLocalConsistency enabled: kernels={self.multiscale_kernel_sizes}")
+        else:
+            self.multiscale_consistency = None
+
+        # V5.7: Multi-Orientation Ensemble (Direction C)
+        # Test-time rotation ensemble - no learnable parameters
+        if self.use_multi_orientation:
+            self.multi_orientation = MultiOrientationEnsemble(
+                n_orientations=self.multi_orientation_n
+            )
+            print(f"✅ [V5.7] MultiOrientationEnsemble enabled: {self.multi_orientation_n} orientations (0°, 90°, 180°, 270°)")
+        else:
+            self.multi_orientation = None
+
+        # V5.7: Content-Based PE (Direction D)
+        # Semantic prototype-based position encoding
+        if self.use_content_based_pe:
+            self.content_based_pe = ContentBasedPositionalEmbedding(
+                embed_dim=embed_dim,
+                n_prototypes=self.content_pe_n_prototypes,
+                temperature=self.content_pe_temperature,
+                blend_with_grid=self.content_pe_blend_grid
+            )
+            print(f"✅ [V5.7] ContentBasedPE enabled: {self.content_pe_n_prototypes} prototypes, "
+                  f"temp={self.content_pe_temperature}, blend_grid={self.content_pe_blend_grid}")
+        else:
+            self.content_based_pe = None
+
+        # V5.7: Hybrid PE (Direction E)
+        # Per-patch selection between content PE and grid PE
+        if self.use_hybrid_pe:
+            self.hybrid_pe = HybridRotationInvariantPE(
+                embed_dim=embed_dim,
+                n_prototypes=self.hybrid_pe_n_prototypes
+            )
+            print(f"✅ [V5.7] HybridPE enabled: {self.hybrid_pe_n_prototypes} prototypes, per-patch content/grid selection")
+        else:
+            self.hybrid_pe = None
+
+        # V5.8: Task-Adaptive Position Encoding (TAPE)
+        # Learns optimal PE strength per task
+        if self.use_tape:
+            self.tape = TaskAdaptivePositionEncoding(
+                init_value=self.tape_init_value
+            )
+            print(f"✅ [V5.8] TAPE enabled: init_value={self.tape_init_value} "
+                  f"(sigmoid={torch.sigmoid(torch.tensor(self.tape_init_value)).item():.3f})")
+        else:
+            self.tape = None
 
         self.to(device)
 
@@ -372,6 +589,28 @@ class MoLESpatialAwareNF(nn.Module):
         if self.use_task_conditioned_ms_context and self.spatial_mixer is not None:
             self.spatial_mixer.add_task(task_id)
 
+        # V5: Handle Task-Adaptive Context Mixer
+        if self.use_task_adaptive_context and self.spatial_mixer is not None:
+            if task_id == 0:
+                # Task 0: Create TaskAdaptiveContextMixer wrapping the spatial_mixer
+                # This will freeze the base mixer and allow task-specific adaptation
+                self.task_adaptive_mixer = TaskAdaptiveContextMixer(
+                    channels=self.embed_dim,
+                    base_mixer=self.spatial_mixer
+                )
+                self.task_adaptive_mixer.add_task(task_id)
+                print(f"   🔧 [V5] TaskAdaptiveContextMixer created (base will freeze after Task 0)")
+            else:
+                # Task > 0: Add task-specific adapter to existing TaskAdaptiveContextMixer
+                if self.task_adaptive_mixer is not None:
+                    self.task_adaptive_mixer.add_task(task_id)
+                    print(f"   🔧 [V5] Task-specific context adapter added")
+
+        # V5.8: Register task with TAPE
+        if self.use_tape and self.tape is not None:
+            self.tape.add_task(task_id, device=self.device)
+            print(f"   📐 [V5.8] TAPE gate added for Task {task_id}")
+
         self.num_tasks = task_id + 1
         self.set_active_task(task_id)
 
@@ -390,6 +629,10 @@ class MoLESpatialAwareNF(nn.Module):
         # Set active task for TaskConditionedMSContext
         if self.use_task_conditioned_ms_context and self.spatial_mixer is not None:
             self.spatial_mixer.set_active_task(task_id)
+
+        # V5: Set active task for TaskAdaptiveContextMixer
+        if self.use_task_adaptive_context and self.task_adaptive_mixer is not None:
+            self.task_adaptive_mixer.set_active_task(task_id)
 
         if task_id is None:
             for subnet in self.subnets:
@@ -484,10 +727,60 @@ class MoLESpatialAwareNF(nn.Module):
                 # TaskConditionedMSContext: Use its own get_trainable_params
                 # This properly handles shared vs task-specific params
                 params.extend(self.spatial_mixer.get_trainable_params(task_id))
-            else:
+            elif not self.use_task_adaptive_context:
                 # Other spatial mixers (SpatialContextMixer, LightweightMSContext):
                 # Train all params with each task (may cause forgetting for LightweightMSContext)
+                # Skip if task_adaptive_context is enabled (handled separately)
                 params.extend(self.spatial_mixer.parameters())
+
+        # V5: Semantic Projector parameters (trained with each task)
+        if self.use_semantic_projector and self.semantic_projector is not None:
+            params.extend(self.semantic_projector.parameters())
+
+        # V5: Task-Adaptive Context Mixer parameters
+        if self.use_task_adaptive_context and self.task_adaptive_mixer is not None:
+            params.extend(self.task_adaptive_mixer.get_trainable_params(task_id))
+
+        # V5: Global Context parameters (trained with each task)
+        if self.use_global_context and self.global_context is not None:
+            params.extend(self.global_context.parameters())
+
+        # V5.5: Relative Position parameters
+        if self.use_relative_position and self.relative_position is not None:
+            params.extend(self.relative_position.parameters())
+
+        # V5.5: Dual Branch Scorer parameters
+        if self.use_dual_branch and self.dual_branch_scorer is not None:
+            params.extend(self.dual_branch_scorer.parameters())
+
+        # V5.5: Local Consistency parameters
+        if self.use_local_consistency and self.local_consistency is not None:
+            params.extend(self.local_consistency.parameters())
+
+        # V5.6: Improved Dual Branch parameters
+        if self.use_improved_dual_branch and self.improved_dual_branch is not None:
+            params.extend(self.improved_dual_branch.parameters())
+
+        # V5.6: Score-Guided Dual Branch parameters
+        if self.use_score_guided_dual and self.score_guided_dual is not None:
+            params.extend(self.score_guided_dual.parameters())
+
+        # V5.6: Multi-Scale Consistency parameters
+        if self.use_multiscale_consistency and self.multiscale_consistency is not None:
+            params.extend(self.multiscale_consistency.parameters())
+
+        # V5.7: Content-Based PE parameters (Direction D)
+        # MultiOrientationEnsemble has NO learnable params (test-time only)
+        if self.use_content_based_pe and self.content_based_pe is not None:
+            params.extend(self.content_based_pe.parameters())
+
+        # V5.7: Hybrid PE parameters (Direction E)
+        if self.use_hybrid_pe and self.hybrid_pe is not None:
+            params.extend(self.hybrid_pe.parameters())
+
+        # V5.8: TAPE parameters (task-specific PE gate)
+        if self.use_tape and self.tape is not None:
+            params.extend(self.tape.get_trainable_params(task_id))
 
         return params
 
@@ -504,6 +797,8 @@ class MoLESpatialAwareNF(nn.Module):
 
         Args:
             patch_embeddings_with_pos: (B, H, W, D) spatial patch embeddings
+                - Standard mode: features + grid PE
+                - V5.7 mode (ContentBasedPE/HybridPE): raw features (no PE)
             reverse: If True, generate samples from latent
 
         Returns:
@@ -513,6 +808,27 @@ class MoLESpatialAwareNF(nn.Module):
         B, H, W, D = patch_embeddings_with_pos.shape
         x = patch_embeddings_with_pos
 
+        # V5.7/V5.8: Apply custom PE when enabled
+        # When enabled, input is raw features (no PE), we generate and apply PE here
+        if not reverse:
+            if self.use_tape and self.tape is not None and self.current_task_id is not None:
+                # V5.8: TAPE - Task-Adaptive PE strength
+                grid_pe = self._generate_grid_pe(B, H, W, D)
+                x = self.tape(x, grid_pe, self.current_task_id)
+            elif self.use_content_based_pe and self.content_based_pe is not None:
+                # V5.7: Content-Based PE (Direction D)
+                grid_pe = self._generate_grid_pe(B, H, W, D)
+                x = self.content_based_pe(x, grid_pe)
+            elif self.use_hybrid_pe and self.hybrid_pe is not None:
+                # V5.7: Hybrid PE (Direction E)
+                grid_pe = self._generate_grid_pe(B, H, W, D)
+                x = self.hybrid_pe(x, grid_pe)
+
+        # V5.5: Apply Relative Position Encoding (Direction 1)
+        # Blends absolute PE with relative position information
+        if self.use_relative_position and self.relative_position is not None and not reverse:
+            x = self.relative_position(x)
+
         # Apply task-specific input adapter for ALL tasks (if enabled)
         # v3: Task 0 also uses InputAdapter for self-adaptation
         if self.use_task_adapter and not reverse and self.current_task_id is not None:
@@ -520,10 +836,23 @@ class MoLESpatialAwareNF(nn.Module):
             if task_key in self.input_adapters:
                 x = self.input_adapters[task_key](x)
 
-        # Apply spatial context mixing (Baseline 1.5 - Legacy)
+        # V5: Apply Semantic Projector (position-agnostic semantic context)
+        if self.use_semantic_projector and self.semantic_projector is not None and not reverse:
+            x = self.semantic_projector(x)
+
+        # Apply spatial context mixing (Baseline 1.5 - Legacy or V5 Task-Adaptive)
         # This allows scale(s) to see local context: "abnormal compared to neighbors?"
-        if self.spatial_mixer is not None and not reverse:
-            x = self.spatial_mixer(x)
+        if not reverse:
+            if self.use_task_adaptive_context and self.task_adaptive_mixer is not None:
+                # V5: Use TaskAdaptiveContextMixer (frozen base + task-specific adaptation)
+                x = self.task_adaptive_mixer(x)
+            elif self.spatial_mixer is not None:
+                # Standard spatial mixer
+                x = self.spatial_mixer(x)
+
+        # V5: Apply Global Context (long-range dependency via cross-attention)
+        if self.use_global_context and self.global_context is not None and not reverse:
+            x = self.global_context(x)
 
         # Flatten spatial dimensions
         x_flat = x.reshape(B * H * W, D)
@@ -828,3 +1157,27 @@ class MoLESpatialAwareNF(nn.Module):
             }
 
         return {}
+
+    def _generate_grid_pe(self, B: int, H: int, W: int, D: int) -> torch.Tensor:
+        """
+        Generate 2D sinusoidal positional encoding (grid PE).
+
+        V5.7: Used by ContentBasedPE and HybridPE for blending with semantic PE.
+
+        Args:
+            B: Batch size
+            H: Height of patch grid
+            W: Width of patch grid
+            D: Embedding dimension
+
+        Returns:
+            grid_pe: (B, H, W, D) positional encoding
+        """
+        # Generate positional encoding
+        pos_embed = positionalencoding2d(D, H, W, device=self.device)  # (D, H, W)
+
+        # Reshape and expand for batch
+        pos_embed_expanded = pos_embed.unsqueeze(0).permute(0, 2, 3, 1)  # (1, H, W, D)
+        grid_pe = pos_embed_expanded.expand(B, -1, -1, -1)  # (B, H, W, D)
+
+        return grid_pe
