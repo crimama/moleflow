@@ -3369,3 +3369,562 @@ python run_moleflow.py \
 3. **Class-specific 처리**: Object vs Texture 클래스 구분
 
 ---
+
+## Screw 클래스 근본 원인 재분석 (2025-12-29)
+
+### Diagnostics 데이터 분석
+
+**Version5-RotationAug (screw as task 3) 분석**:
+
+| Metric | Normal | Anomaly | 해석 |
+|--------|--------|---------|------|
+| logdet_std | 72.28 | 57.18 | **Anomaly가 더 uniform** |
+| log_pz var | 75,495 | 6,764 | **Normal이 11x 더 diverse** |
+| ||z|| vs logdet corr | 0.27 | 0.26 | 유사 |
+| ratio (anom/norm) | - | 0.79 | **"DEAD" scale 진단** |
+
+### 핵심 발견: Normal > Anomaly Variance
+
+**Screw의 특이점**: Normal 이미지들이 Anomaly 이미지들보다 **더 높은 분산**을 가짐
+
+이것은 NF 기반 Anomaly Detection에서 치명적인 문제:
+1. NF는 "Normal 분포를 학습하고 그 분포에서 벗어난 것을 Anomaly로 탐지"
+2. Normal의 분산이 높으면 → 넓은 분포 학습 → Anomaly도 그 안에 포함
+3. Anomaly가 더 일관적이면 → 오히려 "더 normal"하게 보임
+
+**MVTec Screw 데이터셋 특성**:
+- Train/Test Normal: 다양한 각도/조명/위치에서 촬영
+- Test Anomaly: 특정 결함 유형 (scratch_head, thread_side 등)이 더 일관적인 조건에서 촬영
+
+```
+Normal 이미지 다양성:
+- 320장 학습 이미지
+- 다양한 회전 각도
+- 다양한 조명 조건
+- log_pz variance = 75,495 (매우 큼)
+
+Anomaly 이미지 일관성:
+- 결함 유형별로 군집화된 촬영
+- 더 통제된 환경
+- log_pz variance = 6,764 (상대적으로 작음)
+```
+
+### Screw vs 다른 클래스 비교
+
+**Leather, Grid (잘 작동하는 클래스)**:
+- Texture 클래스 → 위치 불변 패턴
+- Normal/Anomaly 모두 일관적
+- Anomaly가 확실한 분포 이탈
+
+**Screw (작동 안하는 클래스)**:
+- Object 클래스 + 회전
+- Normal 자체가 매우 다양 (회전)
+- Anomaly가 오히려 일관적
+
+### 왜 이전 접근법들이 실패했는가
+
+| 접근법 | 실패 이유 |
+|--------|-----------|
+| V5.5/V5.6 Dual Branch | Normal만으로는 pos/nopos 구분 학습 불가 |
+| V5.7 Multi-Orientation | Feature에 이미 PE baked-in |
+| V5.8 TAPE | NLL ≠ AD, PE 낮추는 방향으로만 학습 |
+| V6 Rotation Aug | PE 충돌 + Normal이 이미 다양해서 효과 없음 |
+| V6 No PE | PE가 오히려 도움 주고 있었음 (0.39→0.31) |
+
+### ~~가설: Screw 문제는 "데이터 특성" 문제~~ (수정됨)
+
+**이 가설은 틀렸음** - 아래 "Screw 문제 재분석: V5 컴포넌트가 원인" 섹션 참조
+
+baseline_v8.1 (단순 구조, img_size 518)에서 screw **0.67** 달성!
+→ 데이터 문제가 아닌 **V5 컴포넌트 (WhiteningAdapter, SpatialMixer, DIA)가 원인**
+
+### 다음 단계 제안
+
+1. **데이터 분석 심화**:
+   - 실제 screw 이미지들을 시각적으로 분석
+   - Normal/Anomaly 간 feature 분포 시각화
+
+2. **접근법 전환 고려**:
+   - NF 대신 Reconstruction-based 방법 (AutoEncoder 등)
+   - 또는 Contrastive Learning으로 anomaly 신호 직접 학습
+
+3. **Screw 전용 처리**:
+   - Task-specific preprocessing
+   - Rotation alignment (테스트 시 canonical orientation 정렬)
+
+---
+
+## V6 - Rotation Augmentation
+
+### 아이디어
+
+이전 접근법 (V5.5-V5.8)이 실패한 이유:
+- Normal-only training에서 PE 최적화 방향을 학습 불가
+- Model-level 변경보다 **Data-level** 접근이 더 효과적일 수 있음
+
+**V6 접근법**: Random rotation augmentation
+- 학습 시 이미지를 ±180° 랜덤 회전
+- 모델이 자연스럽게 rotation-invariant 특성 학습
+- Position Encoding은 유지 (회전된 이미지에 PE 적용)
+
+### 구현
+
+**수정된 파일**:
+
+1. **moleflow/data/mvtec.py**:
+   - `use_rotation_aug`, `rotation_degrees` 파라미터 추가
+   - Training transform에 `T.RandomRotation` 추가
+
+2. **moleflow/data/datasets.py**:
+   - `create_task_dataset`에 rotation 설정 전달
+
+3. **moleflow/config/ablation.py**:
+   - `use_rotation_aug: bool = False`
+   - `rotation_degrees: float = 180.0`
+   - CLI arguments 추가
+
+4. **run_moleflow.py**:
+   - `create_task_dataset` 호출 시 rotation 설정 전달
+
+### 사용법
+
+```bash
+# Rotation augmentation 활성화 (±180°)
+python run_moleflow.py \
+    --use_rotation_aug \
+    --rotation_degrees 180.0 \
+    --experiment_name Version6-RotationAug
+
+# 다른 회전 범위 (±90°)
+python run_moleflow.py \
+    --use_rotation_aug \
+    --rotation_degrees 90.0 \
+    --experiment_name Version6-RotationAug-90
+```
+
+### 기대 효과
+
+| 클래스 | 예상 | 이유 |
+|--------|------|------|
+| Screw | 개선 | 회전된 정상 이미지로 학습 → 회전에 불변 |
+| Leather | 유지/소폭 하락 | Texture는 회전에 원래 불변 |
+| Grid | 유지 | 주기적 패턴 |
+| Transistor | ? | Component 위치에 따라 다를 수 있음 |
+
+### V6 실험 결과
+
+| Class | Baseline | RotationAug | 변화 |
+|-------|----------|-------------|------|
+| leather | 1.0000 | 1.0000 | = |
+| grid | 0.9365 | 0.8797 | ↓0.06 |
+| transistor | 0.8087 | 0.6558 | ↓0.15 |
+| screw | 0.3900 | 0.3898 | ≈ |
+| **Mean** | 0.7838 | 0.7313 | ↓0.05 |
+
+### 분석: Rotation Augmentation 실패
+
+**결과**: Screw 개선 없음, Grid/Transistor 오히려 성능 저하
+
+**원인: Position Encoding과의 충돌**
+
+```
+Rotation Augmentation + Fixed PE = 모순
+
+이미지: 90° 회전됨
+  - 원래 (0,0)에 있던 패치 → (0,13)으로 이동
+
+PE: 고정 그리드
+  - (0,13) 위치에 (0,13)의 PE 적용
+
+문제:
+  - 같은 패치가 다른 위치에서 다른 PE를 받음
+  - 모델: "이 패치는 (0,0)에서 본 적 있는데 왜 (0,13) PE가 붙어있지?"
+  - → 학습 혼란 → 성능 저하
+```
+
+**Screw가 개선되지 않은 이유**:
+- Rotation augmentation이 "rotation invariance"를 주지 않음
+- PE 불일치로 인해 오히려 학습이 방해됨
+- 근본적으로 screw 문제는 rotation이 아닌 다른 원인일 수 있음
+
+### 결론
+
+**Rotation augmentation은 PE와 함께 사용 시 역효과**
+
+가능한 방향:
+1. **Rotation Aug + No PE**: PE 비활성화하고 rotation만 사용
+2. **Rotation Aug + Rotated PE**: PE도 함께 회전 (구현 복잡)
+3. **Rotation 포기**: 다른 접근법 탐색
+
+---
+
+## Screw 문제 재분석: V5 컴포넌트가 원인 (2025-12-29)
+
+### 중요 발견: baseline_v8.1이 screw에서 0.67 달성!
+
+기존 모든 V5/V6 실험에서 screw는 0.44-0.47 수준이었는데,
+**baseline_v8.1_lora_rank64_all_classes**에서 **0.6741** 달성!
+
+### 설정 비교
+
+| Component | baseline_v8.1 (screw 0.67) | V5 (screw 0.44) |
+|-----------|----------------------------|-----------------|
+| img_size | **518** | 224 |
+| WhiteningAdapter | ❌ 없음 | ✅ 사용 |
+| SpatialContextMixer | ❌ 없음 | ✅ 사용 |
+| DIA | ❌ 없음 | ✅ 사용 |
+| scale_context | ❌ 없음 | ✅ 사용 |
+
+### 결론: V5 "개선" 컴포넌트들이 screw 성능 저하의 원인
+
+**1. WhiteningAdapter (LayerNorm)**
+- LayerNorm이 patch 간 상대적 크기 정보를 정규화
+- 작은 결함의 미세한 차이가 희석됨
+- Screw의 미세 결함에 치명적
+
+**2. SpatialContextMixer (3x3 context)**
+- 3x3 영역 평균/집계
+- 작은 결함이 주변과 섞여 blur됨
+- Screw의 scratch_head, thread_side 같은 작은 결함 탐지 실패
+
+**3. DIA (Deep Invertible Adapter)**
+- Task별 분포 정렬 목적
+- Screw의 다양한 정상 분포를 오히려 왜곡할 수 있음
+
+**4. Image Size 224 vs 518**
+- 518 해상도에서 더 많은 세부 정보 보존
+- Screw 나사산 패턴이 224에서 손실
+
+### 해결 방안
+
+**Option 1: Screw-specific config**
+```bash
+# Screw 학습 시 V5 컴포넌트 비활성화
+python run_moleflow.py \
+    --task_classes screw \
+    --no_whitening_adapter \
+    --no_spatial_context \
+    --no_dia \
+    --img_size 518
+```
+
+**Option 2: 전체 구조 단순화**
+- V5 컴포넌트들의 효과 재검증 필요
+- 다른 클래스에서도 실제로 도움이 되는지 확인
+- 불필요한 복잡성 제거
+
+**Option 3: Adaptive Components**
+- 클래스 특성(texture vs object, large vs small defect)에 따라 컴포넌트 활성화
+- 학습된 gate로 컴포넌트 사용 여부 결정
+
+### 실험 계획
+
+1. **baseline_v8.1 스타일로 screw 재실험** (img_size 518, no extra components)
+2. **각 컴포넌트별 ablation** (WhiteningAdapter만, SpatialMixer만, DIA만 테스트)
+3. **img_size 효과 분리 테스트** (518 vs 224, 동일 컴포넌트)
+
+---
+
+## Version 6.1 - Spatial Transformer Network (STN) 실험 결과 (2025-12-29)
+
+### 실험 목적
+- Screw 클래스의 rotation 문제를 해결하기 위해 STN 도입
+- 이미지 레벨에서 자동 정렬 → PE와 일관성 유지
+
+### 설정
+```bash
+CUDA_VISIBLE_DEVICES=0 python run_moleflow.py --run_diagnostics \
+    --task_classes leather grid transistor screw \
+    --use_whitening_adapter --use_dia \
+    --score_aggregation_mode top_k --score_aggregation_top_k 3 \
+    --use_tail_aware_loss --tail_weight 0.3 \
+    --use_stn --stn_mode rotation \
+    --stn_hidden_dim 128 --stn_rotation_reg_weight 0.01 \
+    --experiment_name Version6.1-STN
+```
+
+### 결과: STN 실패 ❌
+
+| Class | V5 Baseline | V6.1-STN | 차이 |
+|-------|-------------|----------|------|
+| leather | **1.000** | 1.000 | 0.00 |
+| grid | **0.942** | 0.923 | **-1.9%** |
+| transistor | **0.824** | 0.795 | **-2.9%** |
+| screw | **0.443** | 0.416 | **-2.7%** |
+| **Average** | **0.802** | 0.784 | **-1.8%** |
+
+**결론: STN이 성능을 오히려 저하시킴**
+
+### 실패 원인 분석
+
+1. **Normal-only Training의 한계**
+   - STN이 정상 이미지만으로 학습됨
+   - "Canonical orientation"이 무엇인지 명확한 supervision 없음
+   - Anomaly detection loss가 STN에 유용한 gradient 제공하지 못함
+
+2. **End-to-end 학습 문제**
+   - Rotation이 anomaly score에 직접적 영향 미미
+   - NLL loss 최소화와 rotation alignment가 직접 연결되지 않음
+
+3. **Identity 초기화 + Regularization 역효과**
+   - rotation_reg_weight=0.01로 변환 최소화 유도
+   - 결과적으로 거의 변환이 일어나지 않았을 가능성
+   - 그러나 STN 연산 자체가 feature에 노이즈 추가
+
+4. **추가 파라미터의 부작용**
+   - Localization network가 이미지에 불필요한 변형 추가
+   - Feature extractor 입력이 오염됨
+
+### 시사점
+
+- **이미지 레벨 변환은 근본적 해결책이 아님**
+- **Screw 문제의 근본 원인은 rotation이 아닐 수 있음**
+- 이전 분석에서 발견한 것처럼 **V5 컴포넌트들(WhiteningAdapter, SpatialMixer, DIA)이 진짜 원인**
+- baseline_v8.1(단순 구조)이 screw 0.67 달성한 것이 증거
+
+### 다음 방향
+
+1. **V5 컴포넌트 제거 실험**: WhiteningAdapter, SpatialMixer, DIA 없이 학습
+2. **img_size 518로 변경**: 더 높은 해상도에서 세부 정보 보존
+3. **단순한 baseline으로 회귀**: 복잡한 컴포넌트가 오히려 해로울 수 있음
+
+---
+
+## Hyperparameter Tuning 실험 결과 (2025-12-30)
+
+### 실험 목적
+V5-Final baseline을 기준으로 screw 성능 개선을 위한 hyperparameter 탐색
+
+### 실험 구성 (24개 실험, GPU 0/1/4/5 병렬)
+
+| Round | 변경 요소 |
+|-------|----------|
+| 1 | V5 Components 제거 (NoWhitening, NoDIA, Simple, Baseline) |
+| 2 | Score Aggregation (TopK 1/5/10, Mean) |
+| 3 | Tail-aware Loss (NoTail, 0.1, 0.5, 0.7) |
+| 4 | Model Capacity (Coupling 12/16, LoRA 32/128) |
+| 5 | Learning Rate & Epochs (LR 5e-5/2e-4, Epochs 60/80) |
+| 6 | Combined (Simple + 조합) |
+
+### 결과: Screw AUC Top 5
+
+| Rank | Experiment | Screw AUC | Avg AUC | 비고 |
+|------|------------|-----------|---------|------|
+| 1 | **HP-NoDIA** | **0.508** | 0.699 | Grid/Transistor 망가짐 |
+| 2 | **HP-NoTail** | **0.504** | 0.784 | **균형 좋음 ✓** |
+| 3 | HP-Epochs80 | 0.482 | 0.810 | 최고 평균 |
+| 4 | HP-LR2e-4 | 0.477 | 0.806 | |
+| 5 | HP-TopK1 | 0.475 | 0.791 | |
+| - | V5-Final (기준) | 0.443 | 0.802 | |
+
+### 클래스별 상세 비교
+
+| Experiment | Leather | Grid | Transistor | Screw | Avg |
+|------------|---------|------|------------|-------|-----|
+| V5-Final | 1.00 | **0.94** | **0.82** | 0.44 | 0.80 |
+| HP-NoTail | 1.00 | 0.88 | 0.75 | **0.50** | 0.78 |
+| HP-NoDIA | 1.00 | 0.75 | 0.55 | **0.51** | 0.70 |
+| HP-Epochs80 | 1.00 | 0.91 | 0.80 | 0.48 | **0.81** |
+
+### 핵심 발견
+
+1. **DIA 제거** → Screw ↑6% but 다른 클래스 크게 하락
+2. **Tail-aware loss 제거** → Screw ↑6%, 균형 유지 ✓
+3. **Mean aggregation** → 완전 실패 (Screw 0.04-0.07)
+4. **TopK 증가 (5, 10)** → Screw 하락
+5. **Epochs 80** → 전체 성능 향상
+
+### 분석
+
+**Tail-aware loss가 screw에 해로운 이유:**
+- Tail loss는 상위 5% high-loss patch에 집중
+- Screw는 정상 이미지도 variation이 큼 (rotation, position)
+- High-loss patch가 반드시 anomaly가 아님 → 잘못된 신호로 학습
+- 결과적으로 정상/비정상 구분 능력 저하
+
+**DIA가 screw에 해로운 이유:**
+- DIA는 task별 nonlinear adaptation 제공
+- 다른 클래스에서는 도움이 되지만
+- Screw의 높은 intra-class variance에서는 overfitting 유발
+- 정상 분포를 너무 tight하게 학습 → 정상도 anomaly로 판정
+
+### 추천 설정
+
+**Best Trade-off: HP-NoTail**
+```bash
+--use_whitening_adapter --use_dia \
+--score_aggregation_mode top_k --score_aggregation_top_k 3
+# tail-aware loss 제거 (--use_tail_aware_loss 없음)
+```
+
+- Screw: 0.443 → **0.504** (+13.8% 상대 개선)
+- Average: 0.802 → 0.784 (-2.2%)
+- 다른 클래스 성능은 약간 하락하지만 screw 개선 효과가 더 큼
+
+---
+
+## V6 Ablation Experiments - Architecture Fundamentals
+
+### 배경
+
+HP 튜닝 결과 분석 후, 아키텍처 근본적인 변경을 통한 ablation 실험 진행.
+
+### 실험 설계
+
+| Exp | Name | 설명 |
+|-----|------|------|
+| 1 | **V6-NoLoRA** | NF subnet의 LoRA를 일반 Linear로 대체 |
+| 2 | **V6-TaskSeparated** | Task별 완전 분리 학습 (base 공유 없음) |
+| 1+2 | **V6-NoLoRA-TaskSep** | 위 두 가지 조합 |
+| 3 | **V6-SpectralNorm** | Subnet에 Spectral Normalization 적용 |
+
+### 수정된 파일
+
+1. **moleflow/config/ablation.py**
+   - `use_regular_linear`: LoRA 대신 일반 Linear 사용
+   - `use_task_separated`: Task별 독립 훈련
+   - `use_spectral_norm`: Spectral Normalization 적용
+
+2. **moleflow/models/lora.py (MoLESubnet)**
+   - `use_regular_linear=True`: nn.Linear로 대체, task별 별도 layer 생성
+   - `use_spectral_norm=True`: nn.utils.spectral_norm 적용
+
+3. **moleflow/models/mole_nf.py**
+   - make_subnet에 V6 플래그 전달
+   - add_task에서 task-separated 모드 처리
+
+4. **moleflow/trainer/continual_trainer.py**
+   - Task-separated 모드: task > 0도 _train_base_task 스타일로 훈련
+
+### 기대 효과
+
+1. **V6-NoLoRA**: Low-rank constraint 제거로 표현력 증가
+2. **V6-TaskSeparated**: Task 간 간섭 완전 제거 (upper bound 측정)
+3. **V6-SpectralNorm**: Lipschitz 제약으로 더 안정적인 flow
+
+### 실행 스크립트
+
+```bash
+./run.sh  # GPU 0, 1, 4, 5에서 4개 실험 병렬 실행
+```
+
+### 결과
+
+(실험 완료 후 기록 예정)
+
+---
+
+## Dataset Support - VISA & MPDD
+
+### 개요
+
+MVTec AD 외에 VisA(Visual Anomaly)와 MPDD(Metal Parts Defect Detection) 데이터셋 지원 추가.
+
+### 데이터셋 구조
+
+#### VisA Dataset (/Data/VISA)
+- **Classes (12개)**: candle, capsules, cashew, chewinggum, fryum, macaroni1, macaroni2, pcb1, pcb2, pcb3, pcb4, pipe_fryum
+- **구조**: CSV 기반 split (`split_csv/1cls.csv`)
+- **이미지**: `{class}/Data/Images/{Normal|Anomaly}/*.JPG`
+- **마스크**: `{class}/Data/Masks/Anomaly/*.png`
+
+#### MPDD Dataset (/Data/mpdd)
+- **Classes (6개)**: bracket_black, bracket_brown, bracket_white, connector, metal_plate, tubes
+- **구조**: MVTec-AD 스타일 디렉토리 구조
+- **이미지**: `{class}/{train|test}/{good|defect_type}/*.png`
+- **마스크**: `{class}/ground_truth/{defect_type}/*_mask.png`
+
+### 새로 추가된 파일
+
+1. **moleflow/data/visa.py**
+   - `VISA` 클래스: CSV 기반 데이터 로딩
+   - `VISA_CLASS_NAMES`: 12개 클래스 목록
+
+2. **moleflow/data/mpdd.py**
+   - `MPDD` 클래스: MVTec-AD 스타일 디렉토리 스캔
+   - `MPDD_CLASS_NAMES`: 6개 클래스 목록
+
+### 수정된 파일
+
+1. **moleflow/data/datasets.py**
+   - `DATASET_REGISTRY`: 데이터셋 클래스 레지스트리
+   - `get_dataset_class(name)`: 이름으로 데이터셋 클래스 반환
+   - `get_class_names(name)`: 데이터셋의 클래스 목록 반환
+   - `create_task_dataset()`: `args.dataset` 기반으로 자동 선택
+
+2. **moleflow/data/__init__.py**
+   - VISA, MPDD 관련 export 추가
+
+3. **moleflow/__init__.py**
+   - VISA, MPDD, 유틸리티 함수 export
+
+4. **run_moleflow.py**
+   - `--dataset` 인자 추가 (mvtec, visa, mpdd)
+   - 로그에 dataset 정보 출력
+
+### 사용법
+
+```bash
+# VisA 데이터셋으로 실험
+python run_moleflow.py \
+    --dataset visa \
+    --data_path /Data/VISA \
+    --task_classes candle capsules cashew
+
+# MPDD 데이터셋으로 실험
+python run_moleflow.py \
+    --dataset mpdd \
+    --data_path /Data/mpdd \
+    --task_classes bracket_black bracket_brown connector
+
+# 기본 MVTec (변경 없음)
+python run_moleflow.py \
+    --dataset mvtec \
+    --data_path /Data/MVTecAD \
+    --task_classes leather grid transistor
+```
+
+### 검증 결과
+
+```
+VISA candle train samples: 900
+VISA candle test samples: 200
+MPDD bracket_black train samples: 289
+MPDD bracket_black test samples: 79
+```
+
+---
+
+## Bug Fix - VISA/MPDD 데이터셋 평가 오류 수정 (2025-12-31)
+
+### 문제
+- VISA/MPDD 데이터셋으로 학습 후 **test 단계에서 에러 발생**
+- 평가 함수가 MVTEC 데이터셋을 하드코딩하여 사용
+
+### 원인
+`moleflow/evaluation/evaluator.py`의 `evaluate_class`와 `evaluate_routing_performance` 함수가 `args.dataset` 값과 관계없이 항상 MVTEC 데이터셋 클래스를 사용:
+
+```python
+# 문제 코드
+from moleflow.data.mvtec import MVTEC
+test_dataset = MVTEC(args.data_path, class_name=class_name, ...)
+```
+
+### 해결책
+`args.dataset`에 따라 적절한 데이터셋 클래스를 동적으로 선택하도록 수정:
+
+```python
+# 수정된 코드
+from moleflow.data.datasets import get_dataset_class
+
+dataset_name = getattr(args, 'dataset', 'mvtec')
+DatasetClass = get_dataset_class(dataset_name)
+test_dataset = DatasetClass(args.data_path, class_name=class_name, ...)
+```
+
+### 수정된 파일
+- `moleflow/evaluation/evaluator.py`
+  - `evaluate_class()` 함수
+  - `evaluate_routing_performance()` 함수
+
+---

@@ -1,718 +1,276 @@
-# MoLE-Flow: Mixture of LoRA Experts for Continual Anomaly Detection
+# MoLE-Flow: Method Description (Version 5-Final)
 
-## 1. Overview
+## Overview
 
-MoLE-Flow는 **Continual Learning** 환경에서 **Anomaly Detection**을 수행하는 프레임워크입니다. 핵심 아이디어는 Normalizing Flow 기반의 anomaly detector에 **LoRA (Low-Rank Adaptation)** 를 적용하여, 새로운 task를 학습할 때 기존 지식을 보존하면서 효율적으로 adaptation하는 것입니다.
+MoLE-Flow (Mixture of LoRA Experts for Normalizing Flow)는 **Continual Anomaly Detection** 문제를 해결하기 위한 프레임워크입니다. 여러 제품 클래스(Task)를 순차적으로 학습하면서, 이전에 학습한 Task의 성능을 유지합니다.
 
-### 1.1 Problem Setting
+**핵심 문제**: Task 0 (예: leather) 학습 → Task 1 (예: grid) 학습 → Task 2 (예: transistor) 학습... 이 과정에서 catastrophic forgetting 없이 모든 Task에서 좋은 anomaly detection 성능을 유지해야 합니다.
+
+**지원 데이터셋**:
+- MVTec AD (15 classes)
+- VisA (12 classes)
+- MPDD (6 classes)
+
+---
+
+## Architecture Overview
 
 ```
-Task 0: leather 학습 → Task 1: grid 학습 → Task 2: transistor 학습 → ...
-```
-
-- 각 task는 하나의 클래스(제품 유형)에 대한 anomaly detection
-- **Catastrophic Forgetting 방지**: Task 1 학습 시 Task 0 성능 유지 필요
-- **Inference 시 Task ID 모름**: Router를 통해 자동으로 task 선택
-
-### 1.2 Architecture Overview
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           MoLE-Flow Pipeline                            │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  Input Image ──► ViT Feature Extractor ──► Positional Embedding         │
-│       │              (DINOv2, frozen)              │                    │
-│       │                    │                       │                    │
-│       │                    ▼                       ▼                    │
-│       │         [B, H, W, 512] patches    + 2D sinusoidal PE            │
-│       │                    │                       │                    │
-│       │                    └───────────┬───────────┘                    │
-│       │                                ▼                                │
-│       │                    ┌───────────────────────┐                    │
-│       │                    │   TaskInputAdapter    │ ◄─── Task-specific │
-│       │                    │   (FiLM-style)        │      distribution  │
-│       │                    └───────────────────────┘      alignment     │
-│       │                                │                                │
-│       │                                ▼                                │
-│       │                    ┌───────────────────────┐                    │
-│       │                    │   Normalizing Flow    │                    │
-│       │                    │   ┌─────────────────┐ │                    │
-│       │                    │   │ Base Weights    │ │ ◄─── Shared        │
-│       │                    │   │ (frozen T>0)   │ │                    │
-│       │                    │   ├─────────────────┤ │                    │
-│       │                    │   │ LoRA Adapters   │ │ ◄─── Task-specific │
-│       │                    │   │ (per task)      │ │                    │
-│       │                    │   ├─────────────────┤ │                    │
-│       │                    │   │ Task Biases     │ │ ◄─── Task-specific │
-│       │                    │   └─────────────────┘ │                    │
-│       │                    └───────────────────────┘                    │
-│       │                                │                                │
-│       │                                ▼                                │
-│       │                    Latent z ~ N(0, I)                           │
-│       │                                │                                │
-│       │                                ▼                                │
-│       │              Anomaly Score = -log p(x) = -log p(z) - log|det J| │
-│       │                                                                 │
-│       └─► PrototypeRouter ──► Task Selection (Mahalanobis distance)     │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              MoLE-Flow Pipeline                                  │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│  Input Image (224×224×3)                                                        │
+│       │                                                                         │
+│       ▼                                                                         │
+│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+│  │  ViTPatchCoreExtractor (Frozen)                                         │   │
+│  │  • Backbone: vit_base_patch16_224.augreg2_in21k_ft_in1k                 │   │
+│  │  • Multi-layer aggregation: blocks [1, 3, 5, 11]                        │   │
+│  │  • Output: (B, 14, 14, 768) patch features                              │   │
+│  └─────────────────────────────────────────────────────────────────────────┘   │
+│       │                                                                         │
+│       ▼                                                                         │
+│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+│  │  PositionalEmbeddingGenerator                                           │   │
+│  │  • 2D sinusoidal positional encoding                                    │   │
+│  │  • positionalencoding2d(D, H, W): (D, H, W) → concat with features     │   │
+│  └─────────────────────────────────────────────────────────────────────────┘   │
+│       │                                                                         │
+│       ▼                                                                         │
+│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+│  │  WhiteningAdapter (Task-specific) [moleflow/models/adapters.py:437]     │   │
+│  │  • Whitening: LayerNorm(x, elementwise_affine=False)                   │   │
+│  │  • De-whitening: γ * whitened + β                                      │   │
+│  │  • γ ∈ [0.5, 2.0] via sigmoid, β ∈ [-2.0, 2.0] via tanh               │   │
+│  └─────────────────────────────────────────────────────────────────────────┘   │
+│       │                                                                         │
+│       ▼                                                                         │
+│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+│  │  SpatialContextMixer (Frozen after Task 0) [adapters.py]                │   │
+│  │  • 3×3 depthwise conv for local context                                 │   │
+│  │  • Learnable residual gate for context blending                         │   │
+│  └─────────────────────────────────────────────────────────────────────────┘   │
+│       │                                                                         │
+│       ▼                                                                         │
+│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+│  │  MoLESpatialAwareNF (Base NF) [moleflow/models/mole_nf.py:31]          │   │
+│  │  • 8 Affine Coupling Layers (FrEIA AllInOneBlock)                       │   │
+│  │  • MoLESubnet with LoRALinear layers                                    │   │
+│  │  • Base weights: Frozen after Task 0                                    │   │
+│  │  • Task-specific: LoRA adapters (rank=64) + Task biases                │   │
+│  └─────────────────────────────────────────────────────────────────────────┘   │
+│       │                                                                         │
+│       ▼                                                                         │
+│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+│  │  DeepInvertibleAdapter (DIA) [moleflow/models/lora.py:774]             │   │
+│  │  • 2 additional coupling blocks per task                                │   │
+│  │  • AffineCouplingBlock with SimpleSubnet                                │   │
+│  │  • Near-identity initialization                                         │   │
+│  └─────────────────────────────────────────────────────────────────────────┘   │
+│       │                                                                         │
+│       ▼                                                                         │
+│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+│  │  Anomaly Score Computation                                              │   │
+│  │  • Patch score: -log p(z) - log|det J| = 0.5*||z||² - logdet           │   │
+│  │  • Image score: Top-K aggregation (k=3)                                 │   │
+│  └─────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 2. Components
+## Core Components (Actual Implementation)
 
-### 2.1 ViT Feature Extractor
+### 1. Feature Extractor: ViTPatchCoreExtractor
 
-DINOv2 ViT를 사용하여 이미지에서 patch-level feature를 추출합니다.
-
-**Motivation**:
-- DINOv2는 self-supervised learning으로 학습되어 범용적인 visual representation 제공
-- Patch 단위 feature는 pixel-level anomaly localization에 필수
+**File**: `moleflow/extractors/vit_extractor.py`
 
 ```python
-class ViTPatchCoreExtractor(nn.Module):
+class ViTPatchCoreExtractor:
     """
-    ViT-based PatchCore Feature Extractor.
-    Uses transformer block outputs directly without additional patchification.
+    ViT-based patch feature extractor with multi-layer aggregation.
+
+    Key Parameters:
+    - backbone_name: "vit_base_patch16_224.augreg2_in21k_ft_in1k"
+    - blocks_to_extract: [1, 3, 5, 11]  # Multi-scale features
+    - target_embed_dimension: 768
+    - remove_cls_token: True  # Only patch tokens
     """
 
-    def __init__(self,
-                 backbone_name="vit_base_patch14_dinov2.lvd142m",
-                 blocks_to_extract=[8, 9, 10, 11],
-                 input_shape=(3, 224, 224),
-                 target_embed_dimension=1024,
-                 device='cuda',
-                 remove_cls_token=True):
-        super(ViTPatchCoreExtractor, self).__init__()
+    def __init__(self, backbone_name, blocks_to_extract, input_shape,
+                 target_embed_dimension, device, remove_cls_token=True):
+        # Create timm model with feature extraction
+        self.model = timm.create_model(backbone_name, pretrained=True)
+        self.model.eval()  # Always frozen
 
-        self.device = device
-        self.blocks_to_extract_from = blocks_to_extract
-        self.remove_cls_token = remove_cls_token
+        # Register forward hooks for intermediate layers
+        for block_idx in blocks_to_extract:
+            self.model.blocks[block_idx].register_forward_hook(...)
+```
 
-        # Load backbone
-        self.backbone = timm.create_model(backbone_name, pretrained=True)
-        self.backbone.to(device)
-        self.backbone.eval()
+**출력 형태**:
+- Input: (B, 3, 224, 224) RGB image
+- Output: (B, 196, 768) = (B, 14×14, 768) patch features
 
-        # Setup feature aggregator
-        self.feature_aggregator = ViTFeatureAggregator(
-            self.backbone, self.blocks_to_extract_from
-        )
+---
 
-        # Calculate embedding dimensions
-        feature_dims = self.feature_aggregator.feature_dimensions(input_shape, device)
+### 2. Positional Embedding: PositionalEmbeddingGenerator
 
-        # Setup preprocessing (dimension alignment)
-        self.preprocessing = nn.ModuleList()
-        for dim in feature_dims:
-            if dim != target_embed_dimension:
-                self.preprocessing.append(nn.Linear(dim, target_embed_dimension))
-            else:
-                self.preprocessing.append(nn.Identity())
-        self.preprocessing.to(device)
+**File**: `moleflow/models/position_embedding.py`
 
-        self.target_embed_dimension = target_embed_dimension
-        self.num_blocks = len(blocks_to_extract)
+```python
+def positionalencoding2d(d_model: int, height: int, width: int, device='cuda'):
+    """
+    2D sinusoidal positional encoding.
 
-    def forward(self, images, return_spatial_shape=False):
-        """
-        Extract patch embeddings from images.
+    pe[0::4, :, :] = sin(x / 10000^(4i/d))
+    pe[1::4, :, :] = cos(x / 10000^(4i/d))
+    pe[2::4, :, :] = sin(y / 10000^(4i/d))
+    pe[3::4, :, :] = cos(y / 10000^(4i/d))
 
-        Args:
-            images: (B, C, H, W) input images
-            return_spatial_shape: If True, return spatial shape as well
+    Returns: (d_model, height, width)
+    """
+    pe = torch.zeros(d_model, height, width, device=device)
+    d_model_quarter = d_model // 4
 
-        Returns:
-            features: (B, H_patch, W_patch, Target_Embed_Dimension)
-            spatial_shape (optional): (H_patch, W_patch) tuple
-        """
-        images = images.to(self.device)
-        batch_size = images.shape[0]
+    div_term = torch.exp(torch.arange(0., d_model_quarter, device=device) *
+                        -(math.log(10000.0) / d_model_quarter))
 
-        # 1. Extract features from transformer blocks
-        features_dict = self.feature_aggregator(images)
+    pos_w = torch.arange(0., width, device=device).unsqueeze(1)
+    pos_h = torch.arange(0., height, device=device).unsqueeze(1)
 
-        # 2. Collect features from each block (B, N_tokens, D)
-        features = []
-        for block_idx in self.blocks_to_extract_from:
-            feat = features_dict[f"block_{block_idx}"]
+    pe[0::4, :, :] = torch.sin(pos_w * div_term).T.unsqueeze(1).repeat(1, height, 1)
+    pe[1::4, :, :] = torch.cos(pos_w * div_term).T.unsqueeze(1).repeat(1, height, 1)
+    pe[2::4, :, :] = torch.sin(pos_h * div_term).T.unsqueeze(2).repeat(1, 1, width)
+    pe[3::4, :, :] = torch.cos(pos_h * div_term).T.unsqueeze(2).repeat(1, 1, width)
 
-            # Remove CLS token
-            if self.remove_cls_token:
-                feat = feat[:, 1:, :]  # (B, N_patches, D)
-
-            features.append(feat)
-
-        # 3. Apply preprocessing (dimension adjustment)
-        processed_features = []
-        for i, feat in enumerate(features):
-            feat = self.preprocessing[i](feat)
-            processed_features.append(feat)
-
-        # 4. Aggregate features from multiple blocks
-        stacked_features = torch.stack(processed_features, dim=2)
-        aggregated_features = stacked_features.mean(dim=2)
-
-        # 5. Reshape to spatial structure
-        num_patches = aggregated_features.shape[1]
-        patch_grid_size = int(np.sqrt(num_patches))
-
-        output = aggregated_features.reshape(
-            batch_size, patch_grid_size, patch_grid_size, self.target_embed_dimension
-        )
-
-        if return_spatial_shape:
-            return output, (patch_grid_size, patch_grid_size)
-
-        return output
-
-    def get_image_level_features(self, images):
-        """
-        Return image-level features via global average pooling.
-        Used for prototype-based routing.
-
-        Returns:
-            features: (Batch_Size, Target_Embed_Dimension)
-        """
-        spatial_embeddings = self.forward(images, return_spatial_shape=False)
-        # Global average pooling: (B, H, W, D) -> (B, D)
-        image_features = spatial_embeddings.mean(dim=(1, 2))
-        return image_features
+    return pe
 ```
 
 ---
 
-### 2.2 Positional Embedding
+### 3. WhiteningAdapter (Task Input Adapter)
 
-2D sinusoidal positional encoding을 patch embedding에 추가합니다.
-
-**Motivation**:
-- Normalizing Flow는 patch의 위치 정보를 모름
-- 위치에 따라 normal/anomaly 패턴이 다를 수 있음 (예: 제품 가장자리 vs 중앙)
+**File**: `moleflow/models/adapters.py:437-552`
 
 ```python
-def positionalencoding2d(D, H, W, device=None):
+class WhiteningAdapter(nn.Module):
     """
-    Generate 2D positional encoding.
+    Whitening-based Task Adapter.
 
-    Args:
-        D: dimension of the model
-        H: height of the positions
-        W: width of the positions
-        device: device to put the tensor on
+    Design Principles:
+    1. All tasks go through Whitening first (mean=0, std=1)
+    2. Task-specific de-whitening with constrained parameters
+    3. Task 0 stays close to identity (anchor point)
 
-    Returns:
-        DxHxW position matrix
-    """
-    if D % 4 != 0:
-        raise ValueError("Cannot use sin/cos positional encoding with odd dimension (got dim={:d})".format(D))
-    P = torch.zeros(D, H, W, device=device)
-    # Each dimension use half of D
-    D = D // 2
-    div_term = torch.exp(torch.arange(0.0, D, 2, device=device) * -(math.log(1e4) / D))
-    pos_w = torch.arange(0.0, W, device=device).unsqueeze(1)
-    pos_h = torch.arange(0.0, H, device=device).unsqueeze(1)
-    P[0:D:2, :, :] = torch.sin(pos_w * div_term).transpose(0, 1).unsqueeze(1).repeat(1, H, 1)
-    P[1:D:2, :, :] = torch.cos(pos_w * div_term).transpose(0, 1).unsqueeze(1).repeat(1, H, 1)
-    P[D::2, :, :] = torch.sin(pos_h * div_term).transpose(0, 1).unsqueeze(2).repeat(1, 1, W)
-    P[D+1::2, :, :] = torch.cos(pos_h * div_term).transpose(0, 1).unsqueeze(2).repeat(1, 1, W)
-    return P
-
-
-class PositionalEmbeddingGenerator:
-    """Generate and add 2D positional encodings to patch embeddings."""
-
-    def __init__(self, device):
-        self.device = device
-
-    def __call__(self, spatial_shape, patch_embeddings):
-        """
-        Add positional embeddings to patch embeddings.
-
-        Args:
-            spatial_shape: (H_patch, W_patch) spatial dimensions
-            patch_embeddings: (B, H, W, D) patch embeddings
-
-        Returns:
-            (B, H, W, D) patch embeddings with positional encoding
-        """
-        H_patch, W_patch = spatial_shape
-        pos_embed_dim = patch_embeddings.shape[-1]
-
-        # Generate positional encoding
-        pos_embed = positionalencoding2d(pos_embed_dim, H_patch, W_patch, device=self.device)
-
-        # Reshape and expand for batch
-        pos_embed_expanded = pos_embed.unsqueeze(0).permute(0, 2, 3, 1)
-        batch_size = patch_embeddings.shape[0]
-        pos_embed_batch = pos_embed_expanded.repeat(batch_size, 1, 1, 1)
-
-        # Add positional embedding
-        patch_embeddings_with_pos = patch_embeddings + pos_embed_batch
-
-        return patch_embeddings_with_pos
-```
-
----
-
-### 2.3 LoRA Linear Layer
-
-**Motivation**:
-- 전체 weight를 fine-tuning하면 이전 task 지식이 손실됨
-- LoRA는 low-rank delta만 학습하여 parameter-efficient하면서 이전 지식 보존
-
-```python
-class LoRALinear(nn.Module):
-    """
-    LoRA-enhanced Linear Layer with Task-specific Bias.
-
-    Output: h(x) = W_base @ x + scaling * (B @ A) @ x + (base_bias + task_bias)
-
-    Key Design Principles:
-    1. SMALL SCALING: Use smaller alpha/rank ratio for stable initial adaptation
-    2. ZERO-INIT B: Ensures delta_W = 0 at start (pure identity mapping for LoRA part)
-    3. XAVIER-INIT A: Better than Kaiming for symmetric distributions
-    4. TASK BIAS: Handles distribution shift without modifying base model
+    Parameters:
+    - gamma: constrained to [0.5, 2.0] via sigmoid
+    - beta: constrained to [-2.0, 2.0] via tanh
     """
 
-    def __init__(self, in_features: int, out_features: int, rank: int = 4,
-                 alpha: float = 1.0, bias: bool = True,
-                 use_lora: bool = True, use_task_bias: bool = True):
-        super(LoRALinear, self).__init__()
+    def __init__(self, channels: int, task_id: int = 0,
+                 gamma_range: tuple = (0.5, 2.0), beta_max: float = 2.0):
+        super().__init__()
 
-        self.in_features = in_features
-        self.out_features = out_features
-        self.rank = rank
-        self.alpha = alpha
-        # Increased scaling for stronger LoRA contribution
-        # Changed from alpha/(2*rank) to alpha/rank for 2x effect
-        self.scaling = alpha / rank
-        self.use_bias = bias
+        self.gamma_min, self.gamma_max = gamma_range
+        self.beta_max = beta_max
 
-        # Ablation flags
-        self.use_lora = use_lora
-        self.use_task_bias = use_task_bias
+        # Whitening layer (NO learnable affine - pure normalization)
+        self.whiten = nn.LayerNorm(channels, elementwise_affine=False)
 
-        # Base weight (frozen after Task 1)
-        self.base_linear = nn.Linear(in_features, out_features, bias=bias)
-
-        # LoRA adapters storage: Dict[task_id -> (A, B)]
-        self.lora_A = nn.ParameterDict()
-        self.lora_B = nn.ParameterDict()
-
-        # Task-specific biases (critical for handling distribution shift)
-        self.task_biases = nn.ParameterDict()
-
-        # Current active task
-        self.active_task_id: Optional[int] = None
-        self.base_frozen = False
-
-    def add_task_adapter(self, task_id: int):
-        """
-        Add LoRA adapter and task-specific bias for a new task.
-
-        Initialization Strategy:
-        - A: Xavier uniform (better for maintaining gradient flow)
-        - B: Zero (ensures delta_W = 0 at start)
-        - task_bias: Zero (starts at base_bias + 0)
-        """
-        task_key = str(task_id)
-        device = self.base_linear.weight.device
-
-        # Add LoRA adapters only if enabled
-        if self.use_lora:
-            # A: Xavier uniform initialization (better gradient flow than Kaiming)
-            A = nn.Parameter(torch.zeros(self.rank, self.in_features, device=device))
-            nn.init.xavier_uniform_(A)
-
-            # B: Zero initialization (ensures delta_W = 0 at start, pure identity for LoRA)
-            B = nn.Parameter(torch.zeros(self.out_features, self.rank, device=device))
-
-            self.lora_A[task_key] = A
-            self.lora_B[task_key] = B
-
-        # Task-specific bias: Initialize to zero (starts at base_bias + 0)
-        if self.use_bias and self.use_task_bias:
-            task_bias = nn.Parameter(torch.zeros(self.out_features, device=device))
-            self.task_biases[task_key] = task_bias
-
-    def freeze_base(self):
-        """Freeze base weights after Task 1 (but NOT the base bias for reference)."""
-        self.base_linear.weight.requires_grad = False
-        if self.use_bias and self.base_linear.bias is not None:
-            self.base_linear.bias.requires_grad = False
-        self.base_frozen = True
-
-    def unfreeze_base(self):
-        """Unfreeze base weights (for Task 1 training)."""
-        for param in self.base_linear.parameters():
-            param.requires_grad = True
-        self.base_frozen = False
-
-    def set_active_task(self, task_id: Optional[int]):
-        """Set the currently active LoRA adapter."""
-        self.active_task_id = task_id
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass with optional LoRA adapter and task-specific bias.
-
-        h(x) = W_base @ x + scaling * (B @ A) @ x + (base_bias + task_bias)
-        """
-        # Check if task adapter is active
-        if self.active_task_id is not None:
-            task_key = str(self.active_task_id)
-            has_lora = task_key in self.lora_A and task_key in self.lora_B
-            has_task_bias = task_key in self.task_biases
-
-            # If we have any task-specific components
-            if has_lora or has_task_bias:
-                # Compute W_base @ x (without bias)
-                output = F.linear(x, self.base_linear.weight, bias=None)
-
-                # Add LoRA contribution: scaling * (B @ A) @ x
-                if has_lora and self.use_lora:
-                    A = self.lora_A[task_key]
-                    B = self.lora_B[task_key]
-                    lora_output = F.linear(F.linear(x, A), B)
-                    output = output + self.scaling * lora_output
-
-                # Add bias
-                if self.use_bias and self.base_linear.bias is not None:
-                    if has_task_bias and self.use_task_bias:
-                        # Combined bias: base_bias + task_bias
-                        total_bias = self.base_linear.bias + self.task_biases[task_key]
-                        output = output + total_bias
-                    else:
-                        # Only base bias
-                        output = output + self.base_linear.bias
-
-                return output
-
-        # Default: use base linear (Task 0 or no adapter)
-        return self.base_linear(x)
-
-    def get_merged_weight(self, task_id: int) -> torch.Tensor:
-        """Get merged weight W' = W_base + scaling * B @ A for a specific task."""
-        task_key = str(task_id)
-        merged = self.base_linear.weight.data.clone()
-
-        if task_key in self.lora_A and task_key in self.lora_B:
-            A = self.lora_A[task_key]
-            B = self.lora_B[task_key]
-            merged = merged + self.scaling * (B @ A)
-
-        return merged
-```
-
----
-
-### 2.4 MoLE Subnet
-
-NF Coupling Block에서 사용되는 s/t network입니다.
-
-```python
-class MoLESubnet(nn.Module):
-    """
-    MoLE Subnet for NF Coupling Blocks.
-
-    Architecture: Linear -> ReLU -> Linear
-    With LoRA adapters on both linear layers.
-    """
-
-    def __init__(self, dims_in: int, dims_out: int, rank: int = 4, alpha: float = 1.0,
-                 use_lora: bool = True, use_task_bias: bool = True):
-        super(MoLESubnet, self).__init__()
-
-        hidden_dim = 2 * dims_in
-
-        self.use_lora = use_lora
-        self.use_task_bias = use_task_bias
-
-        self.layer1 = LoRALinear(dims_in, hidden_dim, rank=rank, alpha=alpha,
-                                  use_lora=use_lora, use_task_bias=use_task_bias)
-        self.relu = nn.ReLU()
-        self.layer2 = LoRALinear(hidden_dim, dims_out, rank=rank, alpha=alpha,
-                                  use_lora=use_lora, use_task_bias=use_task_bias)
-
-    def add_task_adapter(self, task_id: int):
-        """Add LoRA adapters for a new task."""
-        self.layer1.add_task_adapter(task_id)
-        self.layer2.add_task_adapter(task_id)
-
-    def freeze_base(self):
-        """Freeze base weights."""
-        self.layer1.freeze_base()
-        self.layer2.freeze_base()
-
-    def unfreeze_base(self):
-        """Unfreeze base weights."""
-        self.layer1.unfreeze_base()
-        self.layer2.unfreeze_base()
-
-    def set_active_task(self, task_id: Optional[int]):
-        """Set active LoRA adapter."""
-        self.layer1.set_active_task(task_id)
-        self.layer2.set_active_task(task_id)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.layer2(self.relu(self.layer1(x)))
-```
-
----
-
-### 2.5 Task Input Adapter (FiLM-style)
-
-**Motivation**:
-- 각 task(제품 유형)마다 feature distribution이 다름
-- Base NF가 학습한 Task 0 distribution에 맞춰 입력을 정규화
-
-```python
-class TaskInputAdapter(nn.Module):
-    """
-    FiLM-style Task Input Adapter (v3).
-
-    Key Design Principles:
-    1. FiLM (Feature-wise Linear Modulation): y = gamma * x + beta
-    2. Layer Norm option to preserve spatial information
-    3. Larger MLP capacity with active residual gate
-    4. Can work with or without reference statistics
-
-    v3 Changes from v2:
-    - Instance Norm → Layer Norm (preserves spatial info)
-    - residual_gate: 0 → 0.5 (MLP actively used from start)
-    - Larger hidden_dim for more capacity
-    - Optional use_norm flag for Task 0 self-adaptation
-    """
-
-    def __init__(self, channels: int, reference_mean: torch.Tensor = None,
-                 reference_std: torch.Tensor = None, use_norm: bool = True):
-        super(TaskInputAdapter, self).__init__()
-
-        self.channels = channels
-        self.eps = 1e-6
-        self.use_norm = use_norm
-
-        # Store reference statistics (from Task 0) - used for target distribution
-        if reference_mean is not None:
-            self.register_buffer('reference_mean', reference_mean.clone())
-            self.register_buffer('reference_std', reference_std.clone())
-            self.has_reference = True
+        if task_id == 0:
+            # Task 0: Initialize close to identity (γ≈1.0, β≈0)
+            # sigmoid(-0.7) ≈ 0.33 → γ = 0.5 + 1.5*0.33 ≈ 1.0
+            init_gamma_raw = -0.7 * torch.ones(1, 1, 1, channels)
+            self.gamma_raw = nn.Parameter(init_gamma_raw)
+            self.beta_raw = nn.Parameter(torch.zeros(1, 1, 1, channels))
+            self.identity_reg_weight = 0.1  # Regularize toward identity
         else:
-            self.register_buffer('reference_mean', torch.zeros(channels))
-            self.register_buffer('reference_std', torch.ones(channels))
-            self.has_reference = False
+            # Task 1+: Start at midpoint
+            self.gamma_raw = nn.Parameter(torch.zeros(1, 1, 1, channels))
+            self.beta_raw = nn.Parameter(torch.zeros(1, 1, 1, channels))
+            self.identity_reg_weight = 0.0
 
-        # FiLM parameters: y = gamma * x + beta
-        # Initialize gamma=1, beta=0 for identity start
-        self.film_gamma = nn.Parameter(torch.ones(1, 1, 1, channels))
-        self.film_beta = nn.Parameter(torch.zeros(1, 1, 1, channels))
+    @property
+    def gamma(self):
+        """Constrained gamma in [gamma_min, gamma_max]."""
+        gamma_range = self.gamma_max - self.gamma_min
+        return self.gamma_min + gamma_range * torch.sigmoid(self.gamma_raw)
 
-        # Larger MLP for stronger feature transformation
-        hidden_dim = max(channels // 2, 128)  # Increased from channels//4
-        self.mlp = nn.Sequential(
-            nn.Linear(channels, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, channels)
-        )
-
-        # Initialize last layer to small values (not zero) for faster learning
-        nn.init.normal_(self.mlp[-1].weight, std=0.01)
-        nn.init.zeros_(self.mlp[-1].bias)
-
-        # Residual gate - starts at 0.5 for active MLP contribution
-        # Changed from 0.0 to enable MLP from the beginning
-        self.residual_gate = nn.Parameter(torch.tensor([0.5]))
-
-        # Optional Layer Norm (preserves spatial info better than Instance Norm)
-        if use_norm:
-            self.layer_norm = nn.LayerNorm(channels)
+    @property
+    def beta(self):
+        """Constrained beta in [-beta_max, beta_max]."""
+        return self.beta_max * torch.tanh(self.beta_raw)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        FiLM-style feature modulation with residual MLP.
-
-        Flow: x -> (optional LayerNorm) -> FiLM -> MLP residual
-
         Args:
             x: (B, H, W, D) input features
-
         Returns:
             Transformed features with same shape
         """
         B, H, W, D = x.shape
-        identity = x
 
-        # 1. Optional normalization (Layer Norm preserves spatial structure)
-        if self.use_norm:
-            x_flat = x.reshape(-1, D)
-            x_normed = self.layer_norm(x_flat)
-            x = x_normed.reshape(B, H, W, D)
-
-        # 2. FiLM modulation: y = gamma * x + beta
-        x = self.film_gamma * x + self.film_beta
-
-        # 3. MLP residual with learnable gate
-        gate = torch.sigmoid(self.residual_gate)  # 0 ~ 1
+        # Step 1: Whitening (mean=0, std=1)
         x_flat = x.reshape(-1, D)
-        mlp_out = self.mlp(x_flat).reshape(B, H, W, D)
-        x = x + gate * mlp_out
+        x_white = self.whiten(x_flat).reshape(B, H, W, D)
 
-        # 4. Optional: blend with identity for stability
-        # This helps Task 0 where we want minimal transformation
-        if not self.has_reference:
-            # For Task 0 self-adapter: stronger identity connection
-            x = 0.9 * identity + 0.1 * x
+        # Step 2: De-whitening with constrained params
+        x_out = self.gamma * x_white + self.beta
 
-        return x
+        return x_out
 ```
+
+**설계 의도**:
+- **Whitening**: 모든 Task가 동일한 normalized representation을 공유
+- **Constrained De-whitening**: Task별 adaptation이 제한적 범위 내에서만 가능
+- **Identity Regularization**: Task 0가 base anchor가 됨
 
 ---
 
-### 2.6 Feature Statistics
+### 4. Normalizing Flow: MoLESpatialAwareNF
 
-Task 0에서 학습된 reference distribution 통계를 저장합니다.
-
-```python
-class FeatureStatistics:
-    """
-    Store reference feature statistics from Task 0 for distribution alignment.
-
-    Key Insight: We DON'T normalize new task features using Task 0 statistics directly.
-    Instead, we store these statistics and pass them to TaskInputAdapter,
-    which learns to transform new task features to match the reference distribution.
-    """
-
-    def __init__(self, device: str = 'cuda'):
-        self.device = device
-        self.mean: Optional[torch.Tensor] = None
-        self.std: Optional[torch.Tensor] = None
-        self.is_initialized = False
-        self.n_samples = 0
-
-        # Welford's online algorithm for stable mean/variance computation
-        self._M2: Optional[torch.Tensor] = None  # Sum of squared deviations
-
-    def update(self, features: torch.Tensor):
-        """
-        Update running statistics using Welford's online algorithm.
-        More stable than simple EMA for computing variance.
-
-        Args:
-            features: (B, H, W, D) or (N, D) features
-        """
-        # Flatten to (N, D)
-        if features.dim() == 4:
-            B, H, W, D = features.shape
-            features = features.reshape(-1, D)
-
-        features = features.detach()
-        batch_size = features.shape[0]
-
-        if self.mean is None:
-            self.mean = features.mean(dim=0)
-            self._M2 = ((features - self.mean.unsqueeze(0)) ** 2).sum(dim=0)
-            self.n_samples = batch_size
-        else:
-            # Welford's online update
-            for i in range(batch_size):
-                self.n_samples += 1
-                delta = features[i] - self.mean
-                self.mean = self.mean + delta / self.n_samples
-                delta2 = features[i] - self.mean
-                self._M2 = self._M2 + delta * delta2
-
-    def finalize(self):
-        """Compute final std and mark as initialized."""
-        if self._M2 is not None and self.n_samples > 1:
-            variance = self._M2 / (self.n_samples - 1)
-            self.std = torch.sqrt(variance + 1e-6)
-        else:
-            self.std = torch.ones_like(self.mean)
-
-        self.is_initialized = True
-
-    def get_reference_params(self) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Get reference mean and std for TaskInputAdapter initialization."""
-        if not self.is_initialized:
-            raise ValueError("Statistics not finalized. Call finalize() first.")
-        return self.mean.clone(), self.std.clone()
-```
-
----
-
-### 2.7 MoLE Spatial-Aware NF (Main Model)
+**File**: `moleflow/models/mole_nf.py:31-1212`
 
 ```python
 class MoLESpatialAwareNF(nn.Module):
     """
-    MoLE-Flow: Mixture of LoRA Experts for Normalizing Flow.
+    Main NF model with LoRA adapters.
 
-    Key Features:
-    - Base NF weights shared across all tasks
-    - Task-specific LoRA adapters for distribution shift
-    - Task-specific biases for mean shift adaptation
-    - Task-specific input adapters for feature normalization
-    - Feature statistics alignment for cross-task consistency
-    - Zero-initialization for stable adaptation
+    Key Attributes:
+    - coupling_layers: 8 (default)
+    - lora_rank: 64 (default)
+    - clamp_alpha: 1.9 (numerical stability)
     """
 
-    def __init__(self,
-                 embed_dim: int = 512,
-                 coupling_layers: int = 8,
-                 clamp_alpha: float = 1.9,
-                 lora_rank: int = 32,
-                 lora_alpha: float = 1.0,
-                 device: str = 'cuda',
-                 ablation_config: 'AblationConfig' = None):
-        super(MoLESpatialAwareNF, self).__init__()
+    def __init__(self, embed_dim=512, coupling_layers=8, clamp_alpha=1.9,
+                 lora_rank=32, lora_alpha=1.0, device='cuda', ablation_config=None):
+        super().__init__()
 
         self.embed_dim = embed_dim
         self.coupling_layers = coupling_layers
-        self.clamp_alpha = clamp_alpha
-        self.lora_rank = lora_rank
-        self.lora_alpha = lora_alpha
-        self.device = device
-
-        # Ablation configuration
-        if ablation_config is None:
-            self.use_lora = True
-            self.use_task_adapter = True
-            self.use_task_bias = True
-        else:
-            self.use_lora = ablation_config.use_lora
-            self.use_task_adapter = ablation_config.use_task_adapter
-            self.use_task_bias = ablation_config.use_task_bias
-
-        # Track tasks
-        self.num_tasks = 0
-        self.current_task_id: Optional[int] = None
-
-        # Build flow
         self.subnets: List[MoLESubnet] = []
+
+        # Build flow using FrEIA
         self.flow = self._build_flow()
 
-        # Feature statistics from Task 0 (reference distribution)
-        self.reference_stats = FeatureStatistics(device=device)
-
-        # Task-specific input adapters for pre-conditioning
-        self.input_adapters = nn.ModuleDict()
-
-        self.to(device)
+        # Task-specific components
+        self.input_adapters = nn.ModuleDict()   # WhiteningAdapter per task
+        self.dia_adapters = nn.ModuleDict()     # DIA per task
 
     def _build_flow(self) -> Ff.SequenceINN:
         """Build normalizing flow with MoLE coupling blocks."""
 
         def make_subnet(dims_in, dims_out):
-            subnet = MoLESubnet(dims_in, dims_out,
-                               rank=self.lora_rank,
-                               alpha=self.lora_alpha,
-                               use_lora=self.use_lora,
-                               use_task_bias=self.use_task_bias)
+            subnet = MoLESubnet(
+                dims_in, dims_out,
+                rank=self.lora_rank,
+                alpha=self.lora_alpha,
+                use_lora=self.use_lora,
+                use_task_bias=self.use_task_bias
+            )
             self.subnets.append(subnet)
             return subnet
 
@@ -724,198 +282,399 @@ class MoLESpatialAwareNF(nn.Module):
                 subnet_constructor=make_subnet,
                 affine_clamping=self.clamp_alpha,
                 global_affine_type='SOFTPLUS',
-                permute_soft=True
+                permute_soft=False  # Hard permutation
             )
 
         return coder
 
     def add_task(self, task_id: int):
-        """
-        Add LoRA adapters and input adapter for a new task.
-
-        NEW Design (Task 0 also uses LoRA):
-        - Task 0: Train base weights + LoRA adapter (equal treatment)
-        - Task > 0: Freeze base, add LoRA + task bias + input adapter
-
-        Key Benefits:
-        - Task 0 is no longer "special" - all tasks use LoRA for adaptation
-        - Base NF learns general feature transformation
-        - LoRA handles task-specific adaptation uniformly
-        """
+        """Add LoRA adapters and input adapter for a new task."""
         task_key = str(task_id)
 
         if task_id == 0:
-            # Task 0: Train base weights + LoRA adapter + InputAdapter (self-adaptation)
+            # Task 0: Train base weights + LoRA + InputAdapter
             for subnet in self.subnets:
                 subnet.unfreeze_base()
-                if self.use_lora or self.use_task_bias:
-                    subnet.add_task_adapter(task_id)
+                subnet.add_task_adapter(task_id)
 
-            # NEW v3: Add InputAdapter for Task 0 as well (self-adaptation)
-            if self.use_task_adapter:
-                self.input_adapters[task_key] = TaskInputAdapter(
-                    self.embed_dim,
-                    reference_mean=None,
-                    reference_std=None,
-                    use_norm=True
-                ).to(self.device)
+            # Add WhiteningAdapter
+            self.input_adapters[task_key] = WhiteningAdapter(
+                channels=self.embed_dim, task_id=task_id
+            ).to(self.device)
 
+            # Add DIA
+            self.dia_adapters[task_key] = DeepInvertibleAdapter(
+                channels=self.embed_dim, task_id=task_id, n_blocks=2
+            ).to(self.device)
         else:
-            # Task > 0: Freeze base, add LoRA adapters + task biases
+            # Task > 0: Freeze base, add only task-specific components
             for subnet in self.subnets:
                 subnet.freeze_base()
-                if self.use_lora or self.use_task_bias:
-                    subnet.add_task_adapter(task_id)
+                subnet.add_task_adapter(task_id)
 
-            # Create input adapter with reference statistics
-            if self.use_task_adapter:
-                if self.reference_stats.is_initialized:
-                    ref_mean, ref_std = self.reference_stats.get_reference_params()
-                else:
-                    ref_mean, ref_std = None, None
+            # Create WhiteningAdapter with reference stats
+            self.input_adapters[task_key] = WhiteningAdapter(
+                channels=self.embed_dim, task_id=task_id,
+                reference_mean=ref_mean, reference_std=ref_std
+            ).to(self.device)
 
-                self.input_adapters[task_key] = TaskInputAdapter(
-                    self.embed_dim,
-                    reference_mean=ref_mean,
-                    reference_std=ref_std
-                ).to(self.device)
+            # Add DIA
+            self.dia_adapters[task_key] = DeepInvertibleAdapter(
+                channels=self.embed_dim, task_id=task_id, n_blocks=2
+            ).to(self.device)
 
         self.num_tasks = task_id + 1
         self.set_active_task(task_id)
 
     def forward(self, patch_embeddings_with_pos: torch.Tensor, reverse: bool = False):
         """
-        Forward or inverse transformation with task-specific input pre-conditioning.
+        Forward transformation.
 
         Args:
-            patch_embeddings_with_pos: (B, H, W, D) spatial patch embeddings
+            patch_embeddings_with_pos: (B, H, W, D)
             reverse: If True, generate samples from latent
 
         Returns:
-            z: (B, H, W, D) latent or reconstructed embeddings
-            log_jac_det: (B,) log determinant of Jacobian
+            z: (B, H, W, D) latent
+            logdet_patch: (B, H, W) patch-wise log determinant
         """
         B, H, W, D = patch_embeddings_with_pos.shape
         x = patch_embeddings_with_pos
 
-        # Apply task-specific input adapter for ALL tasks (if enabled)
+        # Apply task-specific input adapter
         if self.use_task_adapter and not reverse and self.current_task_id is not None:
             task_key = str(self.current_task_id)
             if task_key in self.input_adapters:
                 x = self.input_adapters[task_key](x)
 
-        # Flatten spatial dimensions
+        # Apply spatial context mixing
+        if self.spatial_mixer is not None and not reverse:
+            x = self.spatial_mixer(x)
+
+        # Flatten for flow: (B, H, W, D) -> (BHW, D)
         x_flat = x.reshape(B * H * W, D)
 
         # Flow transformation
-        if not reverse:
-            z_flat, log_jac_det = self.flow(x_flat)
-            log_jac_det = log_jac_det.reshape(B, H * W).sum(dim=1)
-        else:
-            z_flat, log_jac_det = self.flow(x_flat, rev=True)
-            log_jac_det = log_jac_det.reshape(B, H * W).sum(dim=1)
+        z_flat, log_jac_det_flat = self.flow(x_flat)
 
-        # Reshape back to spatial
+        # Reshape: (BHW,) -> (B, H, W)
+        logdet_patch = log_jac_det_flat.reshape(B, H, W)
         z = z_flat.reshape(B, H, W, D)
 
-        return z, log_jac_det
+        # Apply DIA (Deep Invertible Adapter)
+        if self.use_dia and self.current_task_id is not None:
+            task_key = str(self.current_task_id)
+            if task_key in self.dia_adapters:
+                z, dia_logdet = self.dia_adapters[task_key](z, reverse=reverse)
+                logdet_patch = logdet_patch + dia_logdet
 
-    def log_prob(self, patch_embeddings_with_pos: torch.Tensor) -> torch.Tensor:
-        """
-        Compute log probability of patch embeddings.
-
-        Returns:
-            log_prob: (B,) log probability for each sample
-        """
-        B, H, W, D = patch_embeddings_with_pos.shape
-
-        # Forward transformation
-        z, log_jac_det = self.forward(patch_embeddings_with_pos, reverse=False)
-
-        # Base distribution: N(0, I)
-        z_flat = z.reshape(B, -1)
-        log_pz = -0.5 * (z_flat ** 2).sum(dim=1) - 0.5 * (H * W * D) * math.log(2 * math.pi)
-
-        # Change of variables: log p(x) = log p(z) + log|det J|
-        log_px = log_pz + log_jac_det
-
-        return log_px
+        return z, logdet_patch
 ```
 
 ---
 
-### 2.8 Prototype Router
+### 5. LoRALinear Layer
 
-**Motivation**:
-- Inference 시 task ID를 모름
-- Image-level feature의 Mahalanobis distance로 가장 가까운 task 선택
+**File**: `moleflow/models/lora.py:13-166`
+
+```python
+class LoRALinear(nn.Module):
+    """
+    LoRA-enhanced Linear Layer with Task-specific Bias.
+
+    Output: h(x) = W_base @ x + scaling * (B @ A) @ x + (base_bias + task_bias)
+
+    Key Design:
+    - scaling = alpha / rank (e.g., 1.0/64 = 0.0156)
+    - A: Xavier uniform initialization
+    - B: Zero initialization (ΔW = 0 at start)
+    - task_bias: Zero initialization
+    """
+
+    def __init__(self, in_features: int, out_features: int, rank: int = 4,
+                 alpha: float = 1.0, bias: bool = True,
+                 use_lora: bool = True, use_task_bias: bool = True):
+        super().__init__()
+
+        self.in_features = in_features
+        self.out_features = out_features
+        self.rank = rank
+        self.scaling = alpha / rank  # LoRA contribution scaling
+
+        # Base weight (frozen after Task 0)
+        self.base_linear = nn.Linear(in_features, out_features, bias=bias)
+
+        # LoRA adapters: Dict[task_id -> (A, B)]
+        self.lora_A = nn.ParameterDict()  # (rank, in_features)
+        self.lora_B = nn.ParameterDict()  # (out_features, rank)
+
+        # Task-specific biases
+        self.task_biases = nn.ParameterDict()
+
+        self.active_task_id: Optional[int] = None
+        self.base_frozen = False
+
+    def add_task_adapter(self, task_id: int):
+        """Add LoRA adapter and task-specific bias for a new task."""
+        task_key = str(task_id)
+        device = self.base_linear.weight.device
+
+        if self.use_lora:
+            # A: Xavier uniform (good gradient flow)
+            A = nn.Parameter(torch.zeros(self.rank, self.in_features, device=device))
+            nn.init.xavier_uniform_(A)
+
+            # B: Zero (ΔW = 0 at start, pure identity for LoRA)
+            B = nn.Parameter(torch.zeros(self.out_features, self.rank, device=device))
+
+            self.lora_A[task_key] = A
+            self.lora_B[task_key] = B
+
+        if self.use_bias and self.use_task_bias:
+            task_bias = nn.Parameter(torch.zeros(self.out_features, device=device))
+            self.task_biases[task_key] = task_bias
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward: h(x) = W_base @ x + scaling * (B @ A) @ x + bias
+        """
+        if self.active_task_id is not None:
+            task_key = str(self.active_task_id)
+            has_lora = task_key in self.lora_A
+            has_task_bias = task_key in self.task_biases
+
+            if has_lora or has_task_bias:
+                # Base transformation (without bias)
+                output = F.linear(x, self.base_linear.weight, bias=None)
+
+                # Add LoRA contribution
+                if has_lora and self.use_lora:
+                    A = self.lora_A[task_key]
+                    B = self.lora_B[task_key]
+                    lora_output = F.linear(F.linear(x, A), B)
+                    output = output + self.scaling * lora_output
+
+                # Add combined bias
+                if self.use_bias and self.base_linear.bias is not None:
+                    if has_task_bias:
+                        total_bias = self.base_linear.bias + self.task_biases[task_key]
+                    else:
+                        total_bias = self.base_linear.bias
+                    output = output + total_bias
+
+                return output
+
+        return self.base_linear(x)
+```
+
+---
+
+### 6. MoLESubnet (Coupling Block Subnet)
+
+**File**: `moleflow/models/lora.py:168-283`
+
+```python
+class MoLESubnet(nn.Module):
+    """
+    Subnet for NF Coupling Blocks.
+
+    Architecture: Linear(D→2D) → ReLU → Linear(2D→D)
+    With LoRA adapters on both linear layers.
+    """
+
+    def __init__(self, dims_in: int, dims_out: int, rank: int = 4, alpha: float = 1.0,
+                 use_lora: bool = True, use_task_bias: bool = True):
+        super().__init__()
+
+        hidden_dim = 2 * dims_in
+
+        self.layer1 = LoRALinear(dims_in, hidden_dim, rank=rank, alpha=alpha,
+                                  use_lora=use_lora, use_task_bias=use_task_bias)
+        self.layer2 = LoRALinear(hidden_dim, dims_out, rank=rank, alpha=alpha,
+                                  use_lora=use_lora, use_task_bias=use_task_bias)
+        self.relu = nn.ReLU()
+
+    def add_task_adapter(self, task_id: int):
+        self.layer1.add_task_adapter(task_id)
+        self.layer2.add_task_adapter(task_id)
+
+    def freeze_base(self):
+        self.layer1.freeze_base()
+        self.layer2.freeze_base()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.layer2(self.relu(self.layer1(x)))
+```
+
+---
+
+### 7. Deep Invertible Adapter (DIA)
+
+**File**: `moleflow/models/lora.py:774-974`
+
+```python
+class DeepInvertibleAdapter(nn.Module):
+    """
+    Deep Invertible Adapter (DIA).
+
+    Key Insight:
+    Instead of linear LoRA (W + BA), we add a small task-specific Flow
+    AFTER the base NF. This allows nonlinear manifold adaptation.
+
+    Architecture:
+    - 2 AffineCouplingBlock (alternating split direction)
+    - Near-identity initialization for stable start
+
+    Mathematical Formulation:
+    - z_base = f_base(x)
+    - z_final = f_DIA_t(z_base)
+    - log p(x) = log p(z_final) + log|det J_base| + log|det J_DIA|
+    """
+
+    def __init__(self, channels: int, task_id: int, n_blocks: int = 2,
+                 hidden_ratio: float = 0.5, clamp_alpha: float = 1.9):
+        super().__init__()
+
+        hidden_dim = int(channels * hidden_ratio)
+
+        self.coupling_blocks = nn.ModuleList()
+        for i in range(n_blocks):
+            self.coupling_blocks.append(
+                AffineCouplingBlock(
+                    channels=channels,
+                    hidden_dim=hidden_dim,
+                    clamp_alpha=clamp_alpha,
+                    reverse=(i % 2 == 1)  # Alternate split direction
+                )
+            )
+
+        # Initialize to near-identity
+        self._initialize_near_identity()
+
+    def forward(self, x: torch.Tensor, reverse: bool = False):
+        """
+        Args:
+            x: (B, H, W, D)
+            reverse: If True, compute inverse
+
+        Returns:
+            y: Transformed output
+            log_det: (B, H, W) log determinant
+        """
+        B, H, W, D = x.shape
+        log_det = torch.zeros(B, H, W, device=x.device)
+
+        blocks = self.coupling_blocks if not reverse else reversed(self.coupling_blocks)
+
+        for block in blocks:
+            x, block_log_det = block(x, reverse=reverse)
+            log_det = log_det + block_log_det
+
+        return x, log_det
+
+
+class AffineCouplingBlock(nn.Module):
+    """
+    Affine Coupling Block for DIA.
+
+    Split: x = [x1, x2]
+    Transform:
+        y1 = x1
+        y2 = x2 * exp(s(x1)) + t(x1)
+
+    Log-determinant: sum(s(x1))
+    """
+
+    def __init__(self, channels: int, hidden_dim: int,
+                 clamp_alpha: float = 1.9, reverse: bool = False):
+        super().__init__()
+
+        self.split_dim = channels // 2
+        self.clamp_alpha = clamp_alpha
+        self.reverse_split = reverse
+
+        # Scale network
+        self.s_net = SimpleSubnet(self.split_dim, self.split_dim, hidden_dim)
+        # Translation network
+        self.t_net = SimpleSubnet(self.split_dim, self.split_dim, hidden_dim)
+
+    def forward(self, x: torch.Tensor, reverse: bool = False):
+        B, H, W, D = x.shape
+
+        # Split
+        if self.reverse_split:
+            x2, x1 = x[..., :self.split_dim], x[..., self.split_dim:]
+        else:
+            x1, x2 = x[..., :self.split_dim], x[..., self.split_dim:]
+
+        x1_flat = x1.reshape(-1, self.split_dim)
+        s = self.s_net(x1_flat).reshape(B, H, W, self.split_dim)
+        t = self.t_net(x1_flat).reshape(B, H, W, self.split_dim)
+
+        # Clamp scale for numerical stability
+        s = self.clamp_alpha * torch.tanh(s / self.clamp_alpha)
+
+        if not reverse:
+            y2 = x2 * torch.exp(s) + t
+            log_det = s.sum(dim=-1)
+        else:
+            y2 = (x2 - t) * torch.exp(-s)
+            log_det = -s.sum(dim=-1)
+
+        # Reconstruct
+        if self.reverse_split:
+            y = torch.cat([y2, x1], dim=-1)
+        else:
+            y = torch.cat([x1, y2], dim=-1)
+
+        return y, log_det
+```
+
+---
+
+### 8. Prototype Router
+
+**File**: `moleflow/models/routing.py:24-184`
 
 ```python
 class TaskPrototype:
     """
-    Task Prototype for Distance-based Routing.
+    Task Prototype for Mahalanobis distance-based routing.
 
     Stores:
-    - mu_t: Mean of image-level features
-    - Sigma_t^{-1}: Precision matrix (inverse of covariance) for Mahalanobis
+    - mu_t: Mean of image-level features (D,)
+    - Sigma_t^{-1}: Precision matrix (D, D)
     """
 
     def __init__(self, task_id: int, task_classes: List[str], device: str = 'cuda'):
         self.task_id = task_id
         self.task_classes = task_classes
-        self.device = device
-
         self.mean: Optional[torch.Tensor] = None
         self.precision: Optional[torch.Tensor] = None
         self.covariance: Optional[torch.Tensor] = None
-        self.n_samples: int = 0
 
     def update(self, features: torch.Tensor):
-        """Update prototype statistics with new features."""
+        """Update prototype with new features using Welford's algorithm."""
         features = features.detach()
 
         if self.mean is None:
             self.mean = features.mean(dim=0)
-            self.n_samples = features.shape[0]
-
-            # Compute covariance with regularization
             centered = features - self.mean.unsqueeze(0)
             self.covariance = (centered.T @ centered) / (features.shape[0] - 1)
-
-            # Add regularization for numerical stability
+            # Regularization for numerical stability
             reg = 1e-5 * torch.eye(features.shape[1], device=features.device)
             self.covariance = self.covariance + reg
         else:
             # Incremental update (Welford's online algorithm)
-            n_new = features.shape[0]
-            n_total = self.n_samples + n_new
-
-            new_mean = features.mean(dim=0)
-            delta = new_mean - self.mean
-
-            self.mean = (self.n_samples * self.mean + n_new * new_mean) / n_total
-
-            centered_new = features - new_mean.unsqueeze(0)
-            cov_new = (centered_new.T @ centered_new) / (n_new - 1) if n_new > 1 else torch.zeros_like(self.covariance)
-
-            self.covariance = (self.n_samples * self.covariance + n_new * cov_new +
-                              (self.n_samples * n_new / n_total) * torch.outer(delta, delta)) / n_total
-
-            self.n_samples = n_total
+            ...
 
     def finalize(self):
         """Compute precision matrix after all updates."""
-        if self.covariance is not None:
-            try:
-                self.precision = torch.linalg.inv(self.covariance)
-            except:
-                self.precision = torch.linalg.pinv(self.covariance)
+        self.precision = torch.linalg.inv(self.covariance)
 
     def mahalanobis_distance(self, features: torch.Tensor) -> torch.Tensor:
         """
-        Compute Mahalanobis distance from prototype.
-
-        D_M = sqrt((x - mu)^T Sigma^{-1} (x - mu))
+        D_M = sqrt((x - μ)^T Σ^{-1} (x - μ))
         """
         centered = features - self.mean.unsqueeze(0)
         distances = torch.sqrt(torch.sum(centered @ self.precision * centered, dim=1))
@@ -923,312 +682,346 @@ class TaskPrototype:
 
 
 class PrototypeRouter:
-    """
-    Prototype-based Router for Task Selection.
-
-    Uses Mahalanobis distance to select the best LoRA expert.
-    """
+    """Prototype-based Router for Task Selection."""
 
     def __init__(self, device: str = 'cuda', use_mahalanobis: bool = True):
-        self.device = device
-        self.use_mahalanobis = use_mahalanobis
         self.prototypes: Dict[int, TaskPrototype] = {}
-
-    def add_prototype(self, task_id: int, prototype: TaskPrototype):
-        """Add a task prototype."""
-        self.prototypes[task_id] = prototype
+        self.use_mahalanobis = use_mahalanobis
 
     def route(self, features: torch.Tensor) -> torch.Tensor:
-        """
-        Route features to the best task based on distance.
-
-        Returns:
-            task_ids: (N,) predicted task IDs
-        """
-        if not self.prototypes:
-            return torch.zeros(features.shape[0], dtype=torch.long, device=features.device)
-
+        """Route features to best task based on minimum distance."""
         all_distances = []
         task_ids = sorted(self.prototypes.keys())
 
         for task_id in task_ids:
             if self.use_mahalanobis:
-                distances = self.prototypes[task_id].mahalanobis_distance(features)
+                dist = self.prototypes[task_id].mahalanobis_distance(features)
             else:
-                distances = self.prototypes[task_id].euclidean_distance(features)
-            all_distances.append(distances)
+                dist = self.prototypes[task_id].euclidean_distance(features)
+            all_distances.append(dist)
 
         all_distances = torch.stack(all_distances, dim=0)
         min_indices = torch.argmin(all_distances, dim=0)
         predicted_tasks = torch.tensor([task_ids[idx] for idx in min_indices],
                                         device=features.device)
-
         return predicted_tasks
 ```
 
 ---
 
-## 3. Training Strategy
+## Training Procedure
 
-### 3.1 Task 0: Base + LoRA Training
+### Task 0 (Base Task)
 
 ```python
-def _train_base_task(self, task_id, task_classes, train_loader, num_epochs, lr, log_interval):
-    """Train base NF + LoRA for Task 0."""
-    trainable_params = self.nf_model.get_trainable_params(task_id)
+# From moleflow/trainer/continual_trainer.py
 
-    optimizer = create_optimizer(list(trainable_params), lr=lr)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=num_epochs, eta_min=lr * 0.01
-    )
+def _train_base_task(self, train_loader, num_epochs, lr):
+    """Train Task 0: Base NF + LoRA + WhiteningAdapter + DIA"""
+
+    # All base weights are trainable
+    self.nf_model.add_task(task_id=0)
+
+    # Get trainable parameters
+    params = self.nf_model.get_trainable_params(task_id=0)
+    optimizer = torch.optim.AdamW(params, lr=lr, weight_decay=1e-5)
 
     for epoch in range(num_epochs):
-        for batch_idx, (images, labels, _, _, _) in enumerate(train_loader):
-            images = images.to(self.device)
+        for images, labels, masks, names, paths in train_loader:
+            # 1. Extract features
+            patch_embeddings, spatial_shape = self.vit_extractor(images)
 
-            with torch.no_grad():
-                patch_embeddings, spatial_shape = self.vit_extractor(
-                    images, return_spatial_shape=True
-                )
-                patch_embeddings_with_pos = self.pos_embed_generator(
-                    spatial_shape, patch_embeddings
-                )
-                # Collect feature statistics for future tasks
-                self.nf_model.update_reference_stats(patch_embeddings_with_pos)
+            # 2. Add positional embedding
+            features = self.pos_embed_generator(spatial_shape, patch_embeddings)
 
-            # Forward through NF
-            z, log_jac_det = self.nf_model.forward(patch_embeddings_with_pos)
+            # 3. Collect statistics for reference (used by Task 1+)
+            self.nf_model.update_reference_stats(features)
 
-            # NLL Loss
-            nll_loss = self._compute_nll_loss(z, log_jac_det)
+            # 4. Forward through NF
+            z, logdet_patch = self.nf_model(features)
+
+            # 5. Compute loss
+            loss = self._compute_nll_loss(z, logdet_patch)
 
             optimizer.zero_grad()
-            nll_loss.backward()
-            torch.nn.utils.clip_grad_norm_(list(trainable_params), max_norm=0.5)
+            loss.backward()
             optimizer.step()
 
-        scheduler.step()
-
-    # Finalize feature statistics
+    # Finalize reference statistics
     self.nf_model.finalize_reference_stats()
+
+    # Build prototype for routing
+    self._build_prototype(task_id=0, train_loader)
 ```
 
-### 3.2 Task > 0: FAST Adaptation
+### Task 1+ (Continual Tasks)
 
 ```python
-def _train_fast_stage(self, task_id, task_classes, train_loader, num_epochs, lr, log_interval):
-    """Stage 1: FAST Adaptation (LoRA + InputAdapter, base frozen)."""
-    self.nf_model.freeze_all_base()  # Freeze base weights
+def _train_continual_task(self, task_id, train_loader, num_epochs, lr):
+    """Train Task > 0: Freeze base, train LoRA + Adapter + DIA"""
 
-    fast_params = self.nf_model.get_fast_params(task_id)  # Only LoRA + InputAdapter
+    # Add task-specific components (base is frozen)
+    self.nf_model.add_task(task_id=task_id)
 
-    optimizer = create_optimizer(list(fast_params), lr=lr)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=num_epochs, eta_min=lr * 0.01
-    )
-
-    warmup_epochs = 2
+    # Only task-specific parameters are trainable
+    params = self.nf_model.get_trainable_params(task_id=task_id)
+    optimizer = torch.optim.AdamW(params, lr=lr, weight_decay=1e-5)
 
     for epoch in range(num_epochs):
-        # Warmup learning rate
-        if epoch < warmup_epochs:
-            warmup_factor = (epoch + 1) / warmup_epochs
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = lr * warmup_factor
-
-        for batch_idx, (images, labels, _, _, _) in enumerate(train_loader):
-            images = images.to(self.device)
-
-            with torch.no_grad():
-                patch_embeddings, spatial_shape = self.vit_extractor(
-                    images, return_spatial_shape=True
-                )
-                patch_embeddings_with_pos = self.pos_embed_generator(
-                    spatial_shape, patch_embeddings
-                )
-
-            z, log_jac_det = self.nf_model.forward(patch_embeddings_with_pos)
-            nll_loss = self._compute_nll_loss(z, log_jac_det)
+        for images, labels, masks, names, paths in train_loader:
+            # Same forward pass
+            patch_embeddings, spatial_shape = self.vit_extractor(images)
+            features = self.pos_embed_generator(spatial_shape, patch_embeddings)
+            z, logdet_patch = self.nf_model(features)
+            loss = self._compute_nll_loss(z, logdet_patch)
 
             optimizer.zero_grad()
-            nll_loss.backward()
-            torch.nn.utils.clip_grad_norm_(list(fast_params), max_norm=0.5)
+            loss.backward()
             optimizer.step()
 
-        if epoch >= warmup_epochs:
-            scheduler.step()
+    # Build prototype for routing
+    self._build_prototype(task_id, train_loader)
 ```
 
-### 3.3 NLL Loss
+---
+
+## Loss Function
+
+### Base NLL Loss
 
 ```python
-def _compute_nll_loss(self, z: torch.Tensor, log_jac_det: torch.Tensor) -> torch.Tensor:
+def _compute_nll_loss(self, z, logdet_patch):
     """
-    Compute NLL loss.
+    Negative Log-Likelihood Loss.
 
-    Standard NLL: L = -log p(x) = -log p(z) - log |det J|
-
-    Args:
-        z: Latent tensor [B, H, W, D]
-        log_jac_det: Log Jacobian determinant [B]
-
-    Returns:
-        NLL loss (scalar)
+    NLL = -log p(z) - log|det J|
+        = 0.5 * ||z||² + D/2 * log(2π) - log|det J|
     """
     B, H, W, D = z.shape
 
-    # Standard NLL (averaged over all patches)
-    log_pz = -0.5 * (z ** 2).sum() / (B * H * W)
-    log_jac = log_jac_det.mean() / (H * W)
-    nll_loss = -(log_pz + log_jac)
+    # Patch-wise log p(z)
+    log_pz_patch = -0.5 * (z ** 2).sum(dim=-1)  # (B, H, W)
 
-    return nll_loss
+    # Patch-wise NLL = -log p(z) - log|det J|
+    nll_patch = -log_pz_patch - logdet_patch  # (B, H, W)
+
+    # Mean over patches
+    loss = nll_patch.mean()
+
+    return loss
+```
+
+### Tail-Aware Loss (V5)
+
+```python
+def _compute_tail_aware_loss(self, patch_losses, tail_weight=0.3, tail_top_k_ratio=0.05):
+    """
+    Tail-Aware Loss: Focus on extreme patches.
+
+    L = (1-λ) * mean_loss + λ * tail_loss
+
+    tail_loss = mean of top 5% highest-loss patches
+    """
+    mean_loss = patch_losses.mean()
+
+    k = int(patch_losses.numel() * tail_top_k_ratio)
+    k = max(k, 1)
+
+    flat_losses = patch_losses.flatten()
+    tail_loss = flat_losses.topk(k).values.mean()
+
+    return (1 - tail_weight) * mean_loss + tail_weight * tail_loss
 ```
 
 ---
 
-## 4. Inference
+## Score Aggregation
+
+### Top-K Aggregation (V5-Final)
 
 ```python
-def inference(self, images: torch.Tensor, task_id: Optional[int] = None):
+def _aggregate_scores(self, patch_scores, mode='top_k', top_k=3):
     """
-    Inference with automatic routing or specified task.
+    Aggregate patch-level scores to image-level.
 
     Args:
-        images: (B, C, H, W) input images
-        task_id: If None, use router to predict task
+        patch_scores: (B, H, W) or (H, W)
+        mode: 'mean', 'max', 'top_k'
+        top_k: Number of top patches for top_k mode
 
     Returns:
-        anomaly_scores: (B, H_patch, W_patch) spatial anomaly map
-        image_scores: (B,) image-level scores
-        predicted_tasks: (B,) predicted task IDs
+        image_score: scalar or (B,)
     """
-    self.nf_model.eval()
-    self.vit_extractor.eval()
-
-    with torch.no_grad():
-        images = images.to(self.device)
-
-        # Route if task_id not specified
-        if task_id is None and self.router is not None:
-            image_features = self.vit_extractor.get_image_level_features(images)
-            predicted_tasks = self.router.route(image_features)
-        else:
-            predicted_tasks = torch.full((images.shape[0],),
-                                        task_id if task_id is not None else 0,
-                                        dtype=torch.long, device=self.device)
-
-        # Process each unique task
-        unique_tasks = predicted_tasks.unique()
-
-        for t_id in unique_tasks:
-            mask = (predicted_tasks == t_id)
-            task_images = images[mask]
-
-            # Set active task (LoRA adapter)
-            self.nf_model.set_active_task(t_id.item())
-
-            # Extract features
-            patch_embeddings, spatial_shape = self.vit_extractor(
-                task_images, return_spatial_shape=True
-            )
-            patch_embeddings_with_pos = self.pos_embed_generator(
-                spatial_shape, patch_embeddings
-            )
-
-            # Compute anomaly scores
-            task_anomaly_scores, task_image_scores = self._compute_anomaly_scores(
-                patch_embeddings_with_pos
-            )
-
-    return anomaly_scores, image_scores, predicted_tasks
-
-
-def _compute_anomaly_scores(self, patch_embeddings_with_pos: torch.Tensor):
-    """Compute anomaly scores from patch embeddings."""
-    B, H, W, D = patch_embeddings_with_pos.shape
-
-    # Forward through NF
-    z, log_jac_det = self.nf_model.forward(patch_embeddings_with_pos, reverse=False)
-
-    # Compute patch-level log p(z)
-    z_reshaped = z.reshape(B, H, W, -1)
-    log_pz_per_patch = -0.5 * (z_reshaped ** 2).sum(dim=-1) - 0.5 * D * math.log(2 * math.pi)
-
-    # Distribute log_jac_det across patches
-    log_jac_per_patch = log_jac_det.reshape(B, 1, 1).expand(B, H, W) / (H * W)
-
-    # Patch-level log-likelihood
-    patch_log_prob = log_pz_per_patch + log_jac_per_patch
-
-    # Anomaly score = -log p(x)
-    anomaly_scores = -patch_log_prob
-
-    # Image-level score (99th percentile)
-    image_scores = torch.quantile(anomaly_scores.reshape(B, -1), 0.99, dim=1)
-
-    return anomaly_scores, image_scores
+    if mode == 'mean':
+        return patch_scores.mean()
+    elif mode == 'max':
+        return patch_scores.max()
+    elif mode == 'top_k':
+        flat = patch_scores.flatten()
+        return flat.topk(top_k).values.mean()
 ```
 
 ---
 
-## 5. Key Design Decisions
-
-### 5.1 왜 LoRA인가?
-
-| 방법 | 장점 | 단점 |
-|------|------|------|
-| Full Fine-tuning | 최대 표현력 | Catastrophic Forgetting |
-| Feature Replay | Forgetting 방지 | 메모리 사용량, Privacy |
-| EWC | Regularization 기반 | 복잡한 Fisher 계산 |
-| **LoRA** | **Parameter Efficient + Forgetting 방지** | Capacity 제한 |
-
-### 5.2 왜 Task 0도 LoRA를 사용하는가? (v2 → v3)
-
-**v1/v2 문제**: Task 0에서는 Base만 학습 → Base가 Task 0에 편향
-
-**v3 해결**: Task 0도 Base + LoRA 동시 학습
-- Base: 범용 feature transformation
-- LoRA: Task-specific adaptation
-- 모든 Task가 동등한 구조
-
-### 5.3 왜 FiLM-style InputAdapter인가? (v3)
-
-**v2 문제**: Instance Norm이 spatial 정보 손실
-
-**v3 해결**:
-- Layer Norm (spatial 보존)
-- FiLM modulation (gamma * x + beta)
-- Active residual gate (0.5로 시작)
-
-### 5.4 LoRA Scaling
+## Inference Pipeline
 
 ```python
-# v1: scaling = alpha / (2 * rank)  # 1.56% contribution
-# v2+: scaling = alpha / rank        # 3.125% contribution (2x stronger)
+def inference(image, model, router, vit_extractor, pos_embed_generator):
+    """Complete inference pipeline."""
+
+    # 1. Feature extraction (frozen ViT)
+    patch_embeddings, spatial_shape = vit_extractor(image)  # (B, 196, 768)
+
+    # 2. Add positional embedding
+    features = pos_embed_generator(spatial_shape, patch_embeddings)  # (B, 14, 14, 768)
+
+    # 3. Route to correct task (Mahalanobis distance)
+    image_features = features.mean(dim=(1, 2))  # (B, 768)
+    task_id = router.route(image_features)  # (B,)
+
+    # 4. Set active task
+    model.set_active_task(task_id.item())
+
+    # 5. Forward through NF with task's adapters
+    z, logdet_patch = model(features)  # (B, 14, 14, 768), (B, 14, 14)
+
+    # 6. Compute patch-level anomaly scores
+    patch_scores = 0.5 * (z ** 2).sum(dim=-1) - logdet_patch  # (B, 14, 14)
+
+    # 7. Aggregate to image-level score (Top-K)
+    image_score = patch_scores.flatten(-2).topk(3).values.mean()
+
+    return image_score, patch_scores
 ```
 
 ---
 
-## 6. Experiment Results (v3 Best)
-
-| Version | Image AUC | Pixel AUC | Key Change |
-|---------|-----------|-----------|------------|
-| v1 | 0.8286 | 0.8628 | Baseline |
-| v2 | 0.9307 | 0.9238 | LoRA scaling 2x, Task 0 LoRA |
-| **v3** | **0.9504** | **0.9313** | FiLM InputAdapter, Task 0 self-adapt |
-
----
-
-## 7. Usage
+## Version 5-Final Configuration
 
 ```bash
+# V5-Final Baseline Configuration
 python run_moleflow.py \
-    --task_classes leather grid transistor \
+    --dataset mvtec \
+    --data_path /Data/MVTecAD \
+    --task_classes leather grid transistor screw \
+    --use_whitening_adapter \
+    --use_dia \
+    --score_aggregation_mode top_k \
+    --score_aggregation_top_k 3 \
+    --use_tail_aware_loss \
+    --tail_weight 0.3 \
     --num_epochs 40 \
-    --backbone_name vit_base_patch14_dinov2.lvd142m \
-    --img_size 518 \
-    --num_coupling_layers 8 \
-    --lora_rank 32 \
-    --experiment_name my_experiment
+    --lr 1e-4 \
+    --lora_rank 64
 ```
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| backbone_name | vit_base_patch16_224 | ViT backbone |
+| img_size | 224 | Input image size |
+| embed_dim | 768 | Feature dimension |
+| num_coupling_layers | 8 | NF depth |
+| lora_rank | 64 | LoRA rank |
+| lora_alpha | 1.0 | LoRA scaling |
+| use_whitening_adapter | True | WhiteningAdapter |
+| use_dia | True | DIA (2 blocks) |
+| score_aggregation_mode | top_k | Top-K aggregation |
+| score_aggregation_top_k | 3 | k=3 |
+| use_tail_aware_loss | True | Tail-aware loss |
+| tail_weight | 0.3 | Tail loss weight |
+| num_epochs | 40 | Training epochs |
+| batch_size | 16 | Batch size |
+| lr | 1e-4 | Learning rate |
+
+---
+
+## Parameter Count
+
+### Per-Task Parameter Breakdown
+
+| Component | Parameters | Notes |
+|-----------|------------|-------|
+| **LoRA per layer** | 2 × rank × dim = 2 × 64 × 768 = 98K | A: (64, 768), B: (768, 64) |
+| **LoRA total** | 8 layers × 2 subnets × 98K = 1.57M | Per task |
+| **Task Bias** | 8 × 2 × 768 = 12K | Per task |
+| **WhiteningAdapter** | 2 × 768 = 1.5K | γ, β |
+| **DIA (2 blocks)** | ~500K | Per task |
+| **Total per task** | ~2.1M | |
+
+### Shared Parameters (Frozen after Task 0)
+
+| Component | Parameters |
+|-----------|------------|
+| Base NF weights | 8 layers × 2 × (768×1536 + 1536×768) = 18.9M |
+| SpatialContextMixer | ~600K |
+| **Total shared** | ~19.5M |
+
+---
+
+## Key Design Decisions
+
+### 1. Why LoRA instead of full fine-tuning?
+
+- **Parameter Efficiency**: rank=64로 전체 weight의 일부만 사용
+- **Catastrophic Forgetting 방지**: Base weight frozen, task별 독립적 adapter
+- **Scalability**: Task 수 증가해도 memory 효율적
+
+### 2. Why WhiteningAdapter?
+
+- **Distribution Alignment**: 모든 Task가 일관된 분포로 NF에 입력
+- **Stable Training**: LayerNorm으로 정규화 후 제약된 de-whitening
+- **Task Isolation**: Task별 γ, β로 독립적 적응
+
+### 3. Why DIA?
+
+- **Nonlinear Adaptation**: Linear LoRA의 한계 극복
+- **Invertibility**: Flow의 density estimation property 유지
+- **Complete Isolation**: Task별 완전한 parameter 분리
+
+### 4. Why Top-K Score Aggregation?
+
+- **Anomaly Localization**: 이상치는 소수 patch에 집중
+- **Noise Robustness**: 단일 patch보다 안정적
+- **Interpretability**: 어떤 patch가 기여했는지 추적 가능
+
+---
+
+## File Structure
+
+```
+moleflow/
+├── __init__.py                    # Package exports
+├── models/
+│   ├── mole_nf.py                 # MoLESpatialAwareNF (main model)
+│   ├── lora.py                    # LoRALinear, MoLESubnet, DIA
+│   ├── adapters.py                # WhiteningAdapter, SpatialContextMixer
+│   ├── routing.py                 # TaskPrototype, PrototypeRouter
+│   └── position_embedding.py      # Positional encoding
+├── extractors/
+│   └── vit_extractor.py           # ViTPatchCoreExtractor
+├── trainer/
+│   └── continual_trainer.py       # MoLEContinualTrainer
+├── evaluation/
+│   └── evaluator.py               # Evaluation functions
+├── data/
+│   ├── datasets.py                # Dataset utilities
+│   ├── mvtec.py                   # MVTec AD dataset
+│   ├── visa.py                    # VisA dataset
+│   └── mpdd.py                    # MPDD dataset
+├── config/
+│   └── ablation.py                # AblationConfig
+└── utils/
+    ├── logger.py                  # TrainingLogger
+    ├── helpers.py                 # Utility functions
+    └── diagnostics.py             # FlowDiagnostics
+```
+
+---
+
+## References
+
+- LoRA: Low-Rank Adaptation of Large Language Models (Hu et al., 2021)
+- Normalizing Flows for Probabilistic Modeling and Inference (Papamakarios et al., 2021)
+- CFLOW-AD: Real-Time Unsupervised Anomaly Detection with Localization via Conditional Normalizing Flows (Gudovskiy et al., 2022)
+- MVTec AD: A Comprehensive Real-World Dataset for Unsupervised Anomaly Detection (Bergmann et al., 2019)
+- VisA: A Visual Anomaly Detection Dataset (Zou et al., 2022)
