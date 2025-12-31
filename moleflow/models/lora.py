@@ -175,44 +175,110 @@ class MoLESubnet(nn.Module):
     Ablation Support:
     - use_lora: If False, skip LoRA adaptation
     - use_task_bias: If False, skip task-specific bias
+    - use_regular_linear: If True, use regular nn.Linear instead of LoRA (V6-Exp1)
+    - use_spectral_norm: If True, apply spectral normalization (V6-Exp3)
     """
 
     def __init__(self, dims_in: int, dims_out: int, rank: int = 4, alpha: float = 1.0,
-                 use_lora: bool = True, use_task_bias: bool = True):
+                 use_lora: bool = True, use_task_bias: bool = True,
+                 use_regular_linear: bool = False, use_spectral_norm: bool = False):
         super(MoLESubnet, self).__init__()
 
         hidden_dim = 2 * dims_in
 
         self.use_lora = use_lora
         self.use_task_bias = use_task_bias
+        self.use_regular_linear = use_regular_linear
+        self.use_spectral_norm = use_spectral_norm
 
-        self.layer1 = LoRALinear(dims_in, hidden_dim, rank=rank, alpha=alpha,
-                                  use_lora=use_lora, use_task_bias=use_task_bias)
+        if use_regular_linear:
+            # V6-Exp1: Regular Linear layers (no LoRA)
+            # Task-specific layers stored in ModuleDict
+            self.layer1 = nn.Linear(dims_in, hidden_dim)
+            self.layer2 = nn.Linear(hidden_dim, dims_out)
+            if use_spectral_norm:
+                self.layer1 = nn.utils.spectral_norm(self.layer1)
+                self.layer2 = nn.utils.spectral_norm(self.layer2)
+            # For task-separated mode, we'll clone these layers per task
+            self.task_layers = nn.ModuleDict()
+        else:
+            # Original LoRA-based layers
+            self.layer1 = LoRALinear(dims_in, hidden_dim, rank=rank, alpha=alpha,
+                                      use_lora=use_lora, use_task_bias=use_task_bias)
+            self.layer2 = LoRALinear(hidden_dim, dims_out, rank=rank, alpha=alpha,
+                                      use_lora=use_lora, use_task_bias=use_task_bias)
+            if use_spectral_norm:
+                # Apply spectral norm to base linear inside LoRALinear
+                self.layer1.base_linear = nn.utils.spectral_norm(self.layer1.base_linear)
+                self.layer2.base_linear = nn.utils.spectral_norm(self.layer2.base_linear)
+
         self.relu = nn.ReLU()
-        self.layer2 = LoRALinear(hidden_dim, dims_out, rank=rank, alpha=alpha,
-                                  use_lora=use_lora, use_task_bias=use_task_bias)
+        self.active_task_id: Optional[int] = None
 
     def add_task_adapter(self, task_id: int):
         """Add LoRA adapters for a new task."""
-        self.layer1.add_task_adapter(task_id)
-        self.layer2.add_task_adapter(task_id)
+        if self.use_regular_linear:
+            # V6-Exp1: Create new Linear layers for this task
+            dims_in = self.layer1.in_features
+            dims_out = self.layer2.out_features
+            hidden_dim = self.layer1.out_features
+
+            layer1 = nn.Linear(dims_in, hidden_dim)
+            layer2 = nn.Linear(hidden_dim, dims_out)
+
+            if self.use_spectral_norm:
+                layer1 = nn.utils.spectral_norm(layer1)
+                layer2 = nn.utils.spectral_norm(layer2)
+
+            # Initialize from base layers
+            with torch.no_grad():
+                # Copy weights from base layer (or previous task if available)
+                if hasattr(self.layer1, 'weight'):
+                    layer1.weight.copy_(self.layer1.weight)
+                    layer1.bias.copy_(self.layer1.bias)
+                    layer2.weight.copy_(self.layer2.weight)
+                    layer2.bias.copy_(self.layer2.bias)
+
+            self.task_layers[str(task_id)] = nn.ModuleDict({
+                'layer1': layer1,
+                'layer2': layer2
+            })
+        else:
+            self.layer1.add_task_adapter(task_id)
+            self.layer2.add_task_adapter(task_id)
 
     def freeze_base(self):
         """Freeze base weights."""
-        self.layer1.freeze_base()
-        self.layer2.freeze_base()
+        if self.use_regular_linear:
+            # In regular linear mode, we don't freeze (each task has own layers)
+            pass
+        else:
+            self.layer1.freeze_base()
+            self.layer2.freeze_base()
 
     def unfreeze_base(self):
         """Unfreeze base weights."""
-        self.layer1.unfreeze_base()
-        self.layer2.unfreeze_base()
+        if self.use_regular_linear:
+            pass
+        else:
+            self.layer1.unfreeze_base()
+            self.layer2.unfreeze_base()
 
     def set_active_task(self, task_id: Optional[int]):
         """Set active LoRA adapter."""
-        self.layer1.set_active_task(task_id)
-        self.layer2.set_active_task(task_id)
+        self.active_task_id = task_id
+        if not self.use_regular_linear:
+            self.layer1.set_active_task(task_id)
+            self.layer2.set_active_task(task_id)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.use_regular_linear and self.active_task_id is not None:
+            task_key = str(self.active_task_id)
+            if task_key in self.task_layers:
+                layer1 = self.task_layers[task_key]['layer1']
+                layer2 = self.task_layers[task_key]['layer2']
+                return layer2(self.relu(layer1(x)))
+        # Default: use base layers
         return self.layer2(self.relu(self.layer1(x)))
 
 

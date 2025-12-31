@@ -269,6 +269,25 @@ class AblationConfig:
                                                   # -2.0 → ~0.12 (minimal PE)
 
     # ==========================================================================
+    # V6 Data Augmentation
+    # ==========================================================================
+    # Random rotation augmentation for rotation-invariant learning
+    use_rotation_aug: bool = False
+    rotation_degrees: float = 180.0               # ±degrees rotation range
+
+    # ==========================================================================
+    # V6.1 Spatial Transformer Network (STN)
+    # ==========================================================================
+    # Learns to align images to canonical orientation before feature extraction
+    # Solves rotation variance problem in classes like Screw
+    use_stn: bool = False
+    stn_mode: str = 'rotation'                    # 'rotation', 'rotation_scale', 'affine'
+    stn_hidden_dim: int = 128                     # Hidden dimension for localization net
+    stn_dropout: float = 0.1                      # Dropout for regularization
+    stn_rotation_reg_weight: float = 0.01         # Regularization to prevent extreme rotations
+    stn_pretrain_epochs: int = 0                  # Optional: pretrain STN before main training
+
+    # ==========================================================================
     # V3 No-Replay Solutions: DIA + OGP
     # ==========================================================================
 
@@ -284,6 +303,23 @@ class AblationConfig:
     ogp_threshold: float = 0.99              # Cumulative variance threshold for SVD
     ogp_max_rank: int = 50                   # Maximum rank per task per parameter
     ogp_n_samples: int = 300                 # Samples for gradient collection
+
+    # ==========================================================================
+    # V6 Ablation Experiments
+    # ==========================================================================
+
+    # Experiment 1: No LoRA - Use regular Linear layers instead of LoRA
+    # Each task has its own complete Linear layers (no low-rank constraint)
+    use_regular_linear: bool = False
+
+    # Experiment 2: Task-Separated Training
+    # Instead of freezing base after Task 0, train complete NF for each task
+    # No parameter sharing between tasks (upper bound experiment)
+    use_task_separated: bool = False
+
+    # Experiment 3: Spectral Normalization
+    # Apply spectral norm to subnet layers for Lipschitz constraint
+    use_spectral_norm: bool = False
 
     # ==========================================================================
     # V3 Task-Conditioned Multi-Scale Context (Fundamental Solution)
@@ -972,6 +1008,63 @@ def add_ablation_args(parser):
         help='TAPE gate init value (sigmoid applied). 0=50%%, 2=88%%, -2=12%% (default: 0.0)'
     )
 
+    # V6 Data Augmentation
+    v6_group = parser.add_argument_group('V6 Data Augmentation')
+    v6_group.add_argument(
+        '--use_rotation_aug', action='store_true',
+        help='[V6] Use random rotation augmentation during training'
+    )
+    v6_group.add_argument(
+        '--rotation_degrees', type=float, default=180.0,
+        help='Rotation range in degrees (default: 180 for ±180°)'
+    )
+
+    # V6.1: Spatial Transformer Network (STN)
+    stn_group = parser.add_argument_group('V6.1 Spatial Transformer Network')
+    stn_group.add_argument(
+        '--use_stn', action='store_true',
+        help='[V6.1] Use Spatial Transformer Network for automatic image alignment'
+    )
+    stn_group.add_argument(
+        '--stn_mode', type=str, default='rotation',
+        choices=['rotation', 'rotation_scale', 'affine'],
+        help='STN transformation mode (default: rotation)'
+    )
+    stn_group.add_argument(
+        '--stn_hidden_dim', type=int, default=128,
+        help='Hidden dimension for STN localization network (default: 128)'
+    )
+    stn_group.add_argument(
+        '--stn_dropout', type=float, default=0.1,
+        help='Dropout rate for STN (default: 0.1)'
+    )
+    stn_group.add_argument(
+        '--stn_rotation_reg_weight', type=float, default=0.01,
+        help='Regularization weight for rotation angle (default: 0.01)'
+    )
+    stn_group.add_argument(
+        '--stn_pretrain_epochs', type=int, default=0,
+        help='Number of epochs to pretrain STN before main training (default: 0)'
+    )
+
+    # =========================================================================
+    # V6 Ablation Experiments
+    # =========================================================================
+    v7_group = parser.add_argument_group('V6 Ablation Experiments')
+
+    v7_group.add_argument(
+        '--use_regular_linear', action='store_true',
+        help='[V6-Exp1] Use regular Linear layers instead of LoRA'
+    )
+    v7_group.add_argument(
+        '--use_task_separated', action='store_true',
+        help='[V6-Exp2] Train separate NF for each task (no base sharing)'
+    )
+    v7_group.add_argument(
+        '--use_spectral_norm', action='store_true',
+        help='[V6-Exp3] Apply spectral normalization to subnet layers'
+    )
+
     return parser
 
 
@@ -1262,6 +1355,36 @@ def parse_ablation_args(parsed_args) -> AblationConfig:
         config.use_tape = True
     if hasattr(parsed_args, 'tape_init_value'):
         config.tape_init_value = parsed_args.tape_init_value
+
+    # V6 Data Augmentation
+    if hasattr(parsed_args, 'use_rotation_aug') and parsed_args.use_rotation_aug:
+        config.use_rotation_aug = True
+    if hasattr(parsed_args, 'rotation_degrees'):
+        config.rotation_degrees = parsed_args.rotation_degrees
+
+    # V6.1 Spatial Transformer Network (STN)
+    if hasattr(parsed_args, 'use_stn') and parsed_args.use_stn:
+        config.use_stn = True
+    if hasattr(parsed_args, 'stn_mode'):
+        config.stn_mode = parsed_args.stn_mode
+    if hasattr(parsed_args, 'stn_hidden_dim'):
+        config.stn_hidden_dim = parsed_args.stn_hidden_dim
+    if hasattr(parsed_args, 'stn_dropout'):
+        config.stn_dropout = parsed_args.stn_dropout
+    if hasattr(parsed_args, 'stn_rotation_reg_weight'):
+        config.stn_rotation_reg_weight = parsed_args.stn_rotation_reg_weight
+    if hasattr(parsed_args, 'stn_pretrain_epochs'):
+        config.stn_pretrain_epochs = parsed_args.stn_pretrain_epochs
+
+    # =========================================================================
+    # V6 Ablation Experiments
+    # =========================================================================
+    if hasattr(parsed_args, 'use_regular_linear') and parsed_args.use_regular_linear:
+        config.use_regular_linear = True
+    if hasattr(parsed_args, 'use_task_separated') and parsed_args.use_task_separated:
+        config.use_task_separated = True
+    if hasattr(parsed_args, 'use_spectral_norm') and parsed_args.use_spectral_norm:
+        config.use_spectral_norm = True
 
     # Re-run __post_init__ to apply all validation/conflict resolution logic
     # This is necessary because __post_init__ was called when config was created (with default values)

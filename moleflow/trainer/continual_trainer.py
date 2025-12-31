@@ -154,6 +154,17 @@ class MoLEContinualTrainer:
             self.use_hybrid_pe = False
             # V5.8: TAPE defaults
             self.use_tape = False
+            # V6.1: STN defaults
+            self.use_stn = False
+            self.stn_mode = 'rotation'
+            self.stn_hidden_dim = 128
+            self.stn_dropout = 0.1
+            self.stn_rotation_reg_weight = 0.01
+            self.stn_pretrain_epochs = 0
+            # V6: Task-separated defaults
+            self.use_task_separated = False
+            self.use_regular_linear = False
+            self.use_spectral_norm = False
         else:
             self.use_lora = ablation_config.use_lora
             self.use_router = ablation_config.use_router
@@ -193,6 +204,17 @@ class MoLEContinualTrainer:
             self.use_hybrid_pe = ablation_config.use_hybrid_pe
             # V5.8: TAPE settings
             self.use_tape = ablation_config.use_tape
+            # V6.1: STN settings
+            self.use_stn = ablation_config.use_stn
+            self.stn_mode = ablation_config.stn_mode
+            self.stn_hidden_dim = ablation_config.stn_hidden_dim
+            self.stn_dropout = ablation_config.stn_dropout
+            self.stn_rotation_reg_weight = ablation_config.stn_rotation_reg_weight
+            self.stn_pretrain_epochs = ablation_config.stn_pretrain_epochs
+            # V6: Task-separated training settings
+            self.use_task_separated = getattr(ablation_config, 'use_task_separated', False)
+            self.use_regular_linear = getattr(ablation_config, 'use_regular_linear', False)
+            self.use_spectral_norm = getattr(ablation_config, 'use_spectral_norm', False)
 
         # Slow-Fast hyperparameters
         self.slow_lr_ratio = slow_lr_ratio
@@ -216,6 +238,22 @@ class MoLEContinualTrainer:
         else:
             self.ogp = None
 
+        # V6.1: Initialize STN (Spatial Transformer Network) if enabled
+        if self.use_stn:
+            from moleflow.models.adapters import SpatialTransformerNetwork
+            img_size = getattr(args, 'img_size', 224)
+            self.stn = SpatialTransformerNetwork(
+                input_channels=3,
+                input_size=img_size,
+                mode=self.stn_mode,
+                hidden_dim=self.stn_hidden_dim,
+                dropout=self.stn_dropout,
+                rotation_reg_weight=self.stn_rotation_reg_weight
+            ).to(device)
+            print(f"✅ [V6.1] STN enabled: mode={self.stn_mode}, hidden_dim={self.stn_hidden_dim}")
+        else:
+            self.stn = None
+
         # Task information
         self.task_classes: Dict[int, List[str]] = {}
 
@@ -227,6 +265,11 @@ class MoLEContinualTrainer:
 
         # Log ablation status
         self._log_ablation_status()
+
+    @property
+    def feature_extractor(self):
+        """Alias for vit_extractor (supports both ViT and CNN backbones)."""
+        return self.vit_extractor
 
     def set_logger(self, logger: TrainingLogger):
         """Set training logger."""
@@ -391,45 +434,62 @@ class MoLEContinualTrainer:
                                   num_epochs, lr, log_interval)
 
         else:
-            # Task > 0: Two-Stage Slow-Fast Training
-            if self.enable_slow_stage:
-                fast_epochs = int(num_epochs * 0.85)
-                slow_epochs = num_epochs - fast_epochs
-            else:
-                fast_epochs = num_epochs
-                slow_epochs = 0
-
-            # Stage 1: FAST Adaptation
-            if self.logger:
-                self.logger.log_stage_start(
-                    "Stage 1: FAST Adaptation",
-                    fast_epochs,
-                    {"Base NF": "FROZEN", "LoRA + InputAdapter": "TRAINING"}
-                )
-            else:
-                print(f"\n{'─'*70}")
-                print(f"📌 Stage 1: FAST Adaptation ({fast_epochs} epochs)")
-                print(f"{'─'*70}")
-
-            self._train_fast_stage(task_id, task_classes, train_loader,
-                                   fast_epochs, lr, log_interval)
-
-            # Stage 2: SLOW Consolidation (optional)
-            if self.enable_slow_stage and slow_epochs > 0:
+            # V6: Task-Separated Mode - Train each task independently (like Task 0)
+            if self.use_task_separated:
                 if self.logger:
                     self.logger.log_stage_start(
-                        "Stage 2: SLOW Consolidation",
-                        slow_epochs,
-                        {
-                            f"Last {self.slow_blocks_k} blocks": f"TRAINING (LR={lr * self.slow_lr_ratio:.2e})",
-                            "LoRA + InputAdapter": "FROZEN"
-                        }
+                        "Task-Separated Training (Full NF)",
+                        num_epochs,
+                        {"Base NF": "TRAINING", "Task Layers": "TRAINING"}
                     )
+                else:
+                    print(f"\n{'─'*70}")
+                    print(f"🔀 [V6] Task-Separated: Full NF Training ({num_epochs} epochs)")
+                    print(f"{'─'*70}")
 
-                self._train_slow_stage(task_id, task_classes, train_loader,
-                                       slow_epochs, lr * self.slow_lr_ratio, log_interval)
+                # Use base task training style for task-separated mode
+                self._train_base_task(task_id, task_classes, train_loader,
+                                      num_epochs, lr, log_interval)
+            else:
+                # Standard: Two-Stage Slow-Fast Training
+                if self.enable_slow_stage:
+                    fast_epochs = int(num_epochs * 0.85)
+                    slow_epochs = num_epochs - fast_epochs
+                else:
+                    fast_epochs = num_epochs
+                    slow_epochs = 0
 
-                self.nf_model.unfreeze_fast_params(task_id)
+                # Stage 1: FAST Adaptation
+                if self.logger:
+                    self.logger.log_stage_start(
+                        "Stage 1: FAST Adaptation",
+                        fast_epochs,
+                        {"Base NF": "FROZEN", "LoRA + InputAdapter": "TRAINING"}
+                    )
+                else:
+                    print(f"\n{'─'*70}")
+                    print(f"📌 Stage 1: FAST Adaptation ({fast_epochs} epochs)")
+                    print(f"{'─'*70}")
+
+                self._train_fast_stage(task_id, task_classes, train_loader,
+                                       fast_epochs, lr, log_interval)
+
+                # Stage 2: SLOW Consolidation (optional, only for non-task-separated mode)
+                if self.enable_slow_stage and slow_epochs > 0:
+                    if self.logger:
+                        self.logger.log_stage_start(
+                            "Stage 2: SLOW Consolidation",
+                            slow_epochs,
+                            {
+                                f"Last {self.slow_blocks_k} blocks": f"TRAINING (LR={lr * self.slow_lr_ratio:.2e})",
+                                "LoRA + InputAdapter": "FROZEN"
+                            }
+                        )
+
+                    self._train_slow_stage(task_id, task_classes, train_loader,
+                                           slow_epochs, lr * self.slow_lr_ratio, log_interval)
+
+                    self.nf_model.unfreeze_fast_params(task_id)
 
         # Build prototype for routing (only if router is enabled)
         if self.use_router:
@@ -481,14 +541,21 @@ class MoLEContinualTrainer:
             print(f"   - Phase: {phase_name} + Feature Statistics Collection")
             print(f"   - Trainable Parameters: {num_params:,}")
 
+        # V6.1: Include STN parameters in optimization if enabled
+        all_params = list(trainable_params)
+        if self.use_stn and self.stn is not None:
+            all_params.extend(self.stn.parameters())
+
         # Create optimizer (AdamP if available, AdamW fallback)
-        optimizer = create_optimizer(list(trainable_params), lr=lr)
+        optimizer = create_optimizer(all_params, lr=lr)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer, T_max=num_epochs, eta_min=lr * 0.01
         )
 
         self.nf_model.train()
         self.vit_extractor.eval()
+        if self.use_stn and self.stn is not None:
+            self.stn.train()
 
         for epoch in range(num_epochs):
             epoch_loss = 0.0
@@ -496,6 +563,10 @@ class MoLEContinualTrainer:
 
             for batch_idx, (images, labels, _, _, _) in enumerate(train_loader):
                 images = images.to(self.device)
+
+                # V6.1: Apply STN for image alignment before feature extraction
+                if self.use_stn and self.stn is not None:
+                    images, stn_theta = self.stn(images)
 
                 with torch.no_grad():
                     patch_embeddings, spatial_shape = self.vit_extractor(
@@ -542,12 +613,20 @@ class MoLEContinualTrainer:
                     total_loss = nll_loss
                     logdet_reg = None
 
+                # V6.1: Add STN rotation regularization to prevent extreme rotations
+                stn_reg = None
+                if self.use_stn and self.stn is not None:
+                    stn_reg = self.stn.get_rotation_regularization_loss()
+                    if stn_reg.device != total_loss.device:
+                        stn_reg = stn_reg.to(total_loss.device)
+                    total_loss = total_loss + stn_reg
+
                 if torch.isnan(total_loss) or total_loss.item() > 1e8:
                     continue
 
                 optimizer.zero_grad()
                 total_loss.backward()
-                torch.nn.utils.clip_grad_norm_(list(trainable_params), max_norm=0.5)
+                torch.nn.utils.clip_grad_norm_(all_params, max_norm=0.5)
                 optimizer.step()
 
                 epoch_loss += nll_loss.item()
@@ -626,14 +705,21 @@ class MoLEContinualTrainer:
         else:
             print(f"   - Trainable Parameters: {num_params:,}")
 
+        # V6.1: Include STN parameters in optimization if enabled
+        all_fast_params = list(fast_params)
+        if self.use_stn and self.stn is not None:
+            all_fast_params.extend(self.stn.parameters())
+
         # Create optimizer (AdamP if available, AdamW fallback)
-        optimizer = create_optimizer(list(fast_params), lr=lr)
+        optimizer = create_optimizer(all_fast_params, lr=lr)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer, T_max=num_epochs, eta_min=lr * 0.01
         )
 
         self.nf_model.train()
         self.vit_extractor.eval()
+        if self.use_stn and self.stn is not None:
+            self.stn.train()
 
         warmup_epochs = 2
 
@@ -649,6 +735,10 @@ class MoLEContinualTrainer:
 
             for batch_idx, (images, labels, _, _, _) in enumerate(train_loader):
                 images = images.to(self.device)
+
+                # V6.1: Apply STN for image alignment before feature extraction
+                if self.use_stn and self.stn is not None:
+                    images, stn_theta = self.stn(images)
 
                 with torch.no_grad():
                     patch_embeddings, spatial_shape = self.vit_extractor(
@@ -689,6 +779,14 @@ class MoLEContinualTrainer:
                     total_loss = nll_loss
                     logdet_reg = None
 
+                # V6.1: Add STN rotation regularization to prevent extreme rotations
+                stn_reg = None
+                if self.use_stn and self.stn is not None:
+                    stn_reg = self.stn.get_rotation_regularization_loss()
+                    if stn_reg.device != total_loss.device:
+                        stn_reg = stn_reg.to(total_loss.device)
+                    total_loss = total_loss + stn_reg
+
                 if torch.isnan(total_loss) or total_loss.item() > 1e8:
                     continue
 
@@ -700,7 +798,7 @@ class MoLEContinualTrainer:
                 if self.use_ogp and self.ogp is not None and self.ogp.is_initialized:
                     self.ogp.project_gradient(self.nf_model)
 
-                torch.nn.utils.clip_grad_norm_(list(fast_params), max_norm=0.5)
+                torch.nn.utils.clip_grad_norm_(all_fast_params, max_norm=0.5)
                 optimizer.step()
 
                 epoch_loss += nll_loss.item()
@@ -870,10 +968,15 @@ class MoLEContinualTrainer:
         all_image_features = []
         self.nf_model.eval()
         self.vit_extractor.eval()
+        if self.use_stn and self.stn is not None:
+            self.stn.eval()
 
         with torch.no_grad():
             for images, _, _, _, _ in train_loader:
                 images = images.to(self.device)
+                # V6.1: Apply STN for image alignment
+                if self.use_stn and self.stn is not None:
+                    images, _ = self.stn(images)
                 image_features = self.vit_extractor.get_image_level_features(images)
                 all_image_features.append(image_features)
 
@@ -913,6 +1016,10 @@ class MoLEContinualTrainer:
             def __iter__(self):
                 for images, _, _, _, _ in self.data_loader:
                     images = images.to(self.device)
+                    # V6.1: Apply STN for image alignment
+                    if self.trainer.use_stn and self.trainer.stn is not None:
+                        with torch.no_grad():
+                            images, _ = self.trainer.stn(images)
                     with torch.no_grad():
                         patch_embeddings, spatial_shape = self.trainer.vit_extractor(
                             images, return_spatial_shape=True
@@ -967,9 +1074,15 @@ class MoLEContinualTrainer:
         """
         self.nf_model.eval()
         self.vit_extractor.eval()
+        if self.use_stn and self.stn is not None:
+            self.stn.eval()
 
         with torch.no_grad():
             images = images.to(self.device)
+
+            # V6.1: Apply STN for image alignment before feature extraction
+            if self.use_stn and self.stn is not None:
+                images, _ = self.stn(images)
 
             # Route if task_id not specified and router is enabled
             if task_id is None and self.use_router and self.router is not None and len(self.router.prototypes) > 0:

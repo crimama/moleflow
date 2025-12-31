@@ -2126,3 +2126,278 @@ class TaskAdaptivePositionEncoding(nn.Module):
         strengths = self.get_all_pe_strengths()
         strength_str = ", ".join([f"T{k}={v:.3f}" for k, v in strengths.items()])
         return f"TaskAdaptivePositionEncoding(init={self.init_value}, strengths=[{strength_str}])"
+
+
+# =============================================================================
+# V6.1: Spatial Transformer Network (STN)
+# =============================================================================
+
+class SpatialTransformerNetwork(nn.Module):
+    """
+    V6.1: Spatial Transformer Network for automatic image alignment.
+
+    Learns to align input images to a canonical orientation, solving the
+    rotation variance problem in classes like Screw.
+
+    Architecture:
+        1. Localization Network: Predicts transformation parameters (θ)
+        2. Grid Generator: Creates sampling grid from θ
+        3. Sampler: Applies bilinear interpolation to transform image
+
+    Modes:
+        - 'rotation': Only learns rotation angle (1 parameter)
+        - 'rotation_scale': Rotation + uniform scale (2 parameters)
+        - 'affine': Full 6-parameter affine transformation
+
+    Key Design:
+        - Initialized to identity transformation (no change initially)
+        - Learnable end-to-end with the rest of the model
+        - Applied BEFORE feature extraction for spatial alignment
+    """
+
+    def __init__(
+        self,
+        input_channels: int = 3,
+        input_size: int = 224,
+        mode: str = 'rotation',
+        hidden_dim: int = 128,
+        use_batch_norm: bool = True,
+        dropout: float = 0.1,
+        scale_range: Tuple[float, float] = (0.8, 1.2),
+        rotation_reg_weight: float = 0.01,
+    ):
+        """
+        Args:
+            input_channels: Number of input image channels (3 for RGB)
+            input_size: Input image size (assumed square)
+            mode: Transformation mode ('rotation', 'rotation_scale', 'affine')
+            hidden_dim: Hidden dimension for localization network
+            use_batch_norm: Whether to use batch normalization
+            dropout: Dropout rate for regularization
+            scale_range: Min/max scale for 'rotation_scale' mode
+            rotation_reg_weight: Regularization weight for rotation angle
+        """
+        super(SpatialTransformerNetwork, self).__init__()
+
+        self.mode = mode
+        self.input_size = input_size
+        self.scale_range = scale_range
+        self.rotation_reg_weight = rotation_reg_weight
+
+        # Determine number of output parameters based on mode
+        if mode == 'rotation':
+            self.num_params = 1  # theta (rotation angle)
+        elif mode == 'rotation_scale':
+            self.num_params = 2  # theta, scale
+        elif mode == 'affine':
+            self.num_params = 6  # full affine matrix elements
+        else:
+            raise ValueError(f"Unknown mode: {mode}. Use 'rotation', 'rotation_scale', or 'affine'")
+
+        # Localization Network: CNN to predict transformation parameters
+        self.localization = self._build_localization_network(
+            input_channels, hidden_dim, use_batch_norm, dropout
+        )
+
+        # Final fully connected layer to output transformation parameters
+        # Calculate feature size after conv layers
+        self._dummy_input = torch.zeros(1, input_channels, input_size, input_size)
+        with torch.no_grad():
+            dummy_features = self.localization(self._dummy_input)
+            self.feature_size = dummy_features.view(1, -1).size(1)
+        del self._dummy_input
+
+        self.fc_loc = nn.Sequential(
+            nn.Linear(self.feature_size, hidden_dim),
+            nn.ReLU(True),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, self.num_params)
+        )
+
+        # Initialize to identity transformation
+        self._init_identity()
+
+        # For logging/debugging
+        self.last_theta = None
+        self.last_rotation_angle = None
+
+    def _build_localization_network(
+        self,
+        in_channels: int,
+        hidden_dim: int,
+        use_bn: bool,
+        dropout: float
+    ) -> nn.Sequential:
+        """Build CNN for localization (predicting transformation params)."""
+        layers = []
+
+        # Downsample progressively: input_size -> input_size/32
+        channels = [in_channels, 32, 64, 128, hidden_dim]
+
+        for i in range(len(channels) - 1):
+            layers.append(nn.Conv2d(channels[i], channels[i+1], kernel_size=3, stride=2, padding=1))
+            if use_bn:
+                layers.append(nn.BatchNorm2d(channels[i+1]))
+            layers.append(nn.ReLU(True))
+            if i < len(channels) - 2:  # No dropout on last conv
+                layers.append(nn.Dropout2d(dropout))
+
+        # Global average pooling
+        layers.append(nn.AdaptiveAvgPool2d(1))
+        layers.append(nn.Flatten())
+
+        return nn.Sequential(*layers)
+
+    def _init_identity(self):
+        """Initialize to identity transformation (no change)."""
+        # Initialize final layer bias to produce identity transformation
+        nn.init.zeros_(self.fc_loc[-1].weight)
+
+        if self.mode == 'rotation':
+            # theta = 0 (no rotation)
+            nn.init.zeros_(self.fc_loc[-1].bias)
+        elif self.mode == 'rotation_scale':
+            # theta = 0, scale = 1.0
+            # We'll use sigmoid for scale, so init to 0 gives 0.5
+            # We need to adjust in forward to map to scale_range
+            nn.init.zeros_(self.fc_loc[-1].bias)
+        elif self.mode == 'affine':
+            # Identity affine: [[1, 0, 0], [0, 1, 0]]
+            # Bias for [a, b, tx, c, d, ty] where identity is [1, 0, 0, 0, 1, 0]
+            self.fc_loc[-1].bias.data.copy_(
+                torch.tensor([1, 0, 0, 0, 1, 0], dtype=torch.float)
+            )
+
+    def _params_to_theta(self, params: torch.Tensor) -> torch.Tensor:
+        """
+        Convert predicted parameters to 2x3 affine transformation matrix.
+
+        Args:
+            params: (B, num_params) predicted transformation parameters
+
+        Returns:
+            theta: (B, 2, 3) affine transformation matrix
+        """
+        B = params.size(0)
+        device = params.device
+
+        if self.mode == 'rotation':
+            # params: (B, 1) -> rotation angle in radians
+            # Limit rotation range with tanh: [-pi, pi]
+            angle = torch.tanh(params[:, 0]) * math.pi
+
+            cos_a = torch.cos(angle)
+            sin_a = torch.sin(angle)
+
+            # Rotation matrix (around center)
+            # [[cos, -sin, 0], [sin, cos, 0]]
+            theta = torch.zeros(B, 2, 3, device=device)
+            theta[:, 0, 0] = cos_a
+            theta[:, 0, 1] = -sin_a
+            theta[:, 1, 0] = sin_a
+            theta[:, 1, 1] = cos_a
+
+            self.last_rotation_angle = angle.detach()
+
+        elif self.mode == 'rotation_scale':
+            # params: (B, 2) -> rotation angle, scale
+            angle = torch.tanh(params[:, 0]) * math.pi
+
+            # Scale: map sigmoid output to scale_range
+            scale_raw = torch.sigmoid(params[:, 1])
+            scale_min, scale_max = self.scale_range
+            scale = scale_min + (scale_max - scale_min) * scale_raw
+
+            cos_a = torch.cos(angle) * scale
+            sin_a = torch.sin(angle) * scale
+
+            theta = torch.zeros(B, 2, 3, device=device)
+            theta[:, 0, 0] = cos_a
+            theta[:, 0, 1] = -sin_a
+            theta[:, 1, 0] = sin_a
+            theta[:, 1, 1] = cos_a
+
+            self.last_rotation_angle = angle.detach()
+
+        elif self.mode == 'affine':
+            # params: (B, 6) -> [a, b, tx, c, d, ty]
+            # Full affine: [[a, b, tx], [c, d, ty]]
+            theta = params.view(B, 2, 3)
+
+            # Extract approximate rotation angle for logging
+            # angle ≈ atan2(c, a) for small shear
+            self.last_rotation_angle = torch.atan2(
+                theta[:, 1, 0], theta[:, 0, 0]
+            ).detach()
+
+        self.last_theta = theta.detach()
+        return theta
+
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Apply spatial transformation to input images.
+
+        Args:
+            x: (B, C, H, W) input images
+
+        Returns:
+            x_transformed: (B, C, H, W) transformed images
+            theta: (B, 2, 3) transformation matrix (for logging/regularization)
+        """
+        B, C, H, W = x.shape
+
+        # 1. Localization: predict transformation parameters
+        features = self.localization(x)
+        params = self.fc_loc(features)  # (B, num_params)
+
+        # 2. Convert to affine transformation matrix
+        theta = self._params_to_theta(params)  # (B, 2, 3)
+
+        # 3. Generate sampling grid
+        grid = F.affine_grid(theta, x.size(), align_corners=False)
+
+        # 4. Sample from input using bilinear interpolation
+        # padding_mode='border' avoids black borders by extending edge pixels
+        x_transformed = F.grid_sample(
+            x, grid,
+            mode='bilinear',
+            padding_mode='border',  # 'zeros', 'border', or 'reflection'
+            align_corners=False
+        )
+
+        return x_transformed, theta
+
+    def get_rotation_regularization_loss(self) -> torch.Tensor:
+        """
+        Compute regularization loss to encourage small rotations.
+
+        Prevents the STN from learning extreme rotations that might
+        destabilize training.
+
+        Returns:
+            reg_loss: Scalar regularization loss
+        """
+        if self.last_rotation_angle is None:
+            return torch.tensor(0.0)
+
+        # L2 penalty on rotation angle
+        # Encourages staying close to identity (0 rotation)
+        reg_loss = self.rotation_reg_weight * (self.last_rotation_angle ** 2).mean()
+        return reg_loss
+
+    def get_transform_stats(self) -> dict:
+        """Get statistics about the learned transformation for logging."""
+        stats = {}
+
+        if self.last_rotation_angle is not None:
+            angles_deg = self.last_rotation_angle * 180 / math.pi
+            stats['rotation_mean_deg'] = angles_deg.mean().item()
+            stats['rotation_std_deg'] = angles_deg.std().item()
+            stats['rotation_min_deg'] = angles_deg.min().item()
+            stats['rotation_max_deg'] = angles_deg.max().item()
+
+        return stats
+
+    def __repr__(self):
+        return (f"SpatialTransformerNetwork(mode={self.mode}, "
+                f"input_size={self.input_size}, num_params={self.num_params})")

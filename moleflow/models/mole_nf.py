@@ -133,6 +133,10 @@ class MoLESpatialAwareNF(nn.Module):
             # V5.8 TAPE defaults
             self.use_tape = False
             self.tape_init_value = 0.0
+            # V6 Ablation Experiments defaults
+            self.use_regular_linear = False
+            self.use_task_separated = False
+            self.use_spectral_norm = False
         else:
             self.use_lora = ablation_config.use_lora
             self.use_task_adapter = ablation_config.use_task_adapter
@@ -202,6 +206,10 @@ class MoLESpatialAwareNF(nn.Module):
             # V5.8 TAPE settings
             self.use_tape = ablation_config.use_tape
             self.tape_init_value = ablation_config.tape_init_value
+            # V6 Ablation Experiments
+            self.use_regular_linear = getattr(ablation_config, 'use_regular_linear', False)
+            self.use_task_separated = getattr(ablation_config, 'use_task_separated', False)
+            self.use_spectral_norm = getattr(ablation_config, 'use_spectral_norm', False)
 
         # Track tasks
         self.num_tasks = 0
@@ -416,7 +424,9 @@ class MoLESpatialAwareNF(nn.Module):
                     rank=self.lora_rank,
                     alpha=self.lora_alpha,
                     use_lora=self.use_lora,
-                    use_task_bias=self.use_task_bias
+                    use_task_bias=self.use_task_bias,
+                    use_regular_linear=self.use_regular_linear,
+                    use_spectral_norm=self.use_spectral_norm
                 )
             self.subnets.append(subnet)
             return subnet
@@ -431,6 +441,13 @@ class MoLESpatialAwareNF(nn.Module):
             ablation_info.append("TaskBias=OFF")
         if self.use_scale_context:
             ablation_info.append(f"ScaleContext=ON(k={self.scale_context_kernel})")
+        # V6 ablation info
+        if self.use_regular_linear:
+            ablation_info.append("RegularLinear=ON")
+        if self.use_spectral_norm:
+            ablation_info.append("SpectralNorm=ON")
+        if self.use_task_separated:
+            ablation_info.append("TaskSeparated=ON")
         ablation_str = f" [{', '.join(ablation_info)}]" if ablation_info else ""
         print(f'MoLE-Flow => Embed Dim: {self.embed_dim}, LoRA Rank: {self.lora_rank}{ablation_str}')
 
@@ -440,7 +457,7 @@ class MoLESpatialAwareNF(nn.Module):
                 subnet_constructor=make_subnet,
                 affine_clamping=self.clamp_alpha,
                 global_affine_type='SOFTPLUS',
-                permute_soft=True
+                permute_soft=False  # Hard permutation (faster, no O(n²) init)
             )
 
         return coder
@@ -512,7 +529,18 @@ class MoLESpatialAwareNF(nn.Module):
             print(f"   📊 Feature statistics will be collected during training")
         else:
             # Task > 0: Freeze or partially unfreeze base, add LoRA adapters + task biases
-            if self.use_adaptive_unfreeze:
+            # V6-Exp2: Task-separated mode - each task trains independently
+            if self.use_task_separated:
+                # Each task gets its own complete set of parameters
+                # Unfreeze base for independent training
+                for subnet in self.subnets:
+                    subnet.unfreeze_base()
+                    if self.use_lora or self.use_task_bias or self.use_regular_linear:
+                        subnet.add_task_adapter(task_id)
+
+                print(f"   🔀 [V6] Task-Separated Mode: Training complete NF for Task {task_id}")
+
+            elif self.use_adaptive_unfreeze:
                 # V3: Adaptive unfreezing - unfreeze later blocks
                 n_blocks = self.coupling_layers
                 n_frozen = int(n_blocks * (1 - self.adaptive_unfreeze_ratio))
