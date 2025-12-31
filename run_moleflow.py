@@ -25,13 +25,15 @@ from torch.utils.data import DataLoader
 from moleflow import (
     MoLESpatialAwareNF,
     MoLEContinualTrainer,
-    ViTPatchCoreExtractor,
     PositionalEmbeddingGenerator,
     TrainingLogger,
     setup_training_logger,
     evaluate_all_tasks,
     evaluate_routing_performance,
     FlowDiagnostics,
+    # Feature extraction
+    create_feature_extractor,
+    get_backbone_type,
     # Utilities
     init_seeds,
     setting_lr_parameters,
@@ -50,7 +52,7 @@ def main():
     # Parse arguments
     parser = argparse.ArgumentParser(description='MoLE-Flow: Continual Anomaly Detection')
     parser.add_argument('--task_classes', type=str, nargs='+',
-                        default=['leather', 'grid', 'transistor'],
+                        default=['leather', 'grid', 'transistor','screw'],
                         help='Classes to learn sequentially')
     parser.add_argument('--num_epochs', type=int, default=40,
                         help='Number of epochs per task')
@@ -70,7 +72,7 @@ def main():
                         help='Name of the experiment')
     parser.add_argument('--backbone_name', type=str,
                         default='vit_base_patch16_224.augreg2_in21k_ft_in1k',
-                        help='ViT backbone model name')
+                        help='Backbone model name from timm (ViT: vit_*, deit_*, etc. / CNN: wide_resnet50_2, efficientnet_b7, etc.)')
     parser.add_argument('--img_size', type=int, default=224,
                         help='Input image size (default: 224)')
     parser.add_argument('--msk_size', type=int, default=256,
@@ -80,7 +82,10 @@ def main():
     parser.add_argument('--batch_size', type=int, default=16,
                         help='Batch size for training (default: 16)')
     parser.add_argument('--data_path', type=str, default='/Data/MVTecAD',
-                        help='Path to MVTec AD dataset')
+                        help='Path to dataset root directory')
+    parser.add_argument('--dataset', type=str, default='mvtec',
+                        choices=['mvtec', 'visa', 'mpdd'],
+                        help='Dataset to use (mvtec, visa, or mpdd)')
     parser.add_argument('--seed', type=int, default=0,
                         help='Random seed for reproducibility')
     parser.add_argument('--embed_dim', type=int, default=None,
@@ -105,6 +110,8 @@ def main():
         seed=parsed_args.seed,
         lr=parsed_args.lr,
     )
+    # Add dataset type to args
+    args.dataset = parsed_args.dataset
 
     # Initialize seeds
     init_seeds(args.seed)
@@ -115,30 +122,59 @@ def main():
     def get_default_embed_dim(backbone_name: str) -> int:
         """Infer embedding dimension from backbone model name."""
         backbone_lower = backbone_name.lower()
-        if 'vit_giant' in backbone_lower or 'vit_g' in backbone_lower:
-            return 1536
-        elif 'vit_huge' in backbone_lower or 'vit_h' in backbone_lower:
-            return 1280
-        elif 'vit_large' in backbone_lower or 'vit_l' in backbone_lower:
-            return 1024
-        elif 'vit_base' in backbone_lower or 'vit_b' in backbone_lower:
-            return 768
-        elif 'vit_small' in backbone_lower or 'vit_s' in backbone_lower:
-            return 384
-        elif 'vit_tiny' in backbone_lower or 'vit_t' in backbone_lower:
-            return 192
-        else:
-            # Fallback: try to get from timm
-            try:
-                import timm
-                model = timm.create_model(backbone_name, pretrained=False)
-                if hasattr(model, 'embed_dim'):
-                    dim = model.embed_dim
-                    del model
-                    return dim
-            except:
-                pass
-            return 768  # Default fallback
+        backbone_type = get_backbone_type(backbone_name)
+
+        # ViT-based backbones
+        if backbone_type == 'vit':
+            if 'vit_giant' in backbone_lower or 'vit_g' in backbone_lower:
+                return 1536
+            elif 'vit_huge' in backbone_lower or 'vit_h' in backbone_lower:
+                return 1280
+            elif 'vit_large' in backbone_lower or 'vit_l' in backbone_lower:
+                return 1024
+            elif 'vit_base' in backbone_lower or 'vit_b' in backbone_lower:
+                return 768
+            elif 'vit_small' in backbone_lower or 'vit_s' in backbone_lower:
+                return 384
+            elif 'vit_tiny' in backbone_lower or 'vit_t' in backbone_lower:
+                return 192
+
+        # CNN-based backbones - use target dimension (will be projected)
+        # For CNN, we typically want a moderate dimension that works well with NF
+        if backbone_type == 'cnn':
+            # Common choices for anomaly detection
+            if 'efficientnet_b7' in backbone_lower or 'efficientnet_b6' in backbone_lower:
+                return 1024
+            elif 'efficientnet_b5' in backbone_lower or 'efficientnet_b4' in backbone_lower:
+                return 768
+            elif 'wide_resnet101' in backbone_lower:
+                return 1024
+            elif 'wide_resnet50' in backbone_lower or 'resnet101' in backbone_lower:
+                return 768
+            elif 'convnext_large' in backbone_lower or 'convnext_base' in backbone_lower:
+                return 1024
+            elif 'convnext_small' in backbone_lower or 'convnext_tiny' in backbone_lower:
+                return 768
+            else:
+                # Default for most CNN backbones
+                return 768
+
+        # Fallback: try to get from timm
+        try:
+            import timm
+            model = timm.create_model(backbone_name, pretrained=False)
+            if hasattr(model, 'embed_dim'):
+                dim = model.embed_dim
+                del model
+                return dim
+            elif hasattr(model, 'num_features'):
+                dim = model.num_features
+                del model
+                # Cap at reasonable size for NF
+                return min(dim, 1024)
+        except:
+            pass
+        return 768  # Default fallback
 
     embed_dim = parsed_args.embed_dim if parsed_args.embed_dim is not None else get_default_embed_dim(parsed_args.backbone_name)
 
@@ -159,6 +195,7 @@ def main():
     # Save config to log folder
     config = {
         'experiment_name': experiment_name,
+        'dataset': parsed_args.dataset,
         'task_classes': parsed_args.task_classes,
         'num_epochs': parsed_args.num_epochs,
         'lora_rank': parsed_args.lora_rank,
@@ -167,6 +204,7 @@ def main():
         'slow_blocks_k': parsed_args.slow_blocks_k,
         'enable_slow_stage': parsed_args.enable_slow_stage,
         'backbone_name': parsed_args.backbone_name,
+        'backbone_type': get_backbone_type(parsed_args.backbone_name),
         'img_size': parsed_args.img_size,
         'msk_size': parsed_args.msk_size,
         'num_coupling_layers': parsed_args.num_coupling_layers,
@@ -217,6 +255,7 @@ def main():
     print("\n" + "="*70)
     print("MoLE-Flow: Continual Anomaly Detection")
     print("="*70)
+    print(f"   Dataset: {parsed_args.dataset.upper()}")
     print(f"   Tasks: {CONTINUAL_TASKS}")
     print(f"   Classes: {ALL_CLASSES}")
     print(f"   Backbone: {parsed_args.backbone_name}")
@@ -236,16 +275,21 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"\nUsing device: {device}")
 
-    # Initialize ViT feature extractor
-    vit_extractor = ViTPatchCoreExtractor(
+    # Initialize feature extractor (supports both ViT and CNN backbones)
+    backbone_type = get_backbone_type(parsed_args.backbone_name)
+    feature_extractor = create_feature_extractor(
         backbone_name=parsed_args.backbone_name,
-        blocks_to_extract=[1, 3, 5, 11],
         input_shape=(3, parsed_args.img_size, parsed_args.img_size),
         target_embed_dimension=embed_dim,
         device=device,
-        remove_cls_token=True
+        # ViT-specific
+        blocks_to_extract=[1, 3, 5, 11] if backbone_type == 'vit' else None,
+        remove_cls_token=True,
+        # CNN-specific
+        patch_size=3,
+        patch_stride=1,
     )
-    print(f"\nViTPatchCoreExtractor initialized with {parsed_args.backbone_name} (Frozen)")
+    print(f"\nFeature Extractor initialized: {parsed_args.backbone_name} ({backbone_type.upper()}, Frozen)")
     print(f"   Embedding Dimension: {embed_dim}")
 
     # Initialize positional embedding generator
@@ -268,7 +312,7 @@ def main():
 
     # Initialize continual trainer with ablation config
     trainer = MoLEContinualTrainer(
-        vit_extractor=vit_extractor,
+        vit_extractor=feature_extractor,
         pos_embed_generator=pos_embed_generator,
         nf_model=nf_model,
         args=args,
@@ -289,7 +333,11 @@ def main():
         args.class_to_idx = {cls: GLOBAL_CLASS_TO_IDX[cls] for cls in task_classes}
         args.n_classes = len(task_classes)
 
-        train_dataset = create_task_dataset(args, task_classes, GLOBAL_CLASS_TO_IDX, train=True)
+        train_dataset = create_task_dataset(
+            args, task_classes, GLOBAL_CLASS_TO_IDX, train=True,
+            use_rotation_aug=ablation_config.use_rotation_aug,
+            rotation_degrees=ablation_config.rotation_degrees
+        )
         train_loader = DataLoader(
             train_dataset, batch_size=args.batch_size, shuffle=True,
             num_workers=4, pin_memory=False, drop_last=True
@@ -460,7 +508,7 @@ def main():
                             images = images.to(device)
 
                             # Extract features
-                            patch_embeddings, spatial_shape = vit_extractor(images, return_spatial_shape=True)
+                            patch_embeddings, spatial_shape = feature_extractor(images, return_spatial_shape=True)
 
                             if ablation_config.use_pos_embedding:
                                 patch_embeddings_with_pos = pos_embed_generator(spatial_shape, patch_embeddings)

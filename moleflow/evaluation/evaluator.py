@@ -12,6 +12,8 @@ from sklearn.metrics import roc_auc_score, average_precision_score
 from scipy.ndimage import gaussian_filter
 from typing import Dict, List, Optional
 
+from moleflow.data.datasets import get_dataset_class
+
 
 def evaluate_class(trainer,
                    class_name: str,
@@ -40,13 +42,15 @@ def evaluate_class(trainer,
             - routing_distribution: Distribution of predicted tasks
             - n_samples: Number of test samples
     """
-    from moleflow.data.mvtec import MVTEC
-
     device = trainer.device
 
+    # Get dataset class based on args.dataset
+    dataset_name = getattr(args, 'dataset', 'mvtec')
+    DatasetClass = get_dataset_class(dataset_name)
+
     # Create test dataset
-    test_dataset = MVTEC(args.data_path, class_name=class_name, train=False,
-                         img_size=args.img_size, crp_size=args.img_size, msk_size=target_size)
+    test_dataset = DatasetClass(args.data_path, class_name=class_name, train=False,
+                                img_size=args.img_size, crp_size=args.img_size, msk_size=target_size)
 
     test_loader = DataLoader(test_dataset, batch_size=8, shuffle=False,
                             drop_last=False, pin_memory=True, num_workers=4)
@@ -302,9 +306,11 @@ def evaluate_routing_performance(trainer,
     Returns:
         Dict with detailed routing metrics
     """
-    from moleflow.data.mvtec import MVTEC
-
     device = trainer.device
+
+    # Get dataset class based on args.dataset
+    dataset_name = getattr(args, 'dataset', 'mvtec')
+    DatasetClass = get_dataset_class(dataset_name)
 
     print("\n" + "="*70)
     print("Detailed Routing Performance Evaluation")
@@ -326,8 +332,8 @@ def evaluate_routing_performance(trainer,
         print(f"\nTask {task_id}: {task_classes}")
 
         for class_name in task_classes:
-            test_dataset = MVTEC(args.data_path, class_name=class_name, train=False,
-                                 img_size=args.img_size, crp_size=args.img_size, msk_size=target_size)
+            test_dataset = DatasetClass(args.data_path, class_name=class_name, train=False,
+                                        img_size=args.img_size, crp_size=args.img_size, msk_size=target_size)
             test_loader = DataLoader(test_dataset, batch_size=8, shuffle=False,
                                     drop_last=False, pin_memory=True, num_workers=4)
 
