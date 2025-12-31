@@ -6,6 +6,44 @@ from typing import List, Dict, Any, Tuple
 from torch.utils.data import Dataset
 
 from moleflow.data.mvtec import MVTEC
+from moleflow.data.visa import VISA
+from moleflow.data.mpdd import MPDD
+
+
+# Dataset registry
+DATASET_REGISTRY = {
+    'mvtec': MVTEC,
+    'visa': VISA,
+    'mpdd': MPDD,
+}
+
+
+def get_dataset_class(dataset_name: str):
+    """Get dataset class by name.
+
+    Args:
+        dataset_name: Name of the dataset ('mvtec', 'visa', 'mpdd')
+
+    Returns:
+        Dataset class
+    """
+    dataset_name = dataset_name.lower()
+    if dataset_name not in DATASET_REGISTRY:
+        raise ValueError(f"Unknown dataset: {dataset_name}. Available: {list(DATASET_REGISTRY.keys())}")
+    return DATASET_REGISTRY[dataset_name]
+
+
+def get_class_names(dataset_name: str) -> List[str]:
+    """Get available class names for a dataset.
+
+    Args:
+        dataset_name: Name of the dataset ('mvtec', 'visa', 'mpdd')
+
+    Returns:
+        List of class names
+    """
+    dataset_cls = get_dataset_class(dataset_name)
+    return dataset_cls.CLASS_NAMES
 
 
 class TaskDataset(Dataset):
@@ -33,30 +71,40 @@ def create_task_dataset(
     args,
     task_classes: List[str],
     global_class_to_idx: Dict[str, int],
-    train: bool = True
+    train: bool = True,
+    use_rotation_aug: bool = False,
+    rotation_degrees: float = 180.0
 ) -> TaskDataset:
     """Create dataset for specific task classes.
 
     Args:
-        args: Configuration object with data_path, img_size, msk_size attributes
+        args: Configuration object with data_path, img_size, msk_size, dataset attributes
         task_classes: List of class names for this task
         global_class_to_idx: Global mapping from class name to index
         train: If True, load training data, otherwise test data
+        use_rotation_aug: If True, apply random rotation augmentation (training only)
+        rotation_degrees: Range of rotation degrees
 
     Returns:
         TaskDataset containing data for the specified classes
     """
     filtered_data = []
 
+    # Get dataset class based on args.dataset (default to mvtec for backward compatibility)
+    dataset_name = getattr(args, 'dataset', 'mvtec')
+    DatasetClass = get_dataset_class(dataset_name)
+
     for class_name in task_classes:
         # Create dataset for specific class
-        class_dataset = MVTEC(
+        class_dataset = DatasetClass(
             root=args.data_path,
             class_name=class_name,
             train=train,
             img_size=args.img_size,
             crp_size=args.img_size,
-            msk_size=args.msk_size
+            msk_size=args.msk_size,
+            use_rotation_aug=use_rotation_aug if train else False,
+            rotation_degrees=rotation_degrees
         )
 
         # Add all data from this class
