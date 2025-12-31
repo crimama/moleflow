@@ -44,6 +44,8 @@ class MVTEC(Dataset):
         img_size: Size to resize images to.
         crp_size: Size to center crop images to.
         msk_size: Size to resize masks to.
+        use_rotation_aug: If True, apply random rotation augmentation (training only).
+        rotation_degrees: Range of rotation degrees (default: 180 for full rotation).
     """
 
     CLASS_NAMES = MVTEC_CLASS_NAMES
@@ -58,6 +60,8 @@ class MVTEC(Dataset):
             img_size: int = 518,
             crp_size: int = 518,
             msk_size: int = 256,
+            use_rotation_aug: bool = False,
+            rotation_degrees: float = 180.0,
             **kwargs):
         self.root = root
         self.class_name = class_name
@@ -65,6 +69,8 @@ class MVTEC(Dataset):
         self.img_size = img_size
         self.cropsize = [crp_size, crp_size]
         self.masksize = msk_size
+        self.use_rotation_aug = use_rotation_aug and train  # Only for training
+        self.rotation_degrees = rotation_degrees
 
         # Load dataset
         if self.class_name is None:
@@ -75,12 +81,24 @@ class MVTEC(Dataset):
         # Set transforms
         self.transform = transform
         if transform is None:
-            self.transform = T.Compose([
-                T.Resize(img_size, Image.LANCZOS),
-                T.CenterCrop(crp_size),
-                T.ToTensor(),
-                T.Normalize(IMAGENET_MEAN, IMAGENET_STD)
-            ])
+            if self.use_rotation_aug:
+                # With rotation augmentation (training only)
+                self.transform = T.Compose([
+                    T.Resize(img_size, Image.LANCZOS),
+                    T.RandomRotation(degrees=(-rotation_degrees, rotation_degrees), fill=0),
+                    T.CenterCrop(crp_size),
+                    T.ToTensor(),
+                    T.Normalize(IMAGENET_MEAN, IMAGENET_STD)
+                ])
+                print(f"   🔄 [Augmentation] Random rotation enabled: ±{rotation_degrees}°")
+            else:
+                # Standard transform (no augmentation)
+                self.transform = T.Compose([
+                    T.Resize(img_size, Image.LANCZOS),
+                    T.CenterCrop(crp_size),
+                    T.ToTensor(),
+                    T.Normalize(IMAGENET_MEAN, IMAGENET_STD)
+                ])
 
         self.target_transform = target_transform
         if target_transform is None:
