@@ -844,3 +844,100 @@ python run_moleflow.py \
 3. 병목 클래스(macaroni1/2) 분석 후 클래스별 전략 수립
 
 ---
+
+## 13. 새로운 기본 설정 정의 (2026-01-03)
+
+### 13.1 공식 기본 설정 (Default Configuration)
+
+MVTec 실험에서 검증된 최적 설정을 앞으로의 모든 실험, 결과 분석, 논문 작성 및 발표 자료의 **기본(Default)** 으로 사용합니다.
+
+| 항목 | 값 | 비고 |
+|------|-----|------|
+| **Dataset** | MVTec / VISA | 벤치마크 |
+| **Backbone** | WideResNet-50 | 다중 스케일 특징 |
+| **TailW** | **0.7** | Tail-Aware Loss 가중치 |
+| **TopK** | **3** | Score Aggregation Top-K |
+| **TailTopK** | **2** (0.02) | Tail Loss Top-K Ratio |
+| **ScaleK** | **5** | Scale Context Kernel |
+| **Learning Rate** | **3e-4** | 학습률 |
+| **LoRA Rank** | 64 | 기본값 |
+| **DIA Blocks** | 4 | 기본값 |
+| **Coupling Layers** | 10 | 기본값 |
+| **Lambda Logdet** | 1e-4 | Log-det 정규화 |
+| **Epochs** | 80 | 기본 학습 에포크 |
+
+### 13.2 기본 설정 명명법
+
+```
+MVTec-WRN50-TailW0.7-TopK3-TailTopK2-ScaleK5-lr3e-4
+```
+
+### 13.3 기본 설정 실행 명령어
+
+```bash
+python run_moleflow.py \
+    --dataset mvtec \
+    --data_path /Data/MVTecAD \
+    --backbone_name wide_resnet50_2 \
+    --num_epochs 80 \
+    --lr 3e-4 \
+    --lora_rank 64 \
+    --num_coupling_layers 10 \
+    --dia_n_blocks 4 \
+    --use_tail_aware_loss \
+    --tail_weight 0.7 \
+    --tail_top_k_ratio 0.02 \
+    --score_aggregation_mode top_k \
+    --score_aggregation_top_k 3 \
+    --lambda_logdet 1e-4 \
+    --scale_context_kernel 5 \
+    --log_dir ./logs/Final \
+    --experiment_name Default-TailW0.7-TopK3-TailTopK2-ScaleK5-lr3e-4
+```
+
+### 13.4 VISA 데이터셋용 기본 설정
+
+```bash
+# VISA 기본 설정 (run_visa.sh 업데이트됨)
+./run_visa.sh default
+```
+
+### 13.5 Ablation 실험 비교 기준
+
+모든 ablation 실험은 위 기본 설정을 baseline으로 하여 **하나의 파라미터만 변경**하여 비교합니다.
+
+| Ablation | 변경 | 목적 |
+|----------|------|------|
+| TailW0.8 | tail_weight=0.8 | 더 강한 tail 학습 |
+| TopK5 | top_k=5 | TopK 효과 비교 |
+| LoRA128-DIA6 | lora_rank=128, dia=6 | 모델 용량 증가 |
+| ViT | backbone=ViT-Base | Backbone 비교 |
+
+### 13.6 run_visa.sh 업데이트 내역
+
+`/Volume/MoLeFlow/run_visa.sh` 파일이 새로운 기본 설정으로 업데이트되었습니다.
+
+**주요 변경 사항**:
+- 기본 설정: TailW0.7 → TopK3 → TailTopK2 → ScaleK5 → lr3e-4
+- 5개의 병렬 실험 구성:
+  - GPU 0: DEFAULT (기본 설정)
+  - GPU 1: LoRA128 + DIA6 Ablation
+  - GPU 2: TailW0.8 Ablation
+  - GPU 3: TopK5 Ablation
+  - GPU 4: ViT Backbone
+
+**실행 방법**:
+```bash
+# 전체 실험 (5 GPUs 병렬)
+./run_visa.sh all
+
+# 기본 설정만 실행
+./run_visa.sh default
+
+# 특정 ablation만 실행
+./run_visa.sh ablation-tailw08
+./run_visa.sh ablation-topk5
+./run_visa.sh vit
+```
+
+---
