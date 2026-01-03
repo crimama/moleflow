@@ -60,7 +60,7 @@ class AblationConfig:
     lora_alpha: float = 1.0
 
     # Adapter mode configuration
-    adapter_mode: str = "soft_ln"  # "soft_ln", "standard", "no_ln_after_task0"
+    adapter_mode: str = "whitening"  # "soft_ln", "standard", "no_ln_after_task0", "whitening"
     soft_ln_init_scale: float = 0.01  # Initial scale for soft LN (used when adapter_mode="soft_ln")
 
     # Flow scale(s) regularization
@@ -91,7 +91,7 @@ class AblationConfig:
 
     # Solution 3: Whitening-based Distribution Adapter
     # Replaces SoftLN with Whitening + constrained de-whitening
-    use_whitening_adapter: bool = False
+    use_whitening_adapter: bool = True
 
     # Solution 2: Multi-Scale Context (Lightweight dilated convolutions)
     # Expands receptive field from 3×3 to 9×9 with attention-weighted fusion
@@ -293,8 +293,8 @@ class AblationConfig:
 
     # Deep Invertible Adapter (DIA)
     # Adds a small task-specific flow after base NF for nonlinear manifold adaptation
-    use_dia: bool = False
-    dia_n_blocks: int = 2                    # Number of coupling blocks per DIA
+    use_dia: bool = True
+    dia_n_blocks: int = 4                    # Number of coupling blocks per DIA
     dia_hidden_ratio: float = 0.5            # Hidden dim = channels * hidden_ratio
 
     # Orthogonal Gradient Projection (OGP)
@@ -333,6 +333,29 @@ class AblationConfig:
     tc_ms_context_use_regional: bool = True     # Use regional context pooling
     tc_ms_context_lora_rank: int = 16           # LoRA rank for regional_proj
 
+    # ==========================================================================
+    # V7 Denoising Score Matching (DSM)
+    # ==========================================================================
+    # Combines NF's conservative field with MULDE-style score matching
+    # Key insight: NF guarantees conservative vector field (curl=0) for score
+    #
+    # DSM Loss: L_DSM = E[||∇_x log p(x_noisy) + ε/σ||²]
+    # Hybrid:   L = α*L_NLL + (1-α)*L_DSM
+    #
+    # Benefits:
+    # - Improved OOD robustness (learns score on manifold + surroundings)
+    # - More consistent anomaly scores across tasks
+    # - Better handling of hard classes (screw, capsule)
+    use_dsm: bool = False
+    dsm_mode: str = "hybrid"              # "dsm_only", "nll_only", "hybrid"
+    dsm_alpha: float = 0.5                # NLL weight in hybrid: α*NLL + (1-α)*DSM
+    dsm_sigma_min: float = 0.01           # Minimum noise scale
+    dsm_sigma_max: float = 1.0            # Maximum noise scale
+    dsm_n_projections: int = 1            # SSM projections (1 is usually enough)
+    dsm_use_sliced: bool = True           # Use Sliced Score Matching (efficient)
+    dsm_noise_mode: str = "geometric"     # "geometric" (LogUniform), "uniform", "fixed"
+    dsm_clean_penalty: float = 0.0        # MULDE-style clean data penalty weight
+
     def __post_init__(self):
         """Validate configuration."""
         if not self.use_lora and self.use_task_bias:
@@ -353,6 +376,11 @@ class AblationConfig:
         # V3: Adaptive unfreeze requires EWC or distillation for stability
         if self.use_adaptive_unfreeze and not (self.use_ewc or self.use_distillation or self.use_feature_bank):
             print("⚠️  Warning: use_adaptive_unfreeze without EWC/distillation/feature_bank may cause forgetting")
+
+        # V7: DSM auto-disables DIA (Flow itself acts as density function)
+        if self.use_dsm and self.use_dia:
+            print("⚠️  Warning: DSM enabled → DIA auto-disabled (Flow is the density function)")
+            self.use_dia = False
 
     def get_active_components(self) -> list:
         """Return list of active component names."""
@@ -395,6 +423,8 @@ class AblationConfig:
             components.append("OGP")
         if self.use_task_conditioned_ms_context:
             components.append("TCMSContext")
+        if self.use_dsm:
+            components.append("DSM")
 
         return components
 
@@ -440,6 +470,8 @@ class AblationConfig:
             v3_parts.append("ogp")
         if self.use_task_conditioned_ms_context:
             v3_parts.append("tcmsctx")
+        if self.use_dsm:
+            v3_parts.append(f"dsm_{self.dsm_mode}_a{self.dsm_alpha}")
 
         if v3_parts:
             base_name += "_v3_" + "_".join(v3_parts)
@@ -1065,6 +1097,50 @@ def add_ablation_args(parser):
         help='[V6-Exp3] Apply spectral normalization to subnet layers'
     )
 
+    # =========================================================================
+    # V7 Denoising Score Matching (DSM)
+    # =========================================================================
+    dsm_group = parser.add_argument_group('V7 Denoising Score Matching (DSM)')
+
+    dsm_group.add_argument(
+        '--use_dsm', action='store_true',
+        help='[V7] Enable Denoising Score Matching loss (combines NF with score matching)'
+    )
+    dsm_group.add_argument(
+        '--dsm_mode', type=str, default='hybrid',
+        choices=['dsm_only', 'nll_only', 'hybrid'],
+        help='[V7] DSM training mode (default: hybrid)'
+    )
+    dsm_group.add_argument(
+        '--dsm_alpha', type=float, default=0.5,
+        help='[V7] Hybrid loss weight: alpha*NLL + (1-alpha)*DSM (default: 0.5)'
+    )
+    dsm_group.add_argument(
+        '--dsm_sigma_min', type=float, default=0.01,
+        help='[V7] Minimum noise scale (default: 0.01)'
+    )
+    dsm_group.add_argument(
+        '--dsm_sigma_max', type=float, default=1.0,
+        help='[V7] Maximum noise scale (default: 1.0)'
+    )
+    dsm_group.add_argument(
+        '--dsm_n_projections', type=int, default=1,
+        help='[V7] Number of SSM projections (default: 1)'
+    )
+    dsm_group.add_argument(
+        '--dsm_use_sliced', action='store_true', default=True,
+        help='[V7] Use Sliced Score Matching for efficiency (default: True)'
+    )
+    dsm_group.add_argument(
+        '--dsm_noise_mode', type=str, default='geometric',
+        choices=['geometric', 'uniform', 'fixed'],
+        help='[V7] Noise schedule mode (default: geometric)'
+    )
+    dsm_group.add_argument(
+        '--dsm_clean_penalty', type=float, default=0.0,
+        help='[V7] MULDE-style clean data penalty weight (default: 0.0)'
+    )
+
     return parser
 
 
@@ -1385,6 +1461,28 @@ def parse_ablation_args(parsed_args) -> AblationConfig:
         config.use_task_separated = True
     if hasattr(parsed_args, 'use_spectral_norm') and parsed_args.use_spectral_norm:
         config.use_spectral_norm = True
+
+    # =========================================================================
+    # V7 Denoising Score Matching (DSM)
+    # =========================================================================
+    if hasattr(parsed_args, 'use_dsm') and parsed_args.use_dsm:
+        config.use_dsm = True
+    if hasattr(parsed_args, 'dsm_mode'):
+        config.dsm_mode = parsed_args.dsm_mode
+    if hasattr(parsed_args, 'dsm_alpha'):
+        config.dsm_alpha = parsed_args.dsm_alpha
+    if hasattr(parsed_args, 'dsm_sigma_min'):
+        config.dsm_sigma_min = parsed_args.dsm_sigma_min
+    if hasattr(parsed_args, 'dsm_sigma_max'):
+        config.dsm_sigma_max = parsed_args.dsm_sigma_max
+    if hasattr(parsed_args, 'dsm_n_projections'):
+        config.dsm_n_projections = parsed_args.dsm_n_projections
+    if hasattr(parsed_args, 'dsm_use_sliced'):
+        config.dsm_use_sliced = parsed_args.dsm_use_sliced
+    if hasattr(parsed_args, 'dsm_noise_mode'):
+        config.dsm_noise_mode = parsed_args.dsm_noise_mode
+    if hasattr(parsed_args, 'dsm_clean_penalty'):
+        config.dsm_clean_penalty = parsed_args.dsm_clean_penalty
 
     # Re-run __post_init__ to apply all validation/conflict resolution logic
     # This is necessary because __post_init__ was called when config was created (with default values)

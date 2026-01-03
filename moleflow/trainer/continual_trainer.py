@@ -165,6 +165,16 @@ class MoLEContinualTrainer:
             self.use_task_separated = False
             self.use_regular_linear = False
             self.use_spectral_norm = False
+            # V7: DSM defaults
+            self.use_dsm = False
+            self.dsm_mode = 'hybrid'
+            self.dsm_alpha = 0.5
+            self.dsm_sigma_min = 0.01
+            self.dsm_sigma_max = 1.0
+            self.dsm_n_projections = 1
+            self.dsm_use_sliced = True
+            self.dsm_noise_mode = 'geometric'
+            self.dsm_clean_penalty = 0.0
         else:
             self.use_lora = ablation_config.use_lora
             self.use_router = ablation_config.use_router
@@ -215,6 +225,16 @@ class MoLEContinualTrainer:
             self.use_task_separated = getattr(ablation_config, 'use_task_separated', False)
             self.use_regular_linear = getattr(ablation_config, 'use_regular_linear', False)
             self.use_spectral_norm = getattr(ablation_config, 'use_spectral_norm', False)
+            # V7: Denoising Score Matching (DSM) settings
+            self.use_dsm = getattr(ablation_config, 'use_dsm', False)
+            self.dsm_mode = getattr(ablation_config, 'dsm_mode', 'hybrid')
+            self.dsm_alpha = getattr(ablation_config, 'dsm_alpha', 0.5)
+            self.dsm_sigma_min = getattr(ablation_config, 'dsm_sigma_min', 0.01)
+            self.dsm_sigma_max = getattr(ablation_config, 'dsm_sigma_max', 1.0)
+            self.dsm_n_projections = getattr(ablation_config, 'dsm_n_projections', 1)
+            self.dsm_use_sliced = getattr(ablation_config, 'dsm_use_sliced', True)
+            self.dsm_noise_mode = getattr(ablation_config, 'dsm_noise_mode', 'geometric')
+            self.dsm_clean_penalty = getattr(ablation_config, 'dsm_clean_penalty', 0.0)
 
         # Slow-Fast hyperparameters
         self.slow_lr_ratio = slow_lr_ratio
@@ -237,6 +257,21 @@ class MoLEContinualTrainer:
             print(f"✅ [V3] OGP enabled: threshold={self.ogp_threshold}, max_rank={self.ogp_max_rank}")
         else:
             self.ogp = None
+
+        # V7: Initialize DSM (Denoising Score Matching) if enabled
+        if self.use_dsm:
+            from moleflow.models.dsm import DSMLoss
+            self.dsm_loss_fn = DSMLoss(
+                sigma_min=self.dsm_sigma_min,
+                sigma_max=self.dsm_sigma_max,
+                use_sliced=self.dsm_use_sliced,
+                n_projections=self.dsm_n_projections,
+                noise_mode=self.dsm_noise_mode
+            )
+            print(f"✅ [V7] DSM enabled: mode={self.dsm_mode}, alpha={self.dsm_alpha}, "
+                  f"sigma=[{self.dsm_sigma_min}, {self.dsm_sigma_max}], sliced={self.dsm_use_sliced}")
+        else:
+            self.dsm_loss_fn = None
 
         # V6.1: Initialize STN (Spatial Transformer Network) if enabled
         if self.use_stn:
@@ -299,6 +334,10 @@ class MoLEContinualTrainer:
         # V3: Log OGP status
         if self.use_ogp:
             print(f"[V3] OGP: threshold={self.ogp_threshold}, max_rank={self.ogp_max_rank}, n_samples={self.ogp_n_samples}")
+
+        # V7: Log DSM status
+        if self.use_dsm:
+            print(f"[V7] DSM: mode={self.dsm_mode}, alpha={self.dsm_alpha}, sigma=[{self.dsm_sigma_min}, {self.dsm_sigma_max}]")
 
     def _log(self, message: str, level: str = 'info'):
         """Log message using logger if available, otherwise print."""
@@ -398,6 +437,75 @@ class MoLEContinualTrainer:
         combined_loss = (1 - w) * mean_loss + w * tail_loss
 
         return combined_loss
+
+    def _compute_dsm_hybrid_loss(self,
+                                  patch_embeddings_with_pos: torch.Tensor,
+                                  z: torch.Tensor,
+                                  logdet_patch: torch.Tensor) -> tuple:
+        """
+        V7: Compute hybrid NLL + DSM loss.
+
+        L_total = alpha * L_NLL + (1-alpha) * L_DSM + lambda_clean * L_clean
+
+        This combines:
+        1. Standard NLL loss (density estimation)
+        2. DSM loss (score matching for robustness)
+        3. Optional clean data penalty (MULDE-style)
+
+        Args:
+            patch_embeddings_with_pos: (B, H, W, D) input features (for DSM)
+            z: (B, H, W, D) latent from forward pass
+            logdet_patch: (B, H, W) log det from forward pass
+
+        Returns:
+            total_loss: Combined loss
+            info: Dict with component losses
+        """
+        B, H, W, D = z.shape
+        info = {}
+
+        # 1. NLL loss (standard)
+        nll_loss = self._compute_nll_loss(z, logdet_patch)
+        info['nll_loss'] = nll_loss.item()
+
+        # 2. DSM loss
+        if self.dsm_mode in ['dsm_only', 'hybrid'] and self.dsm_loss_fn is not None:
+            dsm_loss, dsm_info = self.dsm_loss_fn(
+                self.nf_model,
+                patch_embeddings_with_pos
+            )
+            info.update(dsm_info)
+        else:
+            dsm_loss = torch.tensor(0.0, device=z.device)
+            info['dsm_loss'] = 0.0
+
+        # 3. Clean data penalty (MULDE-style) - optional
+        if self.dsm_clean_penalty > 0:
+            # Encourage high likelihood for clean samples
+            log_pz = -0.5 * (z ** 2).sum(dim=-1) - 0.5 * D * math.log(2 * math.pi)
+            log_px = log_pz + logdet_patch
+            clean_penalty = -log_px.mean()  # Minimize negative log-likelihood
+            info['clean_penalty'] = clean_penalty.item()
+        else:
+            clean_penalty = torch.tensor(0.0, device=z.device)
+
+        # 4. Combine losses based on mode
+        if self.dsm_mode == 'nll_only':
+            total_loss = nll_loss
+        elif self.dsm_mode == 'dsm_only':
+            total_loss = dsm_loss
+        else:  # hybrid
+            alpha = self.dsm_alpha
+            total_loss = alpha * nll_loss + (1 - alpha) * dsm_loss
+            info['dsm_alpha'] = alpha
+
+        # Add clean penalty
+        if self.dsm_clean_penalty > 0:
+            total_loss = total_loss + self.dsm_clean_penalty * clean_penalty
+
+        info['total_loss'] = total_loss.item()
+
+        return total_loss, info
 
     def train_task(self,
                    task_id: int,
@@ -596,8 +704,20 @@ class MoLEContinualTrainer:
                 # Forward through NF to get latent z and patch-wise logdet
                 z, logdet_patch = self.nf_model.forward(patch_embeddings_with_pos, reverse=False)
 
+                # V7: Compute loss with DSM if enabled
+                dsm_info = None
+                if self.use_dsm and self.dsm_loss_fn is not None:
+                    total_loss, dsm_info = self._compute_dsm_hybrid_loss(
+                        patch_embeddings_with_pos, z, logdet_patch
+                    )
+                    nll_loss = torch.tensor(dsm_info['nll_loss'])
+                    logdet_reg = None
+                    # Add logdet regularization if enabled
+                    if self.lambda_logdet > 0:
+                        logdet_reg = (logdet_patch ** 2).mean()
+                        total_loss = total_loss + self.lambda_logdet * logdet_reg
                 # V5: Compute loss (tail-aware or standard NLL)
-                if self.use_tail_aware_loss:
+                elif self.use_tail_aware_loss:
                     nll_loss = self._compute_tail_aware_loss(z, logdet_patch)
                     total_loss = nll_loss
                     logdet_reg = None
@@ -762,8 +882,20 @@ class MoLEContinualTrainer:
                 # Forward through NF to get latent z and patch-wise logdet
                 z, logdet_patch = self.nf_model.forward(patch_embeddings_with_pos, reverse=False)
 
+                # V7: Compute loss with DSM if enabled
+                dsm_info = None
+                if self.use_dsm and self.dsm_loss_fn is not None:
+                    total_loss, dsm_info = self._compute_dsm_hybrid_loss(
+                        patch_embeddings_with_pos, z, logdet_patch
+                    )
+                    nll_loss = torch.tensor(dsm_info['nll_loss'])
+                    logdet_reg = None
+                    # Add logdet regularization if enabled
+                    if self.lambda_logdet > 0:
+                        logdet_reg = (logdet_patch ** 2).mean()
+                        total_loss = total_loss + self.lambda_logdet * logdet_reg
                 # V5: Compute loss (tail-aware or standard NLL)
-                if self.use_tail_aware_loss:
+                elif self.use_tail_aware_loss:
                     nll_loss = self._compute_tail_aware_loss(z, logdet_patch)
                     total_loss = nll_loss
                     logdet_reg = None

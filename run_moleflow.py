@@ -52,13 +52,13 @@ def main():
     # Parse arguments
     parser = argparse.ArgumentParser(description='MoLE-Flow: Continual Anomaly Detection')
     parser.add_argument('--task_classes', type=str, nargs='+',
-                        default=['leather', 'grid', 'transistor','screw'],
+                        default=['bottle', 'cable', 'capsule', 'carpet', 'grid', 'hazelnut', 'leather', 'metal_nut', 'pill', 'screw', 'tile', 'toothbrush', 'transistor', 'wood', 'zipper'],
                         help='Classes to learn sequentially')
-    parser.add_argument('--num_epochs', type=int, default=40,
+    parser.add_argument('--num_epochs', type=int, default=60,
                         help='Number of epochs per task')
     parser.add_argument('--lora_rank', type=int, default=64,
                         help='LoRA rank for adaptation')
-    parser.add_argument('--lr', type=float, default=1e-4,
+    parser.add_argument('--lr', type=float, default=2e-4,
                         help='Learning rate')
     parser.add_argument('--slow_lr_ratio', type=float, default=0.2,
                         help='LR ratio for slow update')
@@ -71,7 +71,7 @@ def main():
     parser.add_argument('--experiment_name', type=str, default=None,
                         help='Name of the experiment')
     parser.add_argument('--backbone_name', type=str,
-                        default='vit_base_patch16_224.augreg2_in21k_ft_in1k',
+                        default='wide_resnet50_2',
                         help='Backbone model name from timm (ViT: vit_*, deit_*, etc. / CNN: wide_resnet50_2, efficientnet_b7, etc.)')
     parser.add_argument('--img_size', type=int, default=224,
                         help='Input image size (default: 224)')
