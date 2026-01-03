@@ -1,0 +1,79 @@
+\begin{thebibliography}{7}
+\expandafter\ifx\csname natexlab\endcsname\relax\def\natexlab#1{#1}\fi
+\providecommand{\url}[1]{\texttt{#1}}
+\providecommand{\href}[2]{#2}
+\providecommand{\path}[1]{#1}
+\providecommand{\DOIprefix}{doi:}
+\providecommand{\ArXivprefix}{arXiv:}
+\providecommand{\URLprefix}{URL: }
+\providecommand{\Pubmedprefix}{pmid:}
+\providecommand{\doi}[1]{\href{http://dx.doi.org/#1}{\path{#1}}}
+\providecommand{\Pubmed}[1]{\href{pmid:#1}{\path{#1}}}
+\providecommand{\bibinfo}[2]{#2}
+\ifx\xfnm\relax \def\xfnm[#1]{\unskip,\space#1}\fi
+%Type = Inproceedings
+\bibitem[{Bergmann et~al.(2019)Bergmann, Fauser, Sattlegger and
+  Steger}]{bergmann2019mvtec}
+\bibinfo{author}{Bergmann, P.}, \bibinfo{author}{Fauser, M.},
+  \bibinfo{author}{Sattlegger, D.}, \bibinfo{author}{Steger, C.},
+  \bibinfo{year}{2019}.
+\newblock \bibinfo{title}{Mvtec ad--a comprehensive real-world dataset for
+  unsupervised anomaly detection}, in: \bibinfo{booktitle}{Proceedings of the
+  IEEE/CVF conference on computer vision and pattern recognition}, pp.
+  \bibinfo{pages}{9592--9600}.
+%Type = Article
+\bibitem[{Je{\v{z}}ek et~al.(2021)Je{\v{z}}ek, Jonak, Burget, Dutta
+  et~al.}]{jezek2021deep}
+\bibinfo{author}{Je{\v{z}}ek, S.}, \bibinfo{author}{Jonak, M.},
+  \bibinfo{author}{Burget, R.}, \bibinfo{author}{Dutta, M.K.}, et~al.,
+  \bibinfo{year}{2021}.
+\newblock \bibinfo{title}{Deep learning-based defect detection of metal parts:
+  Evaluating current methods in complex conditions}.
+\newblock \bibinfo{journal}{arXiv preprint arXiv:2110.11768} .
+%Type = Article
+\bibitem[{Kirkpatrick et~al.(2017)Kirkpatrick, Pascanu, Rabinowitz, Veness,
+  Desjardins, Rusu, Milan, Quan, Ramalho, Grabska-Barwinska
+  et~al.}]{kirkpatrick2017ewc}
+\bibinfo{author}{Kirkpatrick, J.}, \bibinfo{author}{Pascanu, R.},
+  \bibinfo{author}{Rabinowitz, N.}, \bibinfo{author}{Veness, J.},
+  \bibinfo{author}{Desjardins, G.}, \bibinfo{author}{Rusu, A.A.},
+  \bibinfo{author}{Milan, K.}, \bibinfo{author}{Quan, J.},
+  \bibinfo{author}{Ramalho, T.}, \bibinfo{author}{Grabska-Barwinska, A.},
+  et~al., \bibinfo{year}{2017}.
+\newblock \bibinfo{title}{Overcoming catastrophic forgetting in neural
+  networks}.
+\newblock \bibinfo{journal}{Proceedings of the national academy of sciences}
+  \bibinfo{volume}{114}, \bibinfo{pages}{3521--3526}.
+%Type = Inproceedings
+\bibitem[{Li et~al.(2022)Li, Lin, Tsai, Lin, Yang and Kira}]{li2022dne}
+\bibinfo{author}{Li, C.L.}, \bibinfo{author}{Lin, T.H.}, \bibinfo{author}{Tsai,
+  Y.Y.}, \bibinfo{author}{Lin, Y.C.}, \bibinfo{author}{Yang, M.H.},
+  \bibinfo{author}{Kira, Z.}, \bibinfo{year}{2022}.
+\newblock \bibinfo{title}{Towards continual adaptation in industrial anomaly
+  detection}, in: \bibinfo{booktitle}{Proceedings of the IEEE/CVF Conference on
+  Computer Vision and Pattern Recognition}.
+%Type = Inproceedings
+\bibitem[{Li and Hoiem(2017)}]{li2017lwf}
+\bibinfo{author}{Li, Z.}, \bibinfo{author}{Hoiem, D.}, \bibinfo{year}{2017}.
+\newblock \bibinfo{title}{Learning without forgetting}, in:
+  \bibinfo{booktitle}{European conference on computer vision},
+  \bibinfo{organization}{Springer}. pp. \bibinfo{pages}{614--629}.
+%Type = Inproceedings
+\bibitem[{Lu et~al.(2024)Lu, Xie, Wang, Zhang, Dai and Wang}]{lu2024ucad}
+\bibinfo{author}{Lu, J.}, \bibinfo{author}{Xie, E.}, \bibinfo{author}{Wang,
+  W.}, \bibinfo{author}{Zhang, W.}, \bibinfo{author}{Dai, J.},
+  \bibinfo{author}{Wang, L.}, \bibinfo{year}{2024}.
+\newblock \bibinfo{title}{Ucad: A unified framework for continual anomaly
+  detection}, in: \bibinfo{booktitle}{Proceedings of the AAAI Conference on
+  Artificial Intelligence}, pp. \bibinfo{pages}{3850--3858}.
+%Type = Inproceedings
+\bibitem[{Zou et~al.(2022)Zou, Jeong, Pemula, Zhang and Dabeer}]{zou2022spot}
+\bibinfo{author}{Zou, Y.}, \bibinfo{author}{Jeong, J.},
+  \bibinfo{author}{Pemula, L.}, \bibinfo{author}{Zhang, D.},
+  \bibinfo{author}{Dabeer, O.}, \bibinfo{year}{2022}.
+\newblock \bibinfo{title}{Spot-the-difference self-supervised pre-training for
+  anomaly detection and segmentation}, in: \bibinfo{booktitle}{European
+  Conference on Computer Vision}, \bibinfo{organization}{Springer}. pp.
+  \bibinfo{pages}{392--408}.
+
+\end{thebibliography}

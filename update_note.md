@@ -277,6 +277,365 @@ python run_moleflow.py \
 
 ---
 
+## 14. Continual Learning 시나리오 실험 설계 (2026-01-04)
+
+### 14.1 개요
+
+기존 실험은 모두 1-1 시나리오 (15개의 task, 각 1개 클래스)로 진행되었습니다.
+CL 시나리오 변경, 클래스 순서 변경, Task 0 의존성 분석을 위한 6개의 실험을 설계합니다.
+
+**기준 설정**: `MVTec-WRN50-TailW0.7-TopK3-TailTopK2-ScaleK5-lr3e-4-MAIN`
+- tail_weight: 0.7
+- score_aggregation_top_k: 3
+- tail_top_k_ratio: 0.02
+- scale_context_kernel: 5
+- lr: 3e-4
+- num_epochs: 60
+
+**기준 성능** (1-1 시나리오):
+- Image AUC: 0.9829
+- Pixel AUC: 0.9782
+- Pixel AP: 0.5420
+- Router Accuracy: 100%
+
+### 14.2 MVTec 클래스 특성 분석
+
+| 카테고리 | 클래스 | 특성 | 난이도 |
+|----------|--------|------|--------|
+| **Texture** | carpet, grid, leather, tile, wood | 균일한 패턴, 반복적 구조 | 쉬움 |
+| **Object** | bottle, cable, capsule, hazelnut, metal_nut, pill, screw, toothbrush, transistor, zipper | 명확한 형태, 위치 변이 | 중간~어려움 |
+
+**클래스별 성능 순위** (기준 설정 기준):
+- 최고: bottle (1.0), leather (1.0), metal_nut (1.0), tile (1.0), hazelnut (0.999)
+- 중간: carpet (0.995), grid (0.993), cable (0.990), pill (0.991), zipper (0.992)
+- 최저: screw (0.922), toothbrush (0.908), capsule (0.973)
+
+### 14.3 실험 설계 (6개 시나리오)
+
+---
+
+#### **실험 1: CL 시나리오 3-3 (5 Tasks)**
+
+**목적**: Task당 클래스 수 증가가 성능에 미치는 영향 분석
+
+**시나리오**: 3개 클래스씩 5개 Task로 구성
+- Task 0: bottle, cable, capsule (3개)
+- Task 1: carpet, grid, hazelnut (3개)
+- Task 2: leather, metal_nut, pill (3개)
+- Task 3: screw, tile, toothbrush (3개)
+- Task 4: transistor, wood, zipper (3개)
+
+**가설**:
+- Task당 클래스 수 증가 -> 더 일반화된 base representation 학습
+- Router 분류 부담 감소 (15개 -> 5개)
+- Forgetting 가능성 감소 (총 incremental step: 4 vs 14)
+
+```bash
+python run_moleflow.py \
+    --dataset mvtec \
+    --data_path /Data/MVTecAD \
+    --task_classes bottle cable capsule carpet grid hazelnut leather metal_nut pill screw tile toothbrush transistor wood zipper \
+    --cl_scenario 3-3 \
+    --experiment_name "MVTec-CL-3-3-TailW0.7-TopK3-TailTopK2-ScaleK5-lr3e-4" \
+    --backbone_name wide_resnet50_2 \
+    --num_epochs 60 \
+    --lr 3e-4 \
+    --lora_rank 64 \
+    --num_coupling_layers 8 \
+    --dia_n_blocks 4 \
+    --use_tail_aware_loss \
+    --tail_weight 0.7 \
+    --tail_top_k_ratio 0.02 \
+    --score_aggregation_mode top_k \
+    --score_aggregation_top_k 3 \
+    --lambda_logdet 1e-4 \
+    --scale_context_kernel 5 \
+    --log_dir ./logs/Final
+```
+
+---
+
+#### **실험 2: CL 시나리오 5-5 (3 Tasks)**
+
+**목적**: 가장 큰 task 단위의 성능 분석
+
+**시나리오**: 5개 클래스씩 3개 Task로 구성
+- Task 0: bottle, cable, capsule, carpet, grid (5개)
+- Task 1: hazelnut, leather, metal_nut, pill, screw (5개)
+- Task 2: tile, toothbrush, transistor, wood, zipper (5개)
+
+**가설**:
+- 최소한의 incremental step (2 steps)
+- 가장 낮은 forgetting 예상
+- Base 모델이 충분히 일반화됨
+
+```bash
+python run_moleflow.py \
+    --dataset mvtec \
+    --data_path /Data/MVTecAD \
+    --task_classes bottle cable capsule carpet grid hazelnut leather metal_nut pill screw tile toothbrush transistor wood zipper \
+    --cl_scenario 5-5 \
+    --experiment_name "MVTec-CL-5-5-TailW0.7-TopK3-TailTopK2-ScaleK5-lr3e-4" \
+    --backbone_name wide_resnet50_2 \
+    --num_epochs 60 \
+    --lr 3e-4 \
+    --lora_rank 64 \
+    --num_coupling_layers 8 \
+    --dia_n_blocks 4 \
+    --use_tail_aware_loss \
+    --tail_weight 0.7 \
+    --tail_top_k_ratio 0.02 \
+    --score_aggregation_mode top_k \
+    --score_aggregation_top_k 3 \
+    --lambda_logdet 1e-4 \
+    --scale_context_kernel 5 \
+    --log_dir ./logs/Final
+```
+
+---
+
+#### **실험 3: CL 시나리오 14-1 (2 Tasks - 극단적)**
+
+**목적**: "거의 Joint Training" vs 완전 Incremental 비교
+
+**시나리오**: 14개 클래스 + 1개 클래스
+- Task 0: bottle ~ wood (14개) - 대규모 base 학습
+- Task 1: zipper (1개) - 최소 incremental
+
+**가설**:
+- Task 0에서 거의 joint training 수준의 일반화
+- Task 1에서 zipper만 학습 - forgetting 최소화
+- Router가 14:1로 불균형, 가장 쉬운 routing 문제
+
+```bash
+python run_moleflow.py \
+    --dataset mvtec \
+    --data_path /Data/MVTecAD \
+    --task_classes bottle cable capsule carpet grid hazelnut leather metal_nut pill screw tile toothbrush transistor wood zipper \
+    --cl_scenario 14-1 \
+    --experiment_name "MVTec-CL-14-1-TailW0.7-TopK3-TailTopK2-ScaleK5-lr3e-4" \
+    --backbone_name wide_resnet50_2 \
+    --num_epochs 60 \
+    --lr 3e-4 \
+    --lora_rank 64 \
+    --num_coupling_layers 8 \
+    --dia_n_blocks 4 \
+    --use_tail_aware_loss \
+    --tail_weight 0.7 \
+    --tail_top_k_ratio 0.02 \
+    --score_aggregation_mode top_k \
+    --score_aggregation_top_k 3 \
+    --lambda_logdet 1e-4 \
+    --scale_context_kernel 5 \
+    --log_dir ./logs/Final
+```
+
+---
+
+#### **실험 4: 클래스 순서 변경 - Texture First**
+
+**목적**: Task 0에서 texture 클래스 학습이 성능에 미치는 영향
+
+**시나리오**: Texture 클래스 우선 학습 (1-1 시나리오)
+- 기존 순서: bottle, cable, capsule, carpet, grid, hazelnut, leather, ...
+- 변경 순서: **carpet, grid, leather, tile, wood**, bottle, cable, capsule, hazelnut, metal_nut, pill, screw, toothbrush, transistor, zipper
+
+**가설**:
+- Texture 클래스는 균일한 패턴을 가짐
+- Task 0에서 texture 학습 -> 더 일반화된 base representation 가능성
+- Object 클래스 학습 시 texture와의 분리 가능
+
+```bash
+python run_moleflow.py \
+    --dataset mvtec \
+    --data_path /Data/MVTecAD \
+    --task_classes carpet grid leather tile wood bottle cable capsule hazelnut metal_nut pill screw toothbrush transistor zipper \
+    --cl_scenario 1-1 \
+    --experiment_name "MVTec-CL-1-1-TextureFirst-TailW0.7-TopK3-TailTopK2-ScaleK5-lr3e-4" \
+    --backbone_name wide_resnet50_2 \
+    --num_epochs 60 \
+    --lr 3e-4 \
+    --lora_rank 64 \
+    --num_coupling_layers 8 \
+    --dia_n_blocks 4 \
+    --use_tail_aware_loss \
+    --tail_weight 0.7 \
+    --tail_top_k_ratio 0.02 \
+    --score_aggregation_mode top_k \
+    --score_aggregation_top_k 3 \
+    --lambda_logdet 1e-4 \
+    --scale_context_kernel 5 \
+    --log_dir ./logs/Final
+```
+
+---
+
+#### **실험 5: 클래스 순서 변경 - Hard First**
+
+**목적**: 어려운 클래스를 먼저 학습하는 것의 영향
+
+**시나리오**: 난이도 높은 클래스 우선 학습 (1-1 시나리오)
+- 변경 순서: **screw, toothbrush, capsule, cable, pill**, grid, zipper, transistor, carpet, wood, hazelnut, metal_nut, leather, tile, bottle
+
+**가설**:
+- Task 0에서 screw(가장 어려운 클래스) 학습
+- 어려운 클래스로 시작 -> base representation이 더 robust할 수 있음
+- 또는 overfitting으로 인해 일반화 실패 가능성
+
+```bash
+python run_moleflow.py \
+    --dataset mvtec \
+    --data_path /Data/MVTecAD \
+    --task_classes screw toothbrush capsule cable pill grid zipper transistor carpet wood hazelnut metal_nut leather tile bottle \
+    --cl_scenario 1-1 \
+    --experiment_name "MVTec-CL-1-1-HardFirst-TailW0.7-TopK3-TailTopK2-ScaleK5-lr3e-4" \
+    --backbone_name wide_resnet50_2 \
+    --num_epochs 60 \
+    --lr 3e-4 \
+    --lora_rank 64 \
+    --num_coupling_layers 8 \
+    --dia_n_blocks 4 \
+    --use_tail_aware_loss \
+    --tail_weight 0.7 \
+    --tail_top_k_ratio 0.02 \
+    --score_aggregation_mode top_k \
+    --score_aggregation_top_k 3 \
+    --lambda_logdet 1e-4 \
+    --scale_context_kernel 5 \
+    --log_dir ./logs/Final
+```
+
+---
+
+#### **실험 6: Task 0 의존성 분석 - Easy First**
+
+**목적**: 쉬운 클래스(높은 성능)로 시작하는 것의 영향
+
+**시나리오**: 높은 성능의 클래스 우선 학습 (1-1 시나리오)
+- 변경 순서: **bottle, leather, metal_nut, tile, hazelnut**, carpet, grid, cable, pill, zipper, transistor, wood, capsule, toothbrush, screw
+
+**가설**:
+- 가장 쉬운 클래스(bottle)로 Task 0 시작
+- 초기 base representation이 매우 좁게 특화될 수 있음
+- 또는 안정적인 학습 시작점 제공 가능
+
+```bash
+python run_moleflow.py \
+    --dataset mvtec \
+    --data_path /Data/MVTecAD \
+    --task_classes bottle leather metal_nut tile hazelnut carpet grid cable pill zipper transistor wood capsule toothbrush screw \
+    --cl_scenario 1-1 \
+    --experiment_name "MVTec-CL-1-1-EasyFirst-TailW0.7-TopK3-TailTopK2-ScaleK5-lr3e-4" \
+    --backbone_name wide_resnet50_2 \
+    --num_epochs 60 \
+    --lr 3e-4 \
+    --lora_rank 64 \
+    --num_coupling_layers 8 \
+    --dia_n_blocks 4 \
+    --use_tail_aware_loss \
+    --tail_weight 0.7 \
+    --tail_top_k_ratio 0.02 \
+    --score_aggregation_mode top_k \
+    --score_aggregation_top_k 3 \
+    --lambda_logdet 1e-4 \
+    --scale_context_kernel 5 \
+    --log_dir ./logs/Final
+```
+
+---
+
+### 14.4 실험 요약 테이블
+
+| # | 실험명 | 시나리오 | Task 수 | Task 0 클래스 | 핵심 분석 목표 |
+|---|--------|----------|---------|---------------|----------------|
+| 1 | CL-3-3 | 3-3 | 5 | bottle, cable, capsule | Task당 클래스 수 증가 효과 |
+| 2 | CL-5-5 | 5-5 | 3 | bottle~grid (5개) | 최소 incremental step |
+| 3 | CL-14-1 | 14-1 | 2 | bottle~wood (14개) | 극단적 base task |
+| 4 | TextureFirst | 1-1 | 15 | carpet | Texture 기반 base representation |
+| 5 | HardFirst | 1-1 | 15 | screw | 어려운 클래스로 시작 |
+| 6 | EasyFirst | 1-1 | 15 | bottle | 쉬운 클래스로 시작 |
+
+### 14.5 예상 결과 및 분석 계획
+
+#### 예상 결과
+
+| 실험 | 예상 Image AUC | 예상 Router Acc | 예상 Forgetting |
+|------|----------------|-----------------|-----------------|
+| **기준 (1-1)** | 0.9829 | 100% | 낮음 |
+| CL-3-3 | 0.980-0.985 | 100% | 더 낮음 |
+| CL-5-5 | 0.982-0.988 | 100% | 최소 |
+| CL-14-1 | 0.985-0.990 | 100% | 거의 없음 |
+| TextureFirst | 0.978-0.985 | 99-100% | 유사 |
+| HardFirst | 0.970-0.980 | 98-100% | 높을 수 있음 |
+| EasyFirst | 0.980-0.985 | 99-100% | 유사 |
+
+#### 분석 계획
+
+1. **정량적 분석**
+   - Mean Image AUC, Pixel AUC, Pixel AP 비교
+   - 클래스별 성능 분포 분석
+   - Backward Transfer 측정 (Task i 성능 in Task j, j > i)
+   - Router Accuracy 분석
+
+2. **정성적 분석**
+   - Task 0 이후 base representation 시각화
+   - Flow latent space 분포 비교
+   - Forgetting 패턴 분석
+
+3. **통계적 분석**
+   - Multiple seeds로 variance 측정 (선택적)
+   - 시나리오 간 유의미한 차이 검증
+
+### 14.6 실행 스크립트
+
+```bash
+#!/bin/bash
+# run_cl_scenarios.sh
+
+BASE_ARGS="--dataset mvtec --data_path /Data/MVTecAD --backbone_name wide_resnet50_2 --num_epochs 60 --lr 3e-4 --lora_rank 64 --num_coupling_layers 8 --dia_n_blocks 4 --use_tail_aware_loss --tail_weight 0.7 --tail_top_k_ratio 0.02 --score_aggregation_mode top_k --score_aggregation_top_k 3 --lambda_logdet 1e-4 --scale_context_kernel 5 --log_dir ./logs/Final"
+
+# 실험 1: CL 3-3
+CUDA_VISIBLE_DEVICES=0 python run_moleflow.py $BASE_ARGS \
+    --task_classes bottle cable capsule carpet grid hazelnut leather metal_nut pill screw tile toothbrush transistor wood zipper \
+    --cl_scenario 3-3 \
+    --experiment_name "MVTec-CL-3-3-MAIN" &
+
+# 실험 2: CL 5-5
+CUDA_VISIBLE_DEVICES=1 python run_moleflow.py $BASE_ARGS \
+    --task_classes bottle cable capsule carpet grid hazelnut leather metal_nut pill screw tile toothbrush transistor wood zipper \
+    --cl_scenario 5-5 \
+    --experiment_name "MVTec-CL-5-5-MAIN" &
+
+# 실험 3: CL 14-1
+CUDA_VISIBLE_DEVICES=2 python run_moleflow.py $BASE_ARGS \
+    --task_classes bottle cable capsule carpet grid hazelnut leather metal_nut pill screw tile toothbrush transistor wood zipper \
+    --cl_scenario 14-1 \
+    --experiment_name "MVTec-CL-14-1-MAIN" &
+
+# 실험 4: TextureFirst
+CUDA_VISIBLE_DEVICES=3 python run_moleflow.py $BASE_ARGS \
+    --task_classes carpet grid leather tile wood bottle cable capsule hazelnut metal_nut pill screw toothbrush transistor zipper \
+    --cl_scenario 1-1 \
+    --experiment_name "MVTec-CL-1-1-TextureFirst-MAIN" &
+
+# 실험 5: HardFirst
+CUDA_VISIBLE_DEVICES=4 python run_moleflow.py $BASE_ARGS \
+    --task_classes screw toothbrush capsule cable pill grid zipper transistor carpet wood hazelnut metal_nut leather tile bottle \
+    --cl_scenario 1-1 \
+    --experiment_name "MVTec-CL-1-1-HardFirst-MAIN" &
+
+# 실험 6: EasyFirst
+CUDA_VISIBLE_DEVICES=5 python run_moleflow.py $BASE_ARGS \
+    --task_classes bottle leather metal_nut tile hazelnut carpet grid cable pill zipper transistor wood capsule toothbrush screw \
+    --cl_scenario 1-1 \
+    --experiment_name "MVTec-CL-1-1-EasyFirst-MAIN" &
+
+wait
+echo "All CL scenario experiments completed!"
+```
+
+---
+
 ## 9. 추가 분석: Pixel AP 0.6 달성 전략 (2026-01-03 업데이트)
 
 ### 9.1 새로운 최고 성능 발견
