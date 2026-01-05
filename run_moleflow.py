@@ -17,9 +17,82 @@ Ablation Support:
 
 import argparse
 from datetime import datetime
+from typing import List
 
 import torch
 from torch.utils.data import DataLoader
+
+
+def parse_cl_scenario(scenario: str, all_classes: List[str]) -> List[List[str]]:
+    """
+    Parse continual learning scenario string and return task groupings.
+
+    Args:
+        scenario: Scenario string in format "base-inc"
+            - "1-1": 1 class per task (default, 15 tasks for MVTec)
+            - "14-1": 14 classes first, then 1 class (2 tasks)
+            - "10-5": 10 classes first, then 5 classes (2 tasks)
+            - "3-3": 3 classes per task (5 tasks)
+            - "10-1": 10 classes first, then 1 class per step (6 tasks)
+        all_classes: List of all class names
+
+    Returns:
+        List of task class groups, e.g., [['leather', 'grid', 'transistor'], ['carpet'], ...]
+    """
+    parts = scenario.split('-')
+    if len(parts) != 2:
+        raise ValueError(f"Invalid scenario format: {scenario}. Expected 'base-inc' format.")
+
+    try:
+        base_size = int(parts[0])
+        inc_size = int(parts[1])
+    except ValueError:
+        raise ValueError(f"Invalid scenario format: {scenario}. Both parts must be integers.")
+
+    n_classes = len(all_classes)
+
+    # Validate
+    if base_size <= 0 or inc_size <= 0:
+        raise ValueError(f"Both base and inc must be positive integers. Got: {base_size}, {inc_size}")
+
+    if base_size > n_classes:
+        raise ValueError(f"Base size ({base_size}) exceeds number of classes ({n_classes})")
+
+    # Build task groups
+    tasks = []
+
+    # First task (base)
+    tasks.append(all_classes[:base_size])
+    remaining = all_classes[base_size:]
+
+    # Incremental tasks
+    while remaining:
+        chunk = remaining[:inc_size]
+        tasks.append(chunk)
+        remaining = remaining[inc_size:]
+
+    return tasks
+
+
+def get_scenario_description(scenario: str, tasks: List[List[str]]) -> str:
+    """Generate a human-readable description of the scenario."""
+    n_tasks = len(tasks)
+    task_sizes = [len(t) for t in tasks]
+
+    # Format like "14-1 with 1 Step" or "3-3 with 4 Steps"
+    parts = scenario.split('-')
+    base_size, inc_size = int(parts[0]), int(parts[1])
+
+    if base_size == inc_size:
+        # Uniform tasks like "3-3"
+        steps = n_tasks - 1
+        step_str = "Step" if steps == 1 else "Steps"
+        return f"{scenario} ({base_size} classes/task, {n_tasks} tasks, {steps} {step_str})"
+    else:
+        # Non-uniform like "14-1" or "10-5"
+        steps = n_tasks - 1
+        step_str = "Step" if steps == 1 else "Steps"
+        return f"{scenario} (base={base_size}, inc={inc_size}, {n_tasks} tasks, {steps} {step_str})"
 
 # Import everything from moleflow package (no NFCAD dependency)
 from moleflow import (
@@ -92,6 +165,18 @@ def main():
                         help='Embedding dimension for NF model (default: same as ViT output dim)')
     parser.add_argument('--run_diagnostics', action='store_true',
                         help='Run Flow diagnostics after training (analyze scale(s) behavior)')
+
+    # Continual Learning Scenario
+    parser.add_argument('--cl_scenario', type=str, default='1-1',
+                        help='''Continual learning scenario configuration.
+                        Format: "base-inc" where base=first task classes, inc=incremental classes per step.
+                        Examples:
+                          - "1-1": 1 class per task (15 tasks total, default)
+                          - "14-1": 14 classes in first task, then 1 class (2 tasks)
+                          - "10-5": 10 classes in first task, then 5 classes (2 tasks)
+                          - "3-3": 3 classes per task (5 tasks)
+                          - "10-1": 10 classes in first task, then 1 class per step (6 tasks)
+                        ''')
 
     # Add ablation arguments
     add_ablation_args(parser)
@@ -196,6 +281,7 @@ def main():
     config = {
         'experiment_name': experiment_name,
         'dataset': parsed_args.dataset,
+        'cl_scenario': parsed_args.cl_scenario,
         'task_classes': parsed_args.task_classes,
         'num_epochs': parsed_args.num_epochs,
         'lora_rank': parsed_args.lora_rank,
@@ -247,17 +333,23 @@ def main():
     }
     logger.save_config(config)
 
-    # Setup continual learning tasks
-    CONTINUAL_TASKS = [[cls] for cls in parsed_args.task_classes]
+    # Setup continual learning tasks based on scenario
     ALL_CLASSES = parsed_args.task_classes
     GLOBAL_CLASS_TO_IDX = {cls: i for i, cls in enumerate(ALL_CLASSES)}
+
+    # Parse scenario and create task groupings
+    CONTINUAL_TASKS = parse_cl_scenario(parsed_args.cl_scenario, ALL_CLASSES)
+    scenario_desc = get_scenario_description(parsed_args.cl_scenario, CONTINUAL_TASKS)
 
     print("\n" + "="*70)
     print("MoLE-Flow: Continual Anomaly Detection")
     print("="*70)
     print(f"   Dataset: {parsed_args.dataset.upper()}")
-    print(f"   Tasks: {CONTINUAL_TASKS}")
-    print(f"   Classes: {ALL_CLASSES}")
+    print(f"   CL Scenario: {scenario_desc}")
+    print(f"   Task Structure:")
+    for t_id, t_classes in enumerate(CONTINUAL_TASKS):
+        print(f"      Task {t_id}: {t_classes} ({len(t_classes)} classes)")
+    print(f"   Total Classes: {len(ALL_CLASSES)}")
     print(f"   Backbone: {parsed_args.backbone_name}")
     print(f"   Image Size: {parsed_args.img_size}")
     print(f"   Coupling Layers: {parsed_args.num_coupling_layers}")
@@ -350,7 +442,8 @@ def main():
             train_loader=train_loader,
             num_epochs=parsed_args.num_epochs,
             lr=parsed_args.lr,
-            log_interval=10
+            log_interval=10,
+            global_class_to_idx=GLOBAL_CLASS_TO_IDX  # For class-level adapter mode
         )
 
         # Evaluate all tasks seen so far

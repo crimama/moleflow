@@ -555,3 +555,250 @@ class TwoStageHybridRouter:
                                         device=image_features.device)
 
         return predicted_tasks
+
+
+# =============================================================================
+# Class-Level Prototype and Router (for use_class_level_adapters mode)
+# =============================================================================
+
+class ClassPrototype:
+    """
+    Class Prototype for Class-Level Distance-based Routing.
+
+    Similar to TaskPrototype, but for individual classes within tasks.
+    This enables finer-grained routing when multiple classes are grouped
+    into a single task (step).
+
+    Stores:
+    - mu_c: Mean of image-level features for this class
+    - Sigma_c^{-1}: Precision matrix for Mahalanobis distance
+    """
+
+    def __init__(self, class_id: int, class_name: str, task_id: int, device: str = 'cuda'):
+        """
+        Args:
+            class_id: Global class index (unique across all tasks)
+            class_name: Class name (e.g., 'leather', 'grid')
+            task_id: Task ID this class belongs to (for reference)
+            device: Device to use
+        """
+        self.class_id = class_id
+        self.class_name = class_name
+        self.task_id = task_id  # Which task this class belongs to
+        self.device = device
+
+        self.mean: Optional[torch.Tensor] = None
+        self.precision: Optional[torch.Tensor] = None
+        self.covariance: Optional[torch.Tensor] = None
+        self.n_samples: int = 0
+
+    def update(self, features: torch.Tensor):
+        """
+        Update prototype statistics with new features.
+
+        Args:
+            features: (N, D) image-level features from this class only
+        """
+        features = features.detach()
+
+        if self.mean is None:
+            self.mean = features.mean(dim=0)
+            self.n_samples = features.shape[0]
+
+            # Compute covariance with regularization
+            if features.shape[0] > 1:
+                centered = features - self.mean.unsqueeze(0)
+                self.covariance = (centered.T @ centered) / (features.shape[0] - 1)
+            else:
+                # Single sample: use identity covariance
+                self.covariance = torch.eye(features.shape[1], device=features.device)
+
+            # Add regularization for numerical stability
+            reg = 1e-5 * torch.eye(features.shape[1], device=features.device)
+            self.covariance = self.covariance + reg
+        else:
+            # Incremental update (same as TaskPrototype)
+            n_new = features.shape[0]
+            n_total = self.n_samples + n_new
+
+            new_mean = features.mean(dim=0)
+            delta = new_mean - self.mean
+
+            # Update mean
+            self.mean = (self.n_samples * self.mean + n_new * new_mean) / n_total
+
+            # Update covariance (Welford's online algorithm)
+            centered_new = features - new_mean.unsqueeze(0)
+            cov_new = (centered_new.T @ centered_new) / (n_new - 1) if n_new > 1 else torch.zeros_like(self.covariance)
+
+            self.covariance = (self.n_samples * self.covariance + n_new * cov_new +
+                              (self.n_samples * n_new / n_total) * torch.outer(delta, delta)) / n_total
+
+            self.n_samples = n_total
+
+    def finalize(self):
+        """Compute precision matrix after all updates."""
+        if self.covariance is not None:
+            try:
+                self.precision = torch.linalg.inv(self.covariance)
+            except:
+                # Fallback: use pseudo-inverse
+                self.precision = torch.linalg.pinv(self.covariance)
+
+    def mahalanobis_distance(self, features: torch.Tensor) -> torch.Tensor:
+        """
+        Compute Mahalanobis distance from prototype.
+
+        Args:
+            features: (N, D) features
+
+        Returns:
+            distances: (N,) Mahalanobis distances
+        """
+        if self.mean is None or self.precision is None:
+            raise ValueError("Prototype not initialized. Call finalize() first.")
+
+        centered = features - self.mean.unsqueeze(0)
+        distances = torch.sqrt(torch.sum(centered @ self.precision * centered, dim=1) + 1e-8)
+
+        return distances
+
+    def euclidean_distance(self, features: torch.Tensor) -> torch.Tensor:
+        """
+        Compute Euclidean distance from prototype.
+
+        Args:
+            features: (N, D) features
+
+        Returns:
+            distances: (N,) Euclidean distances
+        """
+        if self.mean is None:
+            raise ValueError("Prototype not initialized.")
+
+        centered = features - self.mean.unsqueeze(0)
+        distances = torch.sqrt(torch.sum(centered ** 2, dim=1) + 1e-8)
+
+        return distances
+
+
+class ClassRouter:
+    """
+    Class-Level Prototype Router for Class Selection.
+
+    Routes images to specific class adapters (not task adapters).
+    Uses Mahalanobis or Euclidean distance to select the best class expert.
+
+    This router is used when use_class_level_adapters=True, enabling
+    finer-grained routing when multiple classes are grouped into tasks.
+    """
+
+    def __init__(self, device: str = 'cuda', use_mahalanobis: bool = True):
+        self.device = device
+        self.use_mahalanobis = use_mahalanobis
+        self.prototypes: Dict[int, ClassPrototype] = {}  # class_id -> ClassPrototype
+
+        # Mapping from class_id to task_id (for reference)
+        self.class_to_task: Dict[int, int] = {}
+        # Mapping from class_id to class_name
+        self.class_to_name: Dict[int, str] = {}
+
+    def add_prototype(self, class_id: int, prototype: ClassPrototype):
+        """
+        Add a class prototype.
+
+        Args:
+            class_id: Global class index
+            prototype: ClassPrototype instance
+        """
+        self.prototypes[class_id] = prototype
+        self.class_to_task[class_id] = prototype.task_id
+        self.class_to_name[class_id] = prototype.class_name
+
+    def route(self, features: torch.Tensor) -> torch.Tensor:
+        """
+        Route features to the best class based on distance.
+
+        Args:
+            features: (N, D) image-level features
+
+        Returns:
+            class_ids: (N,) predicted class IDs (global indices)
+        """
+        if not self.prototypes:
+            return torch.zeros(features.shape[0], dtype=torch.long, device=features.device)
+
+        all_distances = []
+        class_ids = sorted(self.prototypes.keys())
+
+        for class_id in class_ids:
+            if self.use_mahalanobis:
+                distances = self.prototypes[class_id].mahalanobis_distance(features)
+            else:
+                distances = self.prototypes[class_id].euclidean_distance(features)
+            all_distances.append(distances)
+
+        # Stack: (num_classes, N)
+        all_distances = torch.stack(all_distances, dim=0)
+
+        # Find minimum distance class
+        min_indices = torch.argmin(all_distances, dim=0)
+        predicted_classes = torch.tensor([class_ids[idx] for idx in min_indices],
+                                          device=features.device)
+
+        return predicted_classes
+
+    def route_with_confidence(self, features: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Route features with confidence scores.
+
+        Args:
+            features: (N, D) image-level features
+
+        Returns:
+            class_ids: (N,) predicted class IDs
+            confidences: (N,) confidence scores (negative distance, higher is better)
+        """
+        if not self.prototypes:
+            return (
+                torch.zeros(features.shape[0], dtype=torch.long, device=features.device),
+                torch.zeros(features.shape[0], device=features.device)
+            )
+
+        all_distances = []
+        class_ids = sorted(self.prototypes.keys())
+
+        for class_id in class_ids:
+            if self.use_mahalanobis:
+                distances = self.prototypes[class_id].mahalanobis_distance(features)
+            else:
+                distances = self.prototypes[class_id].euclidean_distance(features)
+            all_distances.append(distances)
+
+        all_distances = torch.stack(all_distances, dim=0)  # (num_classes, N)
+
+        # Find minimum distance class
+        min_distances, min_indices = torch.min(all_distances, dim=0)
+        predicted_classes = torch.tensor([class_ids[idx] for idx in min_indices],
+                                          device=features.device)
+
+        # Confidence: negative distance (higher is better)
+        confidences = -min_distances
+
+        return predicted_classes, confidences
+
+    def get_task_for_class(self, class_id: int) -> int:
+        """Get the task ID that a class belongs to."""
+        return self.class_to_task.get(class_id, 0)
+
+    def get_class_name(self, class_id: int) -> str:
+        """Get the class name for a class ID."""
+        return self.class_to_name.get(class_id, f"class_{class_id}")
+
+    def get_num_classes(self) -> int:
+        """Get total number of registered classes."""
+        return len(self.prototypes)
+
+    def get_classes_for_task(self, task_id: int) -> List[int]:
+        """Get all class IDs belonging to a task."""
+        return [c_id for c_id, t_id in self.class_to_task.items() if t_id == task_id]

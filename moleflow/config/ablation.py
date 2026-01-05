@@ -55,6 +55,20 @@ class AblationConfig:
     use_task_bias: bool = True
     use_mahalanobis: bool = True
 
+    # ==========================================================================
+    # Class-Level Adapter Management
+    # ==========================================================================
+    # When enabled, creates separate adapters (LoRA, DIA, WhiteningAdapter, Prototype)
+    # for each class instead of each task. This allows finer-grained learning when
+    # multiple classes are grouped into a single task (step).
+    #
+    # Example with use_class_level_adapters=False (default):
+    #   Task 0: [leather, grid, transistor] -> 1 LoRA, 1 DIA, 1 Prototype
+    #
+    # Example with use_class_level_adapters=True:
+    #   Task 0: [leather, grid, transistor] -> 3 LoRAs, 3 DIAs, 3 Prototypes
+    use_class_level_adapters: bool = False
+
     # LoRA configuration (only used if use_lora=True)
     lora_rank: int = 32
     lora_alpha: float = 1.0
@@ -610,6 +624,12 @@ def add_ablation_args(parser):
         help='Use Euclidean distance instead of Mahalanobis in router'
     )
 
+    # Class-level adapter management
+    ablation_group.add_argument(
+        '--use_class_level_adapters', action='store_true',
+        help='Create separate adapters (LoRA, DIA, Prototype) per class instead of per task'
+    )
+
     # Adapter mode options
     ablation_group.add_argument(
         '--adapter_mode', type=str, default='soft_ln',
@@ -669,6 +689,10 @@ def add_ablation_args(parser):
     v3_group.add_argument(
         '--use_whitening_adapter', action='store_true',
         help='[V3] Use WhiteningAdapter instead of SoftLN (Solution 3)'
+    )
+    v3_group.add_argument(
+        '--no_whitening_adapter', action='store_true',
+        help='[V3] Disable WhiteningAdapter (use SoftLN instead) - for ablation study'
     )
 
     # Solution 2: Multi-Scale Context
@@ -760,6 +784,10 @@ def add_ablation_args(parser):
     noreplay_group.add_argument(
         '--use_dia', action='store_true',
         help='[V3] Use Deep Invertible Adapter for nonlinear manifold adaptation'
+    )
+    noreplay_group.add_argument(
+        '--no_dia', action='store_true',
+        help='[V3] Disable Deep Invertible Adapter - for ablation study'
     )
     noreplay_group.add_argument(
         '--dia_n_blocks', type=int, default=2,
@@ -1174,6 +1202,10 @@ def parse_ablation_args(parsed_args) -> AblationConfig:
     if hasattr(parsed_args, 'no_mahalanobis') and parsed_args.no_mahalanobis:
         config.use_mahalanobis = False
 
+    # Class-level adapter management
+    if hasattr(parsed_args, 'use_class_level_adapters') and parsed_args.use_class_level_adapters:
+        config.use_class_level_adapters = True
+
     # Apply slow stage setting
     if hasattr(parsed_args, 'enable_slow_stage'):
         config.use_slow_stage = parsed_args.enable_slow_stage
@@ -1216,7 +1248,10 @@ def parse_ablation_args(parsed_args) -> AblationConfig:
 
     # Solution 3: Whitening Adapter
     # NOTE: Must also set adapter_mode because __post_init__ was already called during config creation
-    if hasattr(parsed_args, 'use_whitening_adapter') and parsed_args.use_whitening_adapter:
+    if hasattr(parsed_args, 'no_whitening_adapter') and parsed_args.no_whitening_adapter:
+        config.use_whitening_adapter = False
+        config.adapter_mode = "soft_ln"  # Fallback to SoftLN
+    elif hasattr(parsed_args, 'use_whitening_adapter') and parsed_args.use_whitening_adapter:
         config.use_whitening_adapter = True
         config.adapter_mode = "whitening"  # Critical: __post_init__ won't run again
 
@@ -1273,7 +1308,9 @@ def parse_ablation_args(parsed_args) -> AblationConfig:
     # =========================================================================
 
     # Deep Invertible Adapter (DIA)
-    if hasattr(parsed_args, 'use_dia') and parsed_args.use_dia:
+    if hasattr(parsed_args, 'no_dia') and parsed_args.no_dia:
+        config.use_dia = False
+    elif hasattr(parsed_args, 'use_dia') and parsed_args.use_dia:
         config.use_dia = True
     if hasattr(parsed_args, 'dia_n_blocks'):
         config.dia_n_blocks = parsed_args.dia_n_blocks

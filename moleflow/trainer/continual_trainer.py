@@ -30,7 +30,7 @@ except ImportError:
     print("Warning: adamp not installed. Install with: pip install adamp")
 
 from moleflow.models.mole_nf import MoLESpatialAwareNF
-from moleflow.models.routing import TaskPrototype, PrototypeRouter
+from moleflow.models.routing import TaskPrototype, PrototypeRouter, ClassPrototype, ClassRouter
 from moleflow.utils.logger import TrainingLogger
 from moleflow.utils.replay import OrthogonalGradientProjection
 
@@ -246,6 +246,13 @@ class MoLEContinualTrainer:
             self.router = PrototypeRouter(device=device, use_mahalanobis=self.use_mahalanobis)
         else:
             self.router = None
+
+        # Class-level adapter management
+        self.use_class_level = ablation_config.use_class_level_adapters if ablation_config else False
+        if self.use_class_level and self.use_router:
+            self.class_router = ClassRouter(device=device, use_mahalanobis=self.use_mahalanobis)
+        else:
+            self.class_router = None
 
         # V3: Initialize OGP (Orthogonal Gradient Projection) if enabled
         if self.use_ogp:
@@ -513,7 +520,8 @@ class MoLEContinualTrainer:
                    train_loader: DataLoader,
                    num_epochs: int = 10,
                    lr: float = 1e-4,
-                   log_interval: int = 10):
+                   log_interval: int = 10,
+                   global_class_to_idx: dict = None):
         """
         Stage-Separated Slow-Fast Training.
 
@@ -521,6 +529,19 @@ class MoLEContinualTrainer:
         Task > 0:
             Stage 1 (FAST): LoRA + InputAdapter adaptation (base frozen)
             Stage 2 (SLOW): Base NF consolidation with EWC protection (optional)
+
+        Class-Level Mode (use_class_level_adapters=True):
+            Each class within the task is trained separately with its own
+            LoRA, DIA, InputAdapter, and Prototype.
+
+        Args:
+            task_id: Task identifier
+            task_classes: List of class names in this task
+            train_loader: DataLoader for training data
+            num_epochs: Number of training epochs
+            lr: Learning rate
+            log_interval: Logging interval
+            global_class_to_idx: Mapping from class name to global index (required for class-level mode)
         """
         # Log task start
         if self.logger:
@@ -528,11 +549,31 @@ class MoLEContinualTrainer:
         else:
             print(f"\n{'='*70}")
             print(f"🚀 Training Task {task_id}: {task_classes}")
+            if self.use_class_level:
+                print(f"   📋 Class-Level Mode: Each class trained separately")
             print(f"{'='*70}")
 
         self.task_classes[task_id] = task_classes
         self.task_loaders[task_id] = train_loader
 
+        # =================================================================
+        # Class-Level Training Mode
+        # =================================================================
+        if self.use_class_level and global_class_to_idx is not None:
+            self._train_task_class_level(
+                task_id=task_id,
+                task_classes=task_classes,
+                train_loader=train_loader,
+                num_epochs=num_epochs,
+                lr=lr,
+                log_interval=log_interval,
+                global_class_to_idx=global_class_to_idx
+            )
+            return
+
+        # =================================================================
+        # Standard Task-Level Training Mode
+        # =================================================================
         # Add task to NF model
         self.nf_model.add_task(task_id)
 
@@ -622,6 +663,285 @@ class MoLEContinualTrainer:
             self.logger.log_task_complete(task_id)
         else:
             print(f"\n✅ Task {task_id} training completed!")
+
+    # =========================================================================
+    # Class-Level Training Methods
+    # =========================================================================
+
+    def _train_task_class_level(self,
+                                task_id: int,
+                                task_classes: List[str],
+                                train_loader: DataLoader,
+                                num_epochs: int,
+                                lr: float,
+                                log_interval: int,
+                                global_class_to_idx: dict):
+        """
+        Train each class in the task separately (class-level mode).
+
+        This method:
+        1. Filters the train_loader to get class-specific samples
+        2. Adds class adapter to NF model
+        3. Trains the class-specific adapter
+        4. Builds class prototype for routing
+
+        Args:
+            task_id: Task identifier
+            task_classes: List of class names in this task
+            train_loader: DataLoader for all classes in this task
+            num_epochs: Number of training epochs per class
+            lr: Learning rate
+            log_interval: Logging interval
+            global_class_to_idx: Mapping from class name to global index
+        """
+        print(f"\n📋 Class-Level Training: {len(task_classes)} classes in Task {task_id}")
+
+        for cls_idx, cls_name in enumerate(task_classes):
+            class_id = global_class_to_idx[cls_name]
+
+            print(f"\n{'─'*60}")
+            print(f"📌 Training Class {class_id}: {cls_name} ({cls_idx+1}/{len(task_classes)})")
+            print(f"{'─'*60}")
+
+            # Add class adapter to NF model
+            self.nf_model.add_class(class_id, cls_name, task_id)
+
+            # Get class-specific data loader
+            class_loader = self._filter_loader_by_class(train_loader, cls_name)
+
+            if len(class_loader.dataset) == 0:
+                print(f"   ⚠️  No samples for class {cls_name}, skipping...")
+                continue
+
+            print(f"   📊 Samples: {len(class_loader.dataset)}")
+
+            # Train this class
+            if task_id == 0:
+                self._train_class_base(class_id, cls_name, class_loader,
+                                       num_epochs, lr, log_interval)
+            else:
+                self._train_class_fast(class_id, cls_name, class_loader,
+                                       num_epochs, lr, log_interval)
+
+            # Build class prototype for routing
+            if self.use_router and self.class_router is not None:
+                self._build_class_prototype(class_id, cls_name, task_id, class_loader)
+
+            # Collect reference statistics from Task 0 classes
+            if task_id == 0:
+                self._collect_class_reference_stats(class_id, class_loader)
+
+        # Finalize reference statistics after all Task 0 classes
+        if task_id == 0:
+            self.nf_model.finalize_reference_stats()
+
+        print(f"\n✅ Task {task_id} class-level training completed!")
+        print(f"   📊 Trained {len(task_classes)} class adapters")
+
+    def _filter_loader_by_class(self, train_loader: DataLoader, target_class: str) -> DataLoader:
+        """
+        Filter a DataLoader to only include samples from a specific class.
+
+        Args:
+            train_loader: Original DataLoader with all classes
+            target_class: Class name to filter for
+
+        Returns:
+            DataLoader containing only samples from target_class
+        """
+        from torch.utils.data import Subset, DataLoader as TorchDataLoader
+
+        # Get indices for the target class
+        indices = []
+        for idx in range(len(train_loader.dataset)):
+            # Dataset returns (image, label, class_name, ...) or similar
+            sample = train_loader.dataset[idx]
+
+            # Try to extract class name from sample
+            if len(sample) >= 3:
+                # Assume format: (image, label, class_name, ...)
+                sample_class = sample[2]
+            elif hasattr(train_loader.dataset, 'class_name'):
+                # Single-class dataset
+                sample_class = train_loader.dataset.class_name
+            else:
+                # Fallback: can't determine class, include all
+                sample_class = target_class
+
+            if sample_class == target_class:
+                indices.append(idx)
+
+        # Create subset dataset
+        subset = Subset(train_loader.dataset, indices)
+
+        # Create new DataLoader with same settings
+        return TorchDataLoader(
+            subset,
+            batch_size=train_loader.batch_size,
+            shuffle=True,
+            num_workers=getattr(train_loader, 'num_workers', 0),
+            pin_memory=getattr(train_loader, 'pin_memory', False),
+            drop_last=len(indices) >= train_loader.batch_size
+        )
+
+    def _train_class_base(self, class_id: int, class_name: str,
+                          train_loader: DataLoader, num_epochs: int,
+                          lr: float, log_interval: int):
+        """
+        Train a class adapter with base NF (Task 0 class).
+
+        Similar to _train_base_task but for a single class.
+        """
+        self.nf_model.train()
+        self.nf_model.set_active_class(class_id)
+
+        # Get trainable parameters for this class
+        params = self.nf_model.get_trainable_params_for_class(class_id)
+        optimizer = create_optimizer(params, lr)
+
+        # Training loop
+        for epoch in range(num_epochs):
+            epoch_loss = 0.0
+            n_batches = 0
+
+            for batch_idx, batch in enumerate(train_loader):
+                images = batch[0].to(self.device)
+
+                # Forward pass
+                loss, info = self._compute_loss(images)
+
+                # Backward pass
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+                epoch_loss += loss.item()
+                n_batches += 1
+
+            avg_loss = epoch_loss / max(n_batches, 1)
+
+            if (epoch + 1) % log_interval == 0 or epoch == 0:
+                print(f"   Epoch [{epoch+1:3d}/{num_epochs}] Loss: {avg_loss:.4f}")
+
+    def _train_class_fast(self, class_id: int, class_name: str,
+                          train_loader: DataLoader, num_epochs: int,
+                          lr: float, log_interval: int):
+        """
+        Train a class adapter (Task > 0 class) - FAST stage only.
+
+        Similar to _train_fast_stage but for a single class.
+        """
+        self.nf_model.train()
+        self.nf_model.set_active_class(class_id)
+
+        # Get trainable parameters for this class (LoRA + adapters only)
+        params = self.nf_model.get_trainable_params_for_class(class_id)
+        optimizer = create_optimizer(params, lr)
+
+        # Training loop
+        for epoch in range(num_epochs):
+            epoch_loss = 0.0
+            n_batches = 0
+
+            for batch_idx, batch in enumerate(train_loader):
+                images = batch[0].to(self.device)
+
+                # Forward pass
+                loss, info = self._compute_loss(images)
+
+                # Apply OGP if enabled (project gradients)
+                if self.use_ogp and self.ogp is not None:
+                    loss.backward()
+                    self.ogp.project_gradients(self.nf_model)
+                    optimizer.step()
+                    optimizer.zero_grad()
+                else:
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+
+                epoch_loss += loss.item()
+                n_batches += 1
+
+            avg_loss = epoch_loss / max(n_batches, 1)
+
+            if (epoch + 1) % log_interval == 0 or epoch == 0:
+                print(f"   Epoch [{epoch+1:3d}/{num_epochs}] Loss: {avg_loss:.4f}")
+
+    def _build_class_prototype(self, class_id: int, class_name: str,
+                               task_id: int, train_loader: DataLoader):
+        """
+        Build prototype for a single class.
+
+        Args:
+            class_id: Global class index
+            class_name: Class name
+            task_id: Task this class belongs to
+            train_loader: DataLoader for this class only
+        """
+        self.nf_model.eval()
+        self.nf_model.set_active_class(class_id)
+
+        all_features = []
+
+        with torch.no_grad():
+            for batch in train_loader:
+                images = batch[0].to(self.device)
+
+                # Extract image-level features for routing
+                image_features = self._extract_image_features(images)
+                all_features.append(image_features)
+
+        all_features = torch.cat(all_features, dim=0)
+
+        # Create class prototype
+        prototype = ClassPrototype(class_id, class_name, task_id, self.device)
+        prototype.update(all_features)
+        prototype.finalize()
+
+        # Add to class router
+        self.class_router.add_prototype(class_id, prototype)
+
+        print(f"   🎯 Class prototype built: {all_features.shape[0]} samples, "
+              f"mean_norm={prototype.mean.norm():.4f}")
+
+    def _collect_class_reference_stats(self, class_id: int, train_loader: DataLoader):
+        """
+        Collect reference statistics from a Task 0 class.
+
+        These statistics are used to initialize adapters for later tasks.
+        """
+        self.nf_model.eval()
+        self.nf_model.set_active_class(class_id)
+
+        with torch.no_grad():
+            for batch in train_loader:
+                images = batch[0].to(self.device)
+
+                # Extract features and update reference statistics
+                features = self._extract_patch_features(images)
+                self.nf_model.update_reference_stats(features)
+
+    def _extract_image_features(self, images: torch.Tensor) -> torch.Tensor:
+        """Extract image-level features for routing."""
+        # Use ViT CLS token or global pooled features
+        with torch.no_grad():
+            if hasattr(self.vit_extractor, 'get_cls_token'):
+                return self.vit_extractor.get_cls_token(images)
+            elif hasattr(self.vit_extractor, 'get_image_level_features'):
+                return self.vit_extractor.get_image_level_features(images)
+            else:
+                # Fallback: extract patch features and pool
+                features = self.vit_extractor(images)
+                return features.mean(dim=(1, 2))  # (B, D)
+
+    def _extract_patch_features(self, images: torch.Tensor) -> torch.Tensor:
+        """Extract patch-level features for NF training."""
+        with torch.no_grad():
+            features = self.vit_extractor(images)
+            if self.use_pos_embedding and self.pos_embed_generator is not None:
+                features = features + self.pos_embed_generator(features)
+            return features
 
     def _train_base_task(self, task_id: int, task_classes: List[str],
                          train_loader: DataLoader, num_epochs: int,

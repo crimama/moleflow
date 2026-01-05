@@ -215,6 +215,14 @@ class MoLESpatialAwareNF(nn.Module):
         self.num_tasks = 0
         self.current_task_id: Optional[int] = None
 
+        # Class-level adapter management (when use_class_level_adapters=True)
+        # This allows finer-grained learning when multiple classes are in one task
+        self.use_class_level = ablation_config.use_class_level_adapters if ablation_config else False
+        self.num_classes = 0
+        self.current_class_id: Optional[int] = None
+        # Mapping: class_id -> task_id (for freeze/unfreeze logic)
+        self.class_to_task: dict = {}
+
         # Build flow
         self.subnets: List[MoLESubnet] = []
         self.flow = self._build_flow()
@@ -669,6 +677,235 @@ class MoLESpatialAwareNF(nn.Module):
             # All tasks (including Task 0) now use LoRA
             for subnet in self.subnets:
                 subnet.set_active_task(task_id)
+
+    # =========================================================================
+    # Class-Level Adapter Management (for use_class_level_adapters mode)
+    # =========================================================================
+
+    def add_class(self, class_id: int, class_name: str, task_id: int):
+        """
+        Add adapters for a specific class (class-level mode).
+
+        This method is called when use_class_level_adapters=True.
+        Creates separate LoRA, DIA, and InputAdapter for each class,
+        allowing finer-grained learning when multiple classes are grouped
+        into a single task (step).
+
+        Args:
+            class_id: Global class index (unique across all tasks)
+            class_name: Class name (e.g., 'leather', 'grid')
+            task_id: Task ID this class belongs to (for freeze/unfreeze logic)
+        """
+        class_key = str(class_id)
+        self.class_to_task[class_id] = task_id
+
+        # Determine freeze behavior based on task_id
+        is_task_0 = (task_id == 0)
+
+        if is_task_0:
+            # Task 0 classes: Train base weights + LoRA adapter
+            for subnet in self.subnets:
+                subnet.unfreeze_base()
+                if self.use_lora or self.use_task_bias:
+                    subnet.add_task_adapter(class_id)  # Use class_id as adapter key
+
+            # Add InputAdapter for this class
+            if self.use_task_adapter:
+                self.input_adapters[class_key] = create_task_adapter(
+                    adapter_mode=self.adapter_mode,
+                    channels=self.embed_dim,
+                    reference_mean=None,  # No reference for Task 0 classes
+                    reference_std=None,
+                    task_id=task_id,  # Use task_id for initialization logic
+                    soft_ln_init_scale=self.soft_ln_init_scale
+                ).to(self.device)
+
+            # Add DIA for this class
+            if self.use_dia:
+                self.dia_adapters[class_key] = DeepInvertibleAdapter(
+                    channels=self.embed_dim,
+                    task_id=class_id,  # Use class_id for DIA
+                    n_blocks=self.dia_n_blocks,
+                    hidden_ratio=self.dia_hidden_ratio,
+                    clamp_alpha=self.clamp_alpha
+                ).to(self.device)
+
+            components = []
+            if self.use_lora:
+                components.append(f"LoRA (rank={self.lora_rank})")
+            if self.use_task_adapter:
+                components.append(f"InputAdapter ({self.adapter_mode})")
+            if self.use_dia:
+                components.append(f"DIA ({self.dia_n_blocks} blocks)")
+
+            print(f"   ✅ Class {class_id} ({class_name}): Base trainable + {' + '.join(components) if components else 'no adapters'}")
+        else:
+            # Task > 0 classes: Freeze base, add LoRA + InputAdapter
+            for subnet in self.subnets:
+                subnet.freeze_base()
+                if self.use_lora or self.use_task_bias:
+                    subnet.add_task_adapter(class_id)  # Use class_id as adapter key
+
+            # Create InputAdapter with reference statistics
+            if self.use_task_adapter:
+                if self.reference_stats.is_initialized:
+                    ref_mean, ref_std = self.reference_stats.get_reference_params()
+                else:
+                    ref_mean, ref_std = None, None
+
+                self.input_adapters[class_key] = create_task_adapter(
+                    adapter_mode=self.adapter_mode,
+                    channels=self.embed_dim,
+                    reference_mean=ref_mean,
+                    reference_std=ref_std,
+                    task_id=task_id,  # Use task_id for initialization logic
+                    soft_ln_init_scale=self.soft_ln_init_scale
+                ).to(self.device)
+
+            # Add DIA for this class
+            if self.use_dia:
+                self.dia_adapters[class_key] = DeepInvertibleAdapter(
+                    channels=self.embed_dim,
+                    task_id=class_id,
+                    n_blocks=self.dia_n_blocks,
+                    hidden_ratio=self.dia_hidden_ratio,
+                    clamp_alpha=self.clamp_alpha
+                ).to(self.device)
+
+            components = []
+            if self.use_lora:
+                components.append(f"LoRA (rank={self.lora_rank})")
+            if self.use_task_adapter:
+                components.append(f"InputAdapter ({self.adapter_mode})")
+            if self.use_dia:
+                components.append(f"DIA ({self.dia_n_blocks} blocks)")
+
+            print(f"   ✅ Class {class_id} ({class_name}): Base frozen + {' + '.join(components) if components else 'no adapters'}")
+
+        # Update TAPE if enabled
+        if self.use_tape and self.tape is not None:
+            self.tape.add_task(class_id, device=self.device)
+
+        self.num_classes = max(self.num_classes, class_id + 1)
+        self.set_active_class(class_id)
+
+    def set_active_class(self, class_id: Optional[int]):
+        """
+        Set the currently active class adapter (class-level mode).
+
+        Args:
+            class_id: Class ID to activate (global index), or None to deactivate
+        """
+        self.current_class_id = class_id
+
+        # For TaskConditionedMSContext: use task_id
+        if class_id is not None:
+            task_id = self.class_to_task.get(class_id, 0)
+            if self.use_task_conditioned_ms_context and self.spatial_mixer is not None:
+                self.spatial_mixer.set_active_task(task_id)
+            if self.use_task_adaptive_context and self.task_adaptive_mixer is not None:
+                self.task_adaptive_mixer.set_active_task(task_id)
+
+        if class_id is None:
+            for subnet in self.subnets:
+                subnet.set_active_task(None)
+        else:
+            # Set subnet to use class-specific adapter
+            for subnet in self.subnets:
+                subnet.set_active_task(class_id)  # Use class_id as adapter key
+
+    def get_trainable_params_for_class(self, class_id: int):
+        """
+        Get trainable parameters for a specific class (class-level mode).
+
+        Args:
+            class_id: Global class index
+
+        Returns:
+            List of trainable parameters for this class
+        """
+        params = []
+        class_key = str(class_id)
+        task_id = self.class_to_task.get(class_id, 0)
+
+        if task_id == 0:
+            # Task 0 classes: Base parameters + LoRA + InputAdapter + DIA
+            for subnet in self.subnets:
+                layers = self._get_subnet_layers(subnet)
+
+                # Base parameters (shared, but trainable for Task 0)
+                for layer in layers:
+                    params.extend(layer.base_linear.parameters())
+
+                # LoRA parameters for this class
+                for layer in layers:
+                    if class_key in layer.lora_A:
+                        params.append(layer.lora_A[class_key])
+                        params.append(layer.lora_B[class_key])
+
+                # Task-specific biases
+                for layer in layers:
+                    if class_key in layer.task_biases:
+                        params.append(layer.task_biases[class_key])
+
+                # Context parameters (only for Task 0)
+                if hasattr(subnet, 'context_conv'):
+                    params.extend(subnet.context_conv.parameters())
+                if hasattr(subnet, 'context_scale_param') and subnet.context_scale_param is not None:
+                    params.append(subnet.context_scale_param)
+
+            # InputAdapter for this class
+            if class_key in self.input_adapters:
+                params.extend(self.input_adapters[class_key].parameters())
+
+            # DIA for this class
+            if class_key in self.dia_adapters:
+                params.extend(self.dia_adapters[class_key].parameters())
+        else:
+            # Task > 0 classes: LoRA + InputAdapter + DIA only
+            for subnet in self.subnets:
+                layers = self._get_subnet_layers(subnet)
+
+                # LoRA parameters
+                for layer in layers:
+                    if class_key in layer.lora_A:
+                        params.append(layer.lora_A[class_key])
+                        params.append(layer.lora_B[class_key])
+
+                # Task-specific biases
+                for layer in layers:
+                    if class_key in layer.task_biases:
+                        params.append(layer.task_biases[class_key])
+
+            # InputAdapter
+            if class_key in self.input_adapters:
+                params.extend(self.input_adapters[class_key].parameters())
+
+            # DIA
+            if class_key in self.dia_adapters:
+                params.extend(self.dia_adapters[class_key].parameters())
+
+        # TAPE parameters for this class
+        if self.use_tape and self.tape is not None:
+            tape_params = self.tape.get_task_params(class_id)
+            if tape_params:
+                params.extend(tape_params)
+
+        return params
+
+    def get_active_adapter_key(self) -> str:
+        """
+        Get the current adapter key (class_id for class-level mode, task_id otherwise).
+
+        Returns:
+            String key for accessing adapters in ModuleDict
+        """
+        if self.use_class_level and self.current_class_id is not None:
+            return str(self.current_class_id)
+        elif self.current_task_id is not None:
+            return str(self.current_task_id)
+        else:
+            return "0"  # Default to Task 0
 
     def _get_subnet_layers(self, subnet):
         """
