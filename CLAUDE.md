@@ -44,6 +44,78 @@ python run_moleflow.py --ablation_preset wo_adapter  # Predefined ablation
 pip install -r requirements.txt
 ```
 
+## Default Configuration (MAIN)
+
+**Reference Experiment**: `MVTec-WRN50-TailW0.7-TopK3-TailTopK2-ScaleK5-lr3e-4-MAIN`
+
+This is the best-performing configuration. Use these settings as the baseline for new experiments.
+
+### Hyperparameters
+```python
+# Model Architecture
+backbone_name = "wide_resnet50_2"
+lora_rank = 64
+num_coupling_layers = 8
+dia_n_blocks = 4
+
+# Training
+num_epochs = 60
+lr = 3e-4
+batch_size = 16
+
+# Loss & Regularization
+lambda_logdet = 1e-4
+tail_weight = 0.7
+score_aggregation_top_k = 3
+tail_top_k_ratio = 0.02  # or tail_top_k = 2
+
+# Context
+scale_context_kernel = 5
+spatial_context_kernel = 3
+
+# Modules (all enabled)
+use_lora = True
+use_dia = True
+use_whitening_adapter = True
+use_router = True
+use_pos_embedding = True
+use_spatial_context = True
+use_scale_context = True
+```
+
+### Expected Performance (MVTec AD, 15 classes, 1x1 CL scenario)
+| Metric | Value |
+|--------|-------|
+| Image AUC | **98.29%** |
+| Pixel AUC | **97.82%** |
+| Pixel AP | **54.20%** |
+| Routing Accuracy | **100%** |
+
+### Command
+```bash
+python run_moleflow.py \
+    --dataset mvtec \
+    --data_path /Data/MVTecAD \
+    --task_classes bottle cable capsule carpet grid hazelnut leather metal_nut pill screw tile toothbrush transistor wood zipper \
+    --backbone_name wide_resnet50_2 \
+    --num_epochs 60 \
+    --lr 3e-4 \
+    --lora_rank 64 \
+    --num_coupling_layers 8 \
+    --batch_size 16 \
+    --use_dia \
+    --dia_n_blocks 4 \
+    --use_whitening_adapter \
+    --use_tail_aware_loss \
+    --tail_weight 0.7 \
+    --tail_top_k_ratio 0.02 \
+    --score_aggregation_mode top_k \
+    --score_aggregation_top_k 3 \
+    --lambda_logdet 1e-4 \
+    --scale_context_kernel 5 \
+    --experiment_name "MY_EXPERIMENT_NAME"
+```
+
 ## Architecture
 
 ### Pipeline Flow
