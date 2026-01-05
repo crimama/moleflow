@@ -31,30 +31,44 @@
 
 # Architecture Modular Analysis
 
-## 1. Core Component Ablation (TODO - 재실험 필요)
+## 1. Core Component Ablation
 
-> **⚠️ 중요**: 기존 ablation 실험들(wo_DIA, wo_Adapter, wo_LoRA 등)은 **이전 설정(lr=2e-4, logdet=1e-5, scale_k=3)**으로 진행되어 MAIN 설정과 fair comparison이 불가합니다.
-> 아래 실험들은 **MAIN 설정(lr=3e-4, logdet=1e-4, scale_k=5)**으로 재실험이 필요합니다.
+> MAIN 설정(lr=3e-4, logdet=1e-4, scale_k=5) 기준으로 실험 완료
 
 ### 실험 목록
 
 | Ablation | 목적 | 내용 | Status |
 |----------|------|------|--------|
-| w/o SpatialContextMixer | Spatial Context Mixing의 기여도 | SpatialContextMixer 모듈 제거 (Positional/Spatial mixing off) | **TODO** |
-| w/o WhiteningAdapter | Whitening Adapter의 기여도 | InputAdapter(Whitening) 미적용, 원본 임베딩 입력 | **TODO** |
-| w/o Tail Aware Loss | Tail Aware Loss의 기여도 | Tail Aware Loss 비활성화 (표준 손실 사용) | **TODO** |
-| w/o LogDet Regularization | LogDet Regularization 유무 | LogDet 정규화 항 제거 (lambda_logdet=0) | **TODO** |
-| w/o Mole subnet | DIA만 사용 (LoRA/MoLESubNet 미사용, DIA block 수 = 원래 MoLESubNet 수) | DIA block만 남기고 MoLESubNet/LoRA 제거, DIA block 수 기존 coupling layer와 동일 | **TODO** |
+| w/o SpatialContextMixer | Spatial Context Mixing의 기여도 | SpatialContextMixer 모듈 제거 (Positional/Spatial mixing off) | ✅ Done |
+| w/o WhiteningAdapter | Whitening Adapter의 기여도 | InputAdapter(Whitening) 미적용, SoftLN 사용 | ✅ Done |
+| w/o Tail Aware Loss | Tail Aware Loss의 기여도 | Tail Aware Loss 비활성화 (표준 손실 사용) | ✅ Done |
+| w/o LogDet Regularization | LogDet Regularization 유무 | LogDet 정규화 항 제거 (lambda_logdet=0) | ✅ Done |
+| w/o MoLE subnet | DIA만 사용 (LoRA 미사용) | MoLESubNet/LoRA 제거, DIA만 사용 | 🔄 Running |
 
 ### 결과 테이블
 
-| Configuration | Img AUC | Pix AUC | Img AP | Pix AP | Rt Acc |
-|---------------|---------|---------|--------|--------|--------|
-| **MoLE-Flow (Full)** | **98.29** | **97.82** | **85.72** | **54.20** | 100.0 |
-| w/o SpatialContextMixer | TBD | TBD | TBD | TBD | TBD |
-| w/o WhiteningAdapter | TBD | TBD | TBD | TBD | TBD |
-| w/o Tail Aware Loss | TBD | TBD | TBD | TBD | TBD |
-| w/o LogDet Regularization | TBD | TBD | TBD | TBD | TBD |
+| Configuration | Img AUC | Pix AUC | Img AP | Pix AP | Rt Acc | Δ Img AUC | Δ Pix AP |
+|---------------|---------|---------|--------|--------|--------|-----------|----------|
+| **MoLE-Flow (Full)** | **98.29** | **97.82** | **99.31** | **54.20** | 100.0 | - | - |
+| w/o SpatialContextMixer | 98.08 | 97.70 | 99.23 | 52.24 | 100.0 | -0.21 | -1.96 |
+| w/o WhiteningAdapter | 98.06 | 97.60 | 99.23 | 47.14 | 100.0 | -0.23 | **-7.06** |
+| w/o Tail Aware Loss | 96.62 | 97.20 | 98.66 | 45.86 | 100.0 | **-1.67** | **-8.34** |
+| w/o LogDet Regularization | 98.29 | 97.66 | 99.31 | 51.06 | 100.0 | 0.00 | -3.14 |
+| w/o MoLE subnet | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+
+### 분석
+
+1. **Tail Aware Loss**가 가장 큰 영향 (Img AUC -1.67%, Pix AP -8.34%)
+   - 손실 함수에서 tail patch에 대한 집중이 성능에 핵심적
+
+2. **WhiteningAdapter** 제거 시 Pix AP -7.06% 감소
+   - 분포 정렬이 pixel-level anomaly detection에 중요
+
+3. **LogDet Regularization** 영향 미미 (Img AUC 동일, Pix AP -3.14%)
+   - 안정화 효과는 있으나 성능에 큰 영향 없음
+
+4. **SpatialContextMixer** 제거 시 소폭 감소 (-0.21%, -1.96%)
+   - 공간적 context mixing의 부가적 기여 확인
 
 
 ---
@@ -63,14 +77,14 @@
 
 | Ablation | 목적 | 내용 | Status |
 |----------|------|------|--------|
-| w/o Scale Context | scale_context 유/무 | Scale Context 모듈 미사용 (`--no_scale_context`) | **TODO** |
-| w/o LoRA | LoRA 대신 Linear 사용 | LoRA 대신 Regular Linear 사용 (`--use_regular_linear`) | **TODO** |
+| w/o Scale Context | scale_context 유/무 | Scale Context 모듈 미사용 (`--no_scale_context`) | 🔄 Running |
+| w/o LoRA | LoRA 대신 Linear 사용 | LoRA 대신 Regular Linear 사용 (`--use_regular_linear`) | 🔄 Running (GPU 4) |
 
 
-### 결과 테이블 
+### 결과 테이블
 
-| Configuration | Img AUC | Pix AUC | Pix AP | Delta |
-|---------------|---------|---------|--------|-------|
+| Configuration | Img AUC | Pix AUC | Pix AP | Δ Pix AP |
+|---------------|---------|---------|--------|----------|
 | **MoLE-Flow (Full)** | **98.29** | **97.82** | **54.20** | - |
 | w/o Scale Context | TBD | TBD | TBD | TBD |
 | w/o LoRA | TBD | TBD | TBD | TBD |
@@ -84,7 +98,7 @@
 | MoLE Blocks | DIA Blocks | Img AUC | Pix AUC | Pix AP | 비고 |
 |-------------|-----------|---------|---------|--------|------|
 | **8**       | 4         | 98.29   | 97.82   | 54.20  | MoLE-Flow(Full, 총 12블록; 기존 실험 결과) |
-| 10          | 2         | TBD     | TBD     | TBD    |  |
+| 10          | 2         | 🔄 Running (GPU 5) | - | - | 총 12블록 |
 | 6           | 6         | TBD     | TBD     | TBD    |  |
 | 4           | 8         | TBD     | TBD     | TBD    |  |
 | 0           | 12        | TBD     | TBD     | TBD    | DIA-only (총 12블록) |
@@ -137,9 +151,9 @@ Base backbone의 가중치 공유(sequential/independent) 방식에 따른 conti
 |---------------|---------|---------|--------|------|
 | 5e-4          | 97.70   | 97.55   | 52.35  | 과도한 정규화 |
 | 2e-4          | 98.19   | 97.79   | 54.18  | Pix AP 최고 |
-| **1e-4**      | **98.36** | **97.80** | **52.42** | **MAIN 기준, 권장값** |
+| **1e-4**      | **98.29** | **97.82** | **54.20** | **MAIN 기준, 권장값** |
 | 1e-5          | TBD     | TBD     | TBD    | MAIN 기반 실험 필요 |
-| 0             | TBD     | TBD     | TBD    | MAIN 기반 실험 필요 |
+| 0             | 98.29   | 97.66   | 51.06  | Ablation-Core 실험 |
 
 ## scale_context_kernel
 > 기준: lr=3e-4, logdet=1e-4
@@ -165,6 +179,7 @@ Base backbone의 가중치 공유(sequential/independent) 방식에 따른 conti
 
 | tail_weight | Img AUC | Pix AUC | Pix AP | 비고 |
 |-------------|---------|---------|--------|------|
+| 0 (off)     | 96.62   | 97.20   | 45.86  | Ablation-Core 실험 (**-8.34 Pix AP**) |
 | 0.3         | TBD     | TBD     | TBD    | MAIN 기반 실험 필요 |
 | 0.5         | TBD     | TBD     | TBD    | MAIN 기반 실험 필요 |
 | 0.65        | 98.24   | 97.81   | 53.95  | topk=3, tail_topk=3 |
