@@ -84,14 +84,12 @@ Keywords here
     \label{fig:main_figure}
 \end{figure}
 
-본 섹션에서는 지속적 이상 탐지(Continual Anomaly Detection) 환경에서 파멸적 망각(Catastrophic Forgetting)을 방지하고, 다중 작업(Multi-task)에 대한 정밀한 분포 추정을 수행하기 위한 MoLE-Flow(Mixture of LoRA Experts with Normalizing Flow for Continual Anomaly Detection) 프레임워크를 제안한다.
+본 섹션에서는 Continual learning scenario 환경에서 anomaly detection을 수행하기 위한 방법인 MoLE-Flow(Mixture of LoRA Experts with Normalizing Flow for Continual Anomaly Detection) 프레임워크를 제안한다.
 MoLE-Flow는 크게 특징 추출기, MoLE 기반 Normalizing Flow, 작업별 어댑터, 그리고 프로토타입 라우터로 구성되며, 다음 다섯 가지 핵심 기여를 제안한다:
 \begin{enumerate}
 \item \textbf{MoLE (Mixture of LoRA Experts)}: Normalizing Flow의 coupling 블록에 LoRA를 적용하여 작업별 경량 적응을 가능하게 하는 MoLESubnet 구조
 \item \textbf{WhiteningAdapter}: 작업 간 특징 분포 차이를 정렬하기 위한 whitening 후 제약된 de-whitening 기반 적응 모듈
 \item \textbf{Deep Invertible Adapter (DIA)}: 선형 LoRA의 한계를 극복하는 비선형 가역 적응 모듈
-\item \textbf{Prototype-based Router}: 추론 시 작업 ID 없이 자동으로 적절한 전문가를 선택하는 Mahalanobis 거리 기반 라우터
-\item \textbf{Tail-Aware Loss}: 분포의 경계를 더 명확하게 학습하도록 유도하는 손실 함수
 \end{enumerate}
 
 \subsection{Overall Architecture}
@@ -99,20 +97,14 @@ MoLE-Flow는 크게 특징 추출기, MoLE 기반 Normalizing Flow, 작업별 �
 
 MoLE-Flow는 사전 학습된 Backbone을 통해 이미지의 패치 임베딩을 추출한 후, Normalizing Flow를 통해 잠재 공간의 가우시안 분포로 매핑하는 구조를 가진다.
 지속 학습 환경에 대응하기 위한 핵심 전략은 \textbf{Parameter Isolation}으로, Backbone과 Base NF의 파라미터는 공유하거나 고정하면서, 작업 특화 특징은 LoRA(Low-Rank Adaptation)와 DIA(Deep Invertible Adapter)에만 저장함으로써 메모리 효율성과 작업 간 간섭 방지를 동시에 달성한다.
-
 전체 파이프라인은 다음과 같다:
 \begin{enumerate}
 \item Backbone으로부터 특징 추출 및 패치 임베딩 생성
 \item Positional Encoding 생성 후 패치 임베딩에 추가
 \item Task Adapters (Whitening)를 통한 작업 특화 특징 보존
-\item Normalizing Flow를 통한 확률 분포 추정:
-    \begin{itemize}
-    \item Spatial Context Mixer
-    \item Context-Aware Scale Network
-    \item LoRA 기반 Coupling Layer
-    \item Deep Invertible Adapter
-    \end{itemize}
-\item Likelihood (손실) 계산
+\item Spatial Context Mixer를 통한 주변 문맥 정보 혼합
+\item Normalizing Flow를 통한 확률 분포 추정
+\item Likelihood 계산
 \end{enumerate}
 
 수식으로 표현하면:
@@ -128,27 +120,32 @@ MoLE-Flow는 사전 학습된 Backbone을 통해 이미지의 패치 임베딩�
 
 입력 이미지의 특징을 추출하고 각 작업별 전문가를 학습시키기 위한 입력으로 사용하기 위해 다음과 같은 전처리를 수행한다.
 
-\subsubsection{Backbone}
-사전 학습된 Feature Extractor를 통해 특징을 추출한다.
-이때 중간 층(intermediate layer)의 특징을 추출함으로써 다중 스케일 정보(multi-scale information)를 활용한다.
-본 연구에서는 ViT-Base를 백본으로 사용하며, 트랜스포머 블록 $\{1, 3, 5, 11\}$에서 다중 스케일 특징을 집계한다.
-
-\subsubsection{Patch Maker}
-추출된 각 특징 맵은 국소 특징을 학습하기 위해 패치 단위로 분할된 후 풀링하여 패치 임베딩을 생성한다.
-최종적으로 $\mathbf{F} \in \mathbb{R}^{B \times H \times W \times D}$ 형태의 패치 임베딩이 생성되며, 여기서 $H \times W$는 패치 그리드 크기, $D$는 특징 차원이다.
+\subsubsection{Feature Extractor \& Patch Embedding}
+\begin{itemize}
+    \item 사전 학습된 Feature Extractor를 통해 특징을 추출한다.
+    \item 이때 intermediate layer의 출력을 활용하여 다중 스케일 정보(multi-scale information)를 얻는다.
+    \item PatchCore와 유사하게 입력 이미지의 지역적 특성을 추출한다.
+    \item 추출된 특징 맵을 패치 단위로 분할한 뒤 풀링 과정을 거쳐 패치 임베딩을 생성한다.
+    \item 최종적으로 $\mathbf{F} \in \mathbb{R}^{B \times H \times W \times D}$ 형태의 패치 임베딩을 얻으며, 여기서 $H \times W$는 패치 그리드 크기, $D$는 특징 차원이다.
+\end{itemize}
 
 \subsubsection{Positional Encoding}
-Normalizing Flow는 순열 불변성(Permutation Invariance)을 가지므로, 각 패치의 공간적 위치 정보를 보존하기 위해 2D Sinusoidal Positional Encoding $\mathbf{P}$를 패치 임베딩에 추가한다:
+\begin{itemize}
+    \item Normalizing Flow는 permutation invariance 특성을 갖기 때문에, 2차원 구조가 아닌 patch embedding 각각이 독립적으로 처리된다.
+    \item 각 패치의 공간적 위치 정보를 보존하기 위해 2D sinusoidal positional encoding $\mathbf{P}$를 패치 임베딩에 더한다.
+    \item 수식으로 표현하면 다음과 같다:
 \begin{equation}
 \mathbf{F}' = \mathbf{F} + \mathbf{P}, \quad \mathbf{P} \in \mathbb{R}^{H \times W \times D}
 \end{equation}
-
-\noindent 위치 인코딩은 각 패치의 $(h, w)$ 좌표에 대해 사인-코사인 함수를 적용하여 생성된다.
+\end{itemize}
 
 \subsection{Task Adapters (Whitening)}
 \label{sec:adapters}
 
-서로 다른 작업 간의 특징 분포 차이를 정렬하고, Flow 모델의 입력 분포를 안정화하기 위해 Whitening Adapter를 적용한다.
+\begin{itemize}
+    \item Normalizing Flow는 입력 분포의 변화에 매우 민감하여, 분포가 달라질 때 학습이 불안정하거나 성능 저하가 두드러지는 단점이 있다.
+    \item 이러한 NF의 불안정성을 완화하고, 서로 다른 작업 간의 특징 분포 차이를 정렬하여 입력 분포를 안정화하기 위해 Whitening Adapter를 적용한다.
+\end{itemize}
 
 \subsubsection{Task-Agnostic Whitening}
 

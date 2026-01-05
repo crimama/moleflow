@@ -1,0 +1,10 @@
+\beamer@sectionintoc {1}{Introduction}{3}{0}{1}
+\beamer@sectionintoc {2}{Previous Method}{4}{0}{2}
+\beamer@sectionintoc {3}{Overall Architecture}{6}{0}{3}
+\beamer@sectionintoc {4}{Feature Extraction}{14}{0}{4}
+\beamer@sectionintoc {5}{Task Adapters}{15}{0}{5}
+\beamer@sectionintoc {6}{MoLE-Flow}{16}{0}{6}
+\beamer@sectionintoc {7}{Training \& Inference}{24}{0}{7}
+\beamer@sectionintoc {8}{Experiments Part 1: Hyperparameter Optimization}{29}{0}{8}
+\beamer@sectionintoc {9}{Experiments Part 2: Paper Experiment Design}{37}{0}{9}
+\beamer@sectionintoc {10}{Conclusion \& Future Work}{43}{0}{10}
