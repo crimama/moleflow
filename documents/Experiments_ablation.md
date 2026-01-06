@@ -130,6 +130,29 @@
 **결론**: MoLE block 비중이 높을수록 Pix AP 성능이 향상되는 경향. 최적 구성은 **MoLE 10 + DIA 2** (Pix AP 54.70%)
 
 
+### 3.2 MoLE-Only (No DIA) Depth Scaling
+
+DIA 없이 MoLE(LoRA) subnet만으로 구성할 때, num_coupling_layers(NCL) 증가에 따른 성능 변화를 실험합니다.
+
+| NCL | Img AUC | Pix AUC | Img AP | Pix AP | Rt Acc | 비고 |
+|-----|---------|---------|--------|--------|--------|------|
+| **8** | **97.99** | **97.74** | **99.23** | **54.92** | 100.0 | MoLE-only 최적 |
+| 12 | 94.20 | 94.16 | 97.81 | 51.82 | 100.0 | 성능 하락 시작 |
+| 16 | 60.43 | 53.50 | 81.20 | 10.67 | 100.0 | **심각한 성능 저하** |
+| 20 | 58.60 | 52.68 | 80.40 | 9.60 | 100.0 | **학습 실패** |
+
+**분석**:
+1. **NCL=8 (MoLE-only)**: MAIN(98.29%)과 유사한 성능 (97.99%) - DIA 없이도 8 coupling layers로 충분
+2. **NCL=12**: Img AUC 94.20%로 하락 시작 - 깊은 네트워크에서 gradient flow 문제 발생
+3. **NCL=16, 20**: 심각한 성능 저하 (Img AUC ~60%, Pix AP ~10%) - **학습 불안정/실패**
+
+**핵심 인사이트**:
+- DIA 없이 MoLE-only로 구성 시, **NCL=8이 최적** (더 깊으면 학습 불안정)
+- DIA의 역할: 깊은 NF에서 gradient flow 안정화 및 학습 용이성 제공
+- MoLE-Flow(Full)의 MoLE 8 + DIA 4 조합이 **깊이와 안정성의 균형**을 달성
+
+
+---
 
 ## 4. Base Weight Sharing vs. Sequential/Independent Training
 
