@@ -154,3 +154,11 @@ Ablation-LoRA-Rank-MoLE6-DIA2-LoRA32,mvtec,wide_resnet50_2,15,60,0.0003,16,0,32,
 Ablation-LoRA-Rank-MoLE6-DIA2-LoRA128,mvtec,wide_resnet50_2,15,60,0.0003,16,0,128,6,2,0.0001,,,,5,3,True,True,True,True,True,True,True,True,whitening,1-1,0.9804*,0.9782*,0.5580*,100.00
 Ablation-LoRA-Rank-MoLE6-DIA2-LoRA16,mvtec,wide_resnet50_2,15,60,0.0003,16,0,16,6,2,0.0001,,,,5,3,True,True,True,True,True,True,True,True,whitening,1-1,0.9806*,0.9782*,0.5586*,100.00
 Ablation-LoRA-Rank-MoLE4-DIA2-LoRA32,mvtec,wide_resnet50_2,15,60,0.0003,16,0,32,4,2,0.0001,,,,5,3,True,True,True,True,True,True,True,True,whitening,1-1,0.9784*,0.9779*,0.5585*,100.00
+Ablation-MoLE-Only-NCL4,mvtec,wide_resnet50_2,15,60,0.0003,16,0,64,4,0,0.0001,0.7,,,5,3,True,False,True,True,True,True,True,True,whitening,1-1,0.9004*,0.9331*,0.4976*,100.00
+Ablation-MoLE-Only-NCL6,mvtec,wide_resnet50_2,15,60,0.0003,16,0,64,6,0,0.0001,0.7,,,5,3,True,False,True,True,True,True,True,True,whitening,1-1,0.9208*,0.9427*,0.4985*,100.00
+Ablation-MoLE-Only-NCL8,mvtec,wide_resnet50_2,15,60,0.0003,16,0,64,8,0,0.0001,0.7,,,5,3,True,False,True,True,True,True,True,True,whitening,1-1,0.9274*,0.9455*,0.5006*,100.00
+Ablation-MoLE-Only-NCL10,mvtec,wide_resnet50_2,15,60,0.0003,16,0,64,10,0,0.0001,0.7,,,5,3,True,False,True,True,True,True,True,True,whitening,1-1,0.8628*,0.8879*,0.4365*,100.00
+Ablation-MoLE-Only-NCL12,mvtec,wide_resnet50_2,15,60,0.0003,16,0,64,12,0,0.0001,0.7,,,5,3,True,False,True,True,True,True,True,True,whitening,1-1,0.6219*,0.6198*,0.1423*,100.00
+Ablation-MoLE-Only-NCL14,mvtec,wide_resnet50_2,15,60,0.0003,16,0,64,14,0,0.0001,0.7,,,5,3,True,False,True,True,True,True,True,True,whitening,1-1,0.5952*,0.6125*,0.1185*,100.00
+Ablation-MoLE-Only-NCL16,mvtec,wide_resnet50_2,15,60,0.0003,16,0,64,16,0,0.0001,0.7,,,5,3,True,False,True,True,True,True,True,True,whitening,1-1,0.5597*,0.5724*,0.0964*,100.00
+Ablation-MoLE-Only-NCL18,mvtec,wide_resnet50_2,15,60,0.0003,16,0,64,18,0,0.0001,0.7,,,5,3,True,False,True,True,True,True,True,True,whitening,1-1,0.5893*,0.5837*,0.0942*,100.00
