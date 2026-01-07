@@ -47,23 +47,23 @@
 | w/o Scale Context | Scale Context의 기여도 | `--no_scale_context` | ✅ 완료 |
 | w/o Spatial Context | Spatial Context의 기여도 | `--no_spatial_context` | ✅ 완료 |
 | w/o Whitening Adapter | Whitening Adapter의 기여도 | `--no_whitening_adapter` | ✅ 완료 |
-| w/o Tail Aware Loss | Tail Aware Loss의 기여도 | `--tail_weight 0` | ⏳ 실험 중 |
-| w/o LogDet Reg | LogDet Regularization 유무 | `--lambda_logdet 0` | ⏳ 실험 중 |
-| w/o Pos Embedding | 위치 정보의 기여도 | `--no_pos_embedding` | ⏳ 실험 중 |
-| w/o DIA | DIA 제거 (MoLE-Only) | `--no_dia` | ✅ 완료 (Section 3.3) |
+| w/o Tail Aware Loss | Tail Aware Loss의 기여도 | `--tail_weight 0` | ✅ 완료 |
+| w/o LogDet Reg | LogDet Regularization 유무 | `--lambda_logdet 0` | ✅ 완료 |
+| w/o Pos Embedding | 위치 정보의 기여도 | `--no_pos_embedding` | ✅ 완료 |
+| w/o DIA | DIA 제거 (MoLE-Only) | `--no_dia` | ✅ 완료 (Section 2) |
 
 ### 결과 테이블 (MoLE6+DIA2 기준)
 
 | Configuration | Img AUC | Pix AUC | Pix AP | Rt Acc | Δ Img AUC | Δ Pix AP | Status |
 |---------------|---------|---------|--------|--------|-----------|----------|--------|
 | **MAIN (MoLE6+DIA2)** | **98.05** | **97.81** | **55.80** | 100.0 | - | - | ✅ |
+| w/o Tail Aware Loss | 94.97 | 97.21 | 48.61 | 100.0 | **-3.08** | **-7.19** | ✅ |
 | w/o Whitening Adapter | 97.90 | 97.69 | 48.84 | 100.0 | -0.15 | **-6.96** | ✅ |
+| w/o LogDet Reg | 98.06 | 97.70 | 51.85 | 100.0 | +0.01 | -3.95 | ✅ |
 | w/o Spatial Context | 97.98 | 97.54 | 52.93 | 100.0 | -0.07 | -2.87 | ✅ |
+| w/o Pos Embedding | 97.40 | 97.47 | 53.99 | 100.0 | -0.65 | -1.81 | ✅ |
 | w/o Scale Context | 97.90 | 97.74 | 54.52 | 100.0 | -0.15 | -1.28 | ✅ |
 | w/o LoRA | 97.96 | 97.77 | 55.31 | 100.0 | -0.09 | -0.49 | ✅ |
-| w/o Tail Aware Loss | TBD | TBD | TBD | TBD | TBD | TBD | ⏳ |
-| w/o LogDet Reg | TBD | TBD | TBD | TBD | TBD | TBD | ⏳ |
-| w/o Pos Embedding | TBD | TBD | TBD | TBD | TBD | TBD | ⏳ |
 
 ### 분석 (2026-01-07 업데이트)
 
@@ -71,23 +71,34 @@
 
 | 순위 | Component | Pix AP 기여 | Img AUC 기여 | Pix AUC 기여 |
 |------|-----------|------------|-------------|-------------|
-| 1 | **Whitening Adapter** | **+6.96%** | +0.15% | +0.12% |
-| 2 | **Spatial Context** | **+2.87%** | +0.07% | +0.27% |
-| 3 | **Scale Context** | +1.28% | +0.15% | +0.07% |
-| 4 | **LoRA** | +0.49% | +0.09% | +0.04% |
+| 1 | **Tail Aware Loss** | **+7.19%** | **+3.08%** | +0.60% |
+| 2 | **Whitening Adapter** | **+6.96%** | +0.15% | +0.12% |
+| 3 | **LogDet Regularization** | **+3.95%** | -0.01% | +0.11% |
+| 4 | **Spatial Context** | +2.87% | +0.07% | +0.27% |
+| 5 | **Pos Embedding** | +1.81% | +0.65% | +0.34% |
+| 6 | **Scale Context** | +1.28% | +0.15% | +0.07% |
+| 7 | **LoRA** | +0.49% | +0.09% | +0.04% |
 
 #### 핵심 발견
 
-1. **Whitening Adapter가 Pix AP에 가장 큰 영향**: -6.96%p
+1. **Tail Aware Loss가 가장 중요**: Pix AP +7.19%p, Img AUC +3.08%p
+   - Anomaly detection에서 tail distribution 학습이 핵심
+   - Image-level 성능에도 큰 영향 (94.97% → 98.05%)
+
+2. **Whitening Adapter가 Pix AP에 두 번째로 큰 영향**: +6.96%p
    - Feature distribution normalization이 anomaly localization에 매우 중요
-   - 특히 tile (-16.6%), leather (-11.3%), toothbrush (-15.7%) 등에서 큰 성능 저하
+   - 특히 tile, leather, toothbrush 등에서 큰 성능 저하
 
-2. **Spatial Context가 Pixel-level 성능에 중요**: Pix AUC -0.27%p, Pix AP -2.87%p
-   - transistor 클래스에서 Pix AUC 급락 (0.9416)
+3. **LogDet Regularization이 Pix AP에 중요**: +3.95%p
+   - Flow의 invertibility 유지가 localization 정확도에 기여
+   - Img AUC에는 영향 없음 (98.06%)
 
-3. **LoRA 기여도가 예상보다 낮음**: Pix AP -0.49%p
+4. **Pos Embedding이 Img AUC에 유의미한 영향**: +0.65%p
+   - 위치 정보가 Image-level detection에 도움
+
+5. **LoRA 기여도가 예상보다 낮음**: Pix AP +0.49%p
    - DIA가 task-specific adaptation 역할을 일부 수행하는 것으로 추정
-   - 성능 측면에서 기여도는 낮으나, LoRA 를 사용함으로써 파라미터 수는 감소하고 효율성 증가 
+   - 성능 측면에서 기여도는 낮으나, 파라미터 효율성 증가 
 
 
 ---
@@ -182,16 +193,25 @@
 | Ablation | 목적 | 내용 | Status |
 |----------|------|------|--------|
 | Main (Base Frozen) | Base 모델 학습 후 freeze | `--freeze_base` (default) | ✅ 완료 |
-| Sequential Training | Base freeze 없이 순차 학습 | `--no_freeze_base` | ⏳ 실험 중 |
+| Sequential Training | Base freeze 없이 순차 학습 | `--no_freeze_base` | ✅ 완료 |
 | Complete Separated | Task별 완전 분리 | `--use_task_separated` | ⏳ 대기 (Batch 3) |
 
 ### 결과 테이블
 
-| Configuration | Img AUC | Pix AUC | Pix AP | Δ Pix AP | Status |
-|---------------|---------|---------|--------|----------|--------|
-| **MAIN (Base Frozen)** | 98.05 | 97.81 | 55.80 | - | ✅ |
-| Sequential Training | TBD | TBD | TBD | TBD | ⏳ 실험 중 |
-| Complete Separated | TBD | TBD | TBD | TBD | ⏳ Batch 3 대기 |
+| Configuration | Img AUC | Pix AUC | Pix AP | Rt Acc | Δ Img AUC | Δ Pix AP | Status |
+|---------------|---------|---------|--------|--------|-----------|----------|--------|
+| **MAIN (Base Frozen)** | **98.05** | **97.81** | **55.80** | 100.0 | - | - | ✅ |
+| Sequential Training | 60.10 | 68.20 | 12.29 | 100.0 | **-37.95** | **-43.51** | ✅ |
+| Complete Separated | TBD | TBD | TBD | TBD | TBD | TBD | ⏳ |
+
+### 분석
+
+**Sequential Training의 Catastrophic Forgetting**:
+- Base weights를 freeze하지 않고 순차 학습 시 심각한 성능 저하
+- Img AUC: 98.05% → 60.10% (**-37.95%p**)
+- Pix AP: 55.80% → 12.29% (**-43.51%p**)
+- 이전 Task의 지식이 새로운 Task 학습 시 완전히 망각됨
+- **결론**: Base Frozen 전략이 Continual Learning에 필수
 
 
 
@@ -217,14 +237,14 @@
 - 한편으로는 Linear Layer보다 파라미터 수는 적음에도 불구하고 똑같은 성능을 보여줌 
 
 ## lambda_logdet
-> ⚠️ MoLE6+DIA2 기준 (NCL=6, DIA=2)
+> MoLE6+DIA2 기준 (NCL=6, DIA=2)
 
 | lambda_logdet | Img AUC | Pix AUC | Pix AP | Δ Pix AP | 비고 |
 |---------------|---------|---------|--------|----------|------|
-| 0             | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
+| 0 (disabled)  | 98.06   | 97.70   | 51.85  | -3.95    | w/o LogDet |
 | 1e-6          | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
 | 1e-5          | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
-| **1e-4**      | **98.05** | **97.81** | **55.80** | - | **MoLE6+DIA2 기준** |
+| **1e-4**      | **98.05** | **97.81** | **55.80** | - | **✅ MoLE6+DIA2 기준** |
 
 ### 분석
 - lambda_logdet=1e-4가 최적 (Pix AP 기준)
@@ -273,11 +293,11 @@
 
 | tail_weight | Img AUC | Pix AUC | Pix AP | Δ Pix AP | 비고 |
 |-------------|---------|---------|--------|----------|------|
-| 0           | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
+| 0 (disabled) | 94.97   | 97.21   | 48.61  | **-7.19** | ❌ w/o Tail Loss |
 | 0.1         | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
 | 0.3         | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
 | 0.5         | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
-| **0.7**     | **98.05** | **97.81** | **55.80** | - | **MoLE6+DIA2 기준** |
+| **0.7**     | **98.05** | **97.81** | **55.80** | - | **✅ MoLE6+DIA2 기준** |
 | 0.8         | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
 
 ## Tail Top-K Ratio (tail_top_k_ratio)

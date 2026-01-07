@@ -170,3 +170,7 @@ MoLE6-DIA2-woLoRA,mvtec,wide_resnet50_2,15,60,0.0003,16,0,64,6,2,0.0001,0.7,3,2,
 MoLE6-DIA2-woScaleCtx,mvtec,wide_resnet50_2,15,60,0.0003,16,0,64,6,2,0.0001,0.7,3,2,5,3,True,True,True,True,True,True,False,True,whitening,1-1,0.9790,0.9774,0.5452,100.0
 MoLE6-DIA2-woSpatialCtx,mvtec,wide_resnet50_2,15,60,0.0003,16,0,64,6,2,0.0001,0.7,3,2,5,3,True,True,True,True,True,False,True,True,whitening,1-1,0.9798,0.9754,0.5293,100.0
 MoLE6-DIA2-woWhitening,mvtec,wide_resnet50_2,15,60,0.0003,16,0,64,6,2,0.0001,0.7,3,2,5,3,True,True,False,True,True,True,True,True,whitening,1-1,0.9790,0.9769,0.4884,100.0
+MoLE6-DIA2-woTailLoss,mvtec,wide_resnet50_2,15,60,0.0003,16,0,64,6,2,0.0001,0,3,2,5,3,True,True,True,True,True,True,True,True,whitening,1-1,0.9497,0.9721,0.4861,100.0
+MoLE6-DIA2-woLogDet,mvtec,wide_resnet50_2,15,60,0.0003,16,0,64,6,2,0,0.7,3,2,5,3,True,True,True,True,True,True,True,True,whitening,1-1,0.9806,0.9770,0.5185,100.0
+MoLE6-DIA2-woPosEmbed,mvtec,wide_resnet50_2,15,60,0.0003,16,0,64,6,2,0.0001,0.7,3,2,5,3,True,True,True,True,False,True,True,True,whitening,1-1,0.9740,0.9747,0.5399,100.0
+MoLE6-DIA2-Sequential,mvtec,wide_resnet50_2,15,60,0.0003,16,0,64,6,2,0.0001,0.7,3,2,5,3,True,True,True,True,True,True,True,True,whitening,1-1,0.6010,0.6820,0.1229,100.0
