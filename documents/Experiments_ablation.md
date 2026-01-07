@@ -179,6 +179,70 @@ MoLE(NCL) + DIA(2 blocks) 구성에서 NCL 증가에 따른 성능 변화:
 **결론**: DIA가 안정적인 학습에 중요한 역할 수행. MoLE-Only는 깊은 모델에서 불안정
 
 
+### 3.4 DIA-Only (No MoLE) Depth Scaling
+
+> ✅ **실험 완료** (2026-01-07): DIA-Only (`num_coupling_layers=0, use_dia=true`) 실험 수행 완료
+
+| DIA | Img AUC | Pix AUC | Img AP | Pix AP | Rt Acc | 비고 |
+|-----|---------|---------|--------|--------|--------|------|
+| **4** | **98.13** | **97.86** | **99.26** | **53.28** | 100.0 | **최적** |
+| 6 | 98.15 | 97.81 | 99.22 | 51.39 | 100.0 | |
+| 8 | 98.19 | 97.78 | 99.23 | 50.74 | 100.0 | |
+| 10 | 98.17 | 97.73 | 99.22 | 49.61 | 100.0 | |
+
+**분석**:
+1. **모든 DIA depth에서 안정적**: Img AUC 98.1%+ 유지
+2. **DIA=4가 Pix AP 최적**: 53.28%
+3. **깊어질수록 Pix AP 감소**: DIA 4→10에서 53.28%→49.61%
+4. **Task-Specific 학습 부재**: MoLE+DIA2(55.80%) 대비 Pix AP 2.5%p 낮음
+
+**결론**: DIA는 학습 안정화에 효과적이나, Task-specific adaptation 없이는 Pixel-level 정밀도 한계
+
+
+### 3.5 MoLE vs DIA 종합 비교
+
+> ✅ **분석 완료** (2026-01-07)
+
+#### Architecture 별 Best Configuration
+
+| Architecture | Best Config | Img AUC | Pix AUC | Pix AP | Rt Acc | 특징 |
+|--------------|-------------|---------|---------|--------|--------|------|
+| **MoLE+DIA2** | NCL=6, DIA=2 | 98.05% | 97.81% | **55.80%** | 100% | Task-specific + 안정성 |
+| **DIA-Only** | DIA=4 | **98.13%** | **97.86%** | 53.28% | 100% | 안정적 학습 |
+| **MoLE-Only** | NCL=8 | 92.74% | 94.55% | 50.06% | 100% | 불안정, 낮은 성능 |
+
+#### Depth Scaling 안정성 비교
+
+| Architecture | 안정 학습 범위 | 최대 Depth | 비고 |
+|--------------|---------------|-----------|------|
+| **MoLE-Only** | NCL 4~8 | NCL=8 | NCL≥10에서 급격한 성능 하락 |
+| **DIA-Only** | DIA 4~10+ | DIA=10+ | 모든 depth에서 98%+ 안정 |
+| **MoLE+DIA2** | NCL 4~10 | NCL=10 | DIA가 MoLE 학습 안정화 |
+
+#### 핵심 Findings
+
+1. **MoLE의 역할**: Task-specific LoRA adaptation
+   - Pixel-level 정밀도 향상 (Pix AP: +2.5~5.7%p)
+   - 단점: 깊은 모델에서 학습 불안정
+
+2. **DIA의 역할**: 학습 안정화
+   - 모든 depth에서 Img AUC 98%+ 유지
+   - MoLE의 학습 가능 범위 확장 (NCL 8→10)
+   - 단점: Task-specific 학습 없어 Pix AP 제한적
+
+3. **시너지 효과 (MoLE+DIA)**:
+   - MoLE의 Task-specific 장점 + DIA의 안정화 장점 결합
+   - 최적: MoLE6+DIA2 (총 8 blocks)
+
+#### 권장 구성
+
+| 우선순위 | Configuration | Img AUC | Pix AP | 용도 |
+|---------|---------------|---------|--------|------|
+| 1 (추천) | **MoLE6+DIA2** | 98.05% | 55.80% | Production (최고 Pix AP) |
+| 2 | DIA-Only (DIA=4) | 98.13% | 53.28% | 빠른 학습, 안정성 우선 |
+| 3 | MoLE-Only (NCL=8) | 92.74% | 50.06% | ⚠️ 비권장 (불안정)
+
+
 ---
 
 ## 4. Base Weight Sharing vs. Sequential/Independent Training
