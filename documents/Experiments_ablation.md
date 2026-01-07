@@ -43,13 +43,13 @@
 
 | Ablation | 목적 | 내용 | Status |
 |----------|------|------|--------|
-| w/o LoRA | LoRA vs Regular Linear | `--no_lora` | ⚠️ 재실험 필요 |
-| w/o Scale Context | Scale Context의 기여도 | `--no_scale_context` | ⚠️ 재실험 필요 |
-| w/o Spatial Context | Spatial Context의 기여도 | `--no_spatial_context` | ⚠️ 재실험 필요 |
-| w/o Whitening Adapter | Whitening Adapter의 기여도 | `--no_whitening_adapter` | ⚠️ 재실험 필요 |
-| w/o Tail Aware Loss | Tail Aware Loss의 기여도 | `--tail_weight 0` | ⚠️ 재실험 필요 |
-| w/o LogDet Reg | LogDet Regularization 유무 | `--lambda_logdet 0` | ⚠️ 재실험 필요 |
-| w/o Pos Embedding | 위치 정보의 기여도 | `--no_pos_embedding` | ⚠️ 재실험 필요 |
+| w/o LoRA | LoRA vs Regular Linear | `--no_lora` | ✅ 완료 |
+| w/o Scale Context | Scale Context의 기여도 | `--no_scale_context` | ✅ 완료 |
+| w/o Spatial Context | Spatial Context의 기여도 | `--no_spatial_context` | ✅ 완료 |
+| w/o Whitening Adapter | Whitening Adapter의 기여도 | `--no_whitening_adapter` | ✅ 완료 |
+| w/o Tail Aware Loss | Tail Aware Loss의 기여도 | `--tail_weight 0` | ⏳ 실험 중 |
+| w/o LogDet Reg | LogDet Regularization 유무 | `--lambda_logdet 0` | ⏳ 실험 중 |
+| w/o Pos Embedding | 위치 정보의 기여도 | `--no_pos_embedding` | ⏳ 실험 중 |
 | w/o DIA | DIA 제거 (MoLE-Only) | `--no_dia` | ✅ 완료 (Section 3.3) |
 
 ### 결과 테이블 (MoLE6+DIA2 기준)
@@ -57,218 +57,146 @@
 | Configuration | Img AUC | Pix AUC | Pix AP | Rt Acc | Δ Img AUC | Δ Pix AP | Status |
 |---------------|---------|---------|--------|--------|-----------|----------|--------|
 | **MAIN (MoLE6+DIA2)** | **98.05** | **97.81** | **55.80** | 100.0 | - | - | ✅ |
-| w/o DIA (MoLE6-Only) | 92.08 | 94.27 | 49.85 | 100.0 | -5.97 | -5.95 | ✅ |
-| w/o LoRA | TBD | TBD | TBD | TBD | TBD | TBD | ⚠️ |
-| w/o Scale Context | TBD | TBD | TBD | TBD | TBD | TBD | ⚠️ |
-| w/o Spatial Context | TBD | TBD | TBD | TBD | TBD | TBD | ⚠️ |
-| w/o Whitening Adapter | TBD | TBD | TBD | TBD | TBD | TBD | ⚠️ |
-| w/o Tail Aware Loss | TBD | TBD | TBD | TBD | TBD | TBD | ⚠️ |
-| w/o LogDet Reg | TBD | TBD | TBD | TBD | TBD | TBD | ⚠️ |
-| w/o Pos Embedding | TBD | TBD | TBD | TBD | TBD | TBD | ⚠️ |
+| w/o Whitening Adapter | 97.90 | 97.69 | 48.84 | 100.0 | -0.15 | **-6.96** | ✅ |
+| w/o Spatial Context | 97.98 | 97.54 | 52.93 | 100.0 | -0.07 | -2.87 | ✅ |
+| w/o Scale Context | 97.90 | 97.74 | 54.52 | 100.0 | -0.15 | -1.28 | ✅ |
+| w/o LoRA | 97.96 | 97.77 | 55.31 | 100.0 | -0.09 | -0.49 | ✅ |
+| w/o Tail Aware Loss | TBD | TBD | TBD | TBD | TBD | TBD | ⏳ |
+| w/o LogDet Reg | TBD | TBD | TBD | TBD | TBD | TBD | ⏳ |
+| w/o Pos Embedding | TBD | TBD | TBD | TBD | TBD | TBD | ⏳ |
 
-### 분석
+### 분석 (2026-01-07 업데이트)
 
-**w/o DIA 분석** (완료):
-- DIA 제거 시 Img AUC -5.97%p, Pix AP -5.95%p 하락
-- DIA가 학습 안정화 및 성능 향상에 핵심 역할
+#### 컴포넌트 기여도 순위 (Pix AP 영향 기준)
 
-> 나머지 ablation은 재실험 필요
+| 순위 | Component | Pix AP 기여 | Img AUC 기여 | Pix AUC 기여 |
+|------|-----------|------------|-------------|-------------|
+| 1 | **Whitening Adapter** | **+6.96%** | +0.15% | +0.12% |
+| 2 | **Spatial Context** | **+2.87%** | +0.07% | +0.27% |
+| 3 | **Scale Context** | +1.28% | +0.15% | +0.07% |
+| 4 | **LoRA** | +0.49% | +0.09% | +0.04% |
+
+#### 핵심 발견
+
+1. **Whitening Adapter가 Pix AP에 가장 큰 영향**: -6.96%p
+   - Feature distribution normalization이 anomaly localization에 매우 중요
+   - 특히 tile (-16.6%), leather (-11.3%), toothbrush (-15.7%) 등에서 큰 성능 저하
+
+2. **Spatial Context가 Pixel-level 성능에 중요**: Pix AUC -0.27%p, Pix AP -2.87%p
+   - transistor 클래스에서 Pix AUC 급락 (0.9416)
+
+3. **LoRA 기여도가 예상보다 낮음**: Pix AP -0.49%p
+   - DIA가 task-specific adaptation 역할을 일부 수행하는 것으로 추정
+   - 성능 측면에서 기여도는 낮으나, LoRA 를 사용함으로써 파라미터 수는 감소하고 효율성 증가 
+
+
+---
+## 2. Normalizing Flow Block 구성 실험 (MoLE / DIA Block 조합)
+
+전체 Coupling Block 수를 조절하고, MoLE-SubNet과 DIA block의 구성 비율에 따른 성능 변화를 실험합니다.
+
+### 2.1 MoLE vs DIA Architecture 종합 비교
+
+
+#### 전체 실험 결과 통합 테이블
+
+| Architecture | MoLE | DIA | Total | Img AUC | Pix AUC | Img AP | Pix AP | Rt Acc | 비고 |
+|--------------|------|-----|-------|---------|---------|--------|--------|--------|------|
+| **MoLE+DIA** | **6** | **2** | **8** | **98.05** | **97.81** | **99.25** | **55.80** | 100.0 | **✅ MAIN (최적)** |
+| MoLE+DIA | 4 | 2 | 6 | 97.84 | 97.80 | 99.12 | 55.90 | 100.0 | |
+| MoLE+DIA | 8 | 2 | 10 | 97.99 | 97.74 | 99.23 | 54.92 | 100.0 | |
+| MoLE+DIA | 10 | 2 | 12 | 98.27 | 97.73 | - | 54.70 | 100.0 | |
+| MoLE+DIA | 12 | 2 | 14 | 94.20 | 94.16 | 97.81 | 51.82 | 100.0 | ⚠️ 성능 하락 |
+| MoLE+DIA | 16 | 2 | 18 | 60.43 | 53.50 | 81.20 | 10.67 | 100.0 | ❌ 학습 실패 |
+| MoLE+DIA | 20 | 2 | 22 | 58.60 | 52.68 | 80.40 | 9.60 | 100.0 | ❌ 학습 실패 |
+| MoLE+DIA | 8 | 4 | 12 | 98.29 | 97.82 | - | 54.20 | 100.0 | Old MAIN |
+| MoLE+DIA | 6 | 6 | 12 | 98.19 | 97.79 | - | 51.62 | 100.0 | 균형 구성 |
+| MoLE+DIA | 4 | 8 | 12 | 98.09 | 97.74 | - | 50.27 | 100.0 | DIA 비중 높음 |
+| **DIA-Only** | **0** | **4** | **4** | **98.13** | **97.86** | **99.26** | **53.28** | 100.0 | **안정성 최고** |
+| DIA-Only | 0 | 6 | 6 | 98.15 | 97.81 | 99.22 | 51.39 | 100.0 | |
+| DIA-Only | 0 | 8 | 8 | 98.19 | 97.78 | 99.23 | 50.74 | 100.0 | |
+| DIA-Only | 0 | 10 | 10 | 98.17 | 97.73 | 99.22 | 49.61 | 100.0 | |
+| **MoLE-Only** | **8** | **0** | **8** | **92.74** | **94.55** | **97.09** | **50.06** | 100.0 | **MoLE 최적** |
+| MoLE-Only | 4 | 0 | 4 | 90.04 | 93.31 | 95.77 | 49.76 | 100.0 | |
+| MoLE-Only | 6 | 0 | 6 | 92.08 | 94.27 | 96.77 | 49.85 | 100.0 | |
+| MoLE-Only | 10 | 0 | 10 | 86.28 | 88.79 | 94.47 | 43.65 | 100.0 | 성능 하락 |
+| MoLE-Only | 12 | 0 | 12 | 62.19 | 61.98 | 82.24 | 14.23 | 100.0 | ❌ 학습 불안정 |
+| MoLE-Only | 14 | 0 | 14 | 59.52 | 61.25 | 79.41 | 11.85 | 100.0 | ❌ 학습 실패 |
+| MoLE-Only | 16 | 0 | 16 | 55.97 | 57.24 | 78.61 | 9.64 | 100.0 | ❌ 학습 실패 |
+| MoLE-Only | 18 | 0 | 18 | 58.93 | 58.37 | 80.04 | 9.42 | 100.0 | ❌ 학습 실패 |
+
+#### 핵심 분석
+
+**1. Architecture 별 Best Configuration**
+
+| Architecture | Best Config | Img AUC | Pix AUC | Pix AP | 특징 |
+|--------------|-------------|---------|---------|--------|------|
+| **MoLE+DIA2** | MoLE=6, DIA=2 | 98.05% | 97.81% | **55.80%** | **Task-specific + 안정성 (최적)** |
+| **DIA-Only** | DIA=4 | **98.13%** | **97.86%** | 53.28% | 안정적 학습, Img 성능 최고 |
+| **MoLE-Only** | MoLE=8 | 92.74% | 94.55% | 50.06% | 불안정, 낮은 성능 |
+
+**2. Depth Scaling 안정성 비교**
+
+| Architecture | 안정 학습 범위 | 최대 안정 Depth | 성능 하락 시점 | 학습 실패 시점 |
+|--------------|---------------|----------------|---------------|---------------|
+| **MoLE-Only** | MoLE 4~8 | 8 blocks | MoLE≥10 | MoLE≥12 |
+| **DIA-Only** | DIA 4~10+ | 10+ blocks | 없음 | 없음 |
+| **MoLE+DIA2** | MoLE 4~10 | 10 blocks | MoLE≥12 | MoLE≥16 |
+
+**3. 컴포넌트 역할 분석**
+
+| Component | 역할 | 기여도 | 장점 | 단점 |
+|-----------|------|--------|------|------|
+| **MoLE** | Task-specific LoRA adaptation | Pix AP +2.5~5.7%p | Pixel-level 정밀도 향상 | 깊은 모델에서 학습 불안정 |
+| **DIA** | 학습 안정화 | Img AUC 안정화 | 모든 depth에서 98%+ 유지 | Task-specific 학습 부재 |
+| **MoLE+DIA** | 시너지 효과 | 최고 Pix AP 달성 | 안정성 + 정밀도 결합 | - |
+
+**4. 주요 발견사항**
+
+1. **MoLE6+DIA2가 최적 구성**
+   - Pix AP 55.80%로 최고 성능
+   - 총 8 blocks로 효율적
+   - DIA의 안정화 + MoLE의 Task-specific 장점 결합
+
+2. **MoLE-Only는 불안정**
+   - DIA 없이는 Img AUC 92.74%로 크게 하락 (vs 98.05%)
+   - MoLE≥10에서 성능 급락, MoLE≥12에서 학습 실패
+   - Task-specific 학습은 가능하나 안정성 부족
+
+3. **DIA-Only는 안정적이나 Pix AP 제한적**
+   - 모든 depth(4~10+)에서 Img AUC 98%+ 안정 유지
+   - Img AUC 98.13%로 가장 높음
+   - Task-specific 학습 부재로 Pix AP 53.28% (MoLE+DIA2 대비 -2.5%p)
+
+4. **DIA가 MoLE 학습 안정화에 핵심**
+   - MoLE-Only: 최대 NCL=8까지만 안정
+   - MoLE+DIA2: NCL=10까지 안정 학습 가능
+   - DIA 2 blocks만으로도 충분한 안정화 효과
+
 
 
 ---
 
-## 2. Training Strategy Ablation (MoLE6+DIA2 기준)
+## 3. Training Strategy Ablation (MoLE6+DIA2 기준)
 
 | Ablation | 목적 | 내용 | Status |
 |----------|------|------|--------|
-| Sequential Training | Base freeze 없이 순차 학습 | `--no_freeze_base` | ⚠️ 재실험 필요 |
-| Complete Separated | Task별 완전 분리 | `--use_task_separated` | ⚠️ 재실험 필요 |
+| Main (Base Frozen) | Base 모델 학습 후 freeze | `--freeze_base` (default) | ✅ 완료 |
+| Sequential Training | Base freeze 없이 순차 학습 | `--no_freeze_base` | ⏳ 실험 중 |
+| Complete Separated | Task별 완전 분리 | `--use_task_separated` | ⏳ 대기 (Batch 3) |
 
 ### 결과 테이블
 
 | Configuration | Img AUC | Pix AUC | Pix AP | Δ Pix AP | Status |
 |---------------|---------|---------|--------|----------|--------|
 | **MAIN (Base Frozen)** | 98.05 | 97.81 | 55.80 | - | ✅ |
-| Sequential Training | TBD | TBD | TBD | TBD | ⚠️ 재실험 필요 |
-| Complete Separated | TBD | TBD | TBD | TBD | ⚠️ 재실험 필요 |
+| Sequential Training | TBD | TBD | TBD | TBD | ⏳ 실험 중 |
+| Complete Separated | TBD | TBD | TBD | TBD | ⏳ Batch 3 대기 |
 
-### 분석
-
-> 재실험 후 업데이트 필요
-
----
-
-## 3. Normalizing Flow Block 구성 실험 (MoLE / DIA Block 조합)
-
-> ✅ 실험 완료 (2026-01-07 업데이트)
-
-전체 Coupling Block 수를 조절하고, MoLE-SubNet과 DIA block의 구성 비율에 따른 성능 변화를 실험합니다.
-
-### 3.1 Architecture 비교 요약
-
-| MoLE | DIA | Total | Img AUC | Pix AUC | Pix AP | 비고 |
-|------|-----|-------|---------|---------|--------|------|
-| **6** | **2** | **8** | **98.05** | **97.81** | **55.80** | **✅ MAIN (추천)** |
-| 10 | 2 | 12 | 98.27 | 97.73 | 54.70 | MoLE 비중 높음 |
-| 8 | 4 | 12 | 98.29 | 97.82 | 54.20 | Old MAIN |
-| 6 | 6 | 12 | 98.19 | 97.79 | 51.62 | 균형 구성 |
-| 4 | 8 | 12 | 98.09 | 97.74 | 50.27 | DIA 비중 높음 |
-| 0 | 4 | 4 | 98.13 | 97.86 | 53.28 | DIA-Only (Best) |
-| 8 | 0 | 8 | 92.74 | 94.55 | 50.06 | MoLE-Only (Best) |
-
-### 분석
-
-1. **MoLE6+DIA2가 최고 Pix AP (55.80%)**
-   - DIA의 안정화 + MoLE의 Task-specific 장점 결합
-   - 8 blocks로 효율적
-
-2. **MoLE-Only는 불안정**
-   - DIA 없이는 Img AUC 92.74%로 크게 하락
-   - NCL≥10에서 학습 실패
-
-3. **DIA-Only는 안정적이나 Pix AP 제한적**
-   - 모든 depth에서 98%+ 안정
-   - Task-specific 학습 부재로 Pix AP 53.28%
-
-**결론**: MoLE6+DIA2가 최고 Pix AP와 안정성 균형에서 최적
-
-
-### 3.2 MoLE + DIA2 Depth Scaling (실제 실험 설정)
-
-> ⚠️ **주의**: 이전에 "MoLE-Only (No DIA)"로 기록되었으나, 실제로는 `use_dia=true, dia_n_blocks=2`로 DIA가 활성화된 상태였음
-
-MoLE(NCL) + DIA(2 blocks) 구성에서 NCL 증가에 따른 성능 변화:
-
-> **실제 실험 조건**: `use_dia=true, dia_n_blocks=2`, backbone=WRN50, lr=3e-4, logdet=1e-4, scale_k=5, epochs=60
-
-| NCL | DIA | Total | Img AUC | Pix AUC | Img AP | Pix AP | Rt Acc | 비고 |
-|-----|-----|-------|---------|---------|--------|--------|--------|------|
-| 4 | 2 | 6 | 97.84 | 97.80 | 99.12 | 55.90 | 100.0 | MoLE4+DIA2 |
-| 6 | 2 | 8 | 98.05 | 97.81 | 99.25 | 55.80 | 100.0 | MoLE6+DIA2 |
-| 8 | 2 | 10 | 97.99 | 97.74 | 99.23 | 54.92 | 100.0 | MoLE8+DIA2 |
-| 10 | 2 | 12 | 98.27 | 97.73 | - | 54.70 | 100.0 | MoLE10+DIA2 |
-| 12 | 2 | 14 | 94.20 | 94.16 | 97.81 | 51.82 | 100.0 | ⚠️ 성능 하락 |
-| 16 | 2 | 18 | 60.43 | 53.50 | 81.20 | 10.67 | 100.0 | ❌ 학습 실패 |
-| 20 | 2 | 22 | 58.60 | 52.68 | 80.40 | 9.60 | 100.0 | ❌ 학습 실패 |
-
-**분석**:
-1. **NCL=4~10 + DIA2**: 안정적 학습, Img AUC 97.8~98.3%
-2. **NCL=12+**: 성능 하락 시작
-3. **NCL=16, 20**: 학습 실패
-
-### 3.3 MoLE-Only (No DIA) Depth Scaling
-
-> ✅ **실험 완료** (2026-01-07): 진정한 MoLE-Only (`use_dia=false`) 실험 수행 완료
-
-| NCL | Img AUC | Pix AUC | Img AP | Pix AP | Rt Acc | 비고 |
-|-----|---------|---------|--------|--------|--------|------|
-| 4 | 90.04 | 93.31 | 95.77 | 49.76 | 100.0 | |
-| 6 | 92.08 | 94.27 | 96.77 | 49.85 | 100.0 | |
-| **8** | **92.74** | **94.55** | **97.09** | **50.06** | 100.0 | **최적** |
-| 10 | 86.28 | 88.79 | 94.47 | 43.65 | 100.0 | 성능 하락 시작 |
-| 12 | 62.19 | 61.98 | 82.24 | 14.23 | 100.0 | 학습 불안정 |
-| 14 | 59.52 | 61.25 | 79.41 | 11.85 | 100.0 | 학습 실패 |
-| 16 | 55.97 | 57.24 | 78.61 | 9.64 | 100.0 | 학습 실패 |
-| 18 | 58.93 | 58.37 | 80.04 | 9.42 | 100.0 | 학습 실패 |
-
-**분석**:
-1. **NCL=8이 최적**: Img AUC 92.74%, Pix AP 50.06%
-2. **NCL=10부터 성능 급락**: Img AUC 86.28%로 하락
-3. **NCL≥12: 학습 실패**: Img AUC 60% 이하
-4. **DIA 없이는 전체적으로 낮은 성능**: MoLE+DIA2(NCL=6)의 98.05% 대비 MoLE-Only(NCL=8)는 92.74%
-
-**결론**: DIA가 안정적인 학습에 중요한 역할 수행. MoLE-Only는 깊은 모델에서 불안정
-
-
-### 3.4 DIA-Only (No MoLE) Depth Scaling
-
-> ✅ **실험 완료** (2026-01-07): DIA-Only (`num_coupling_layers=0, use_dia=true`) 실험 수행 완료
-
-| DIA | Img AUC | Pix AUC | Img AP | Pix AP | Rt Acc | 비고 |
-|-----|---------|---------|--------|--------|--------|------|
-| **4** | **98.13** | **97.86** | **99.26** | **53.28** | 100.0 | **최적** |
-| 6 | 98.15 | 97.81 | 99.22 | 51.39 | 100.0 | |
-| 8 | 98.19 | 97.78 | 99.23 | 50.74 | 100.0 | |
-| 10 | 98.17 | 97.73 | 99.22 | 49.61 | 100.0 | |
-
-**분석**:
-1. **모든 DIA depth에서 안정적**: Img AUC 98.1%+ 유지
-2. **DIA=4가 Pix AP 최적**: 53.28%
-3. **깊어질수록 Pix AP 감소**: DIA 4→10에서 53.28%→49.61%
-4. **Task-Specific 학습 부재**: MoLE+DIA2(55.80%) 대비 Pix AP 2.5%p 낮음
-
-**결론**: DIA는 학습 안정화에 효과적이나, Task-specific adaptation 없이는 Pixel-level 정밀도 한계
-
-
-### 3.5 MoLE vs DIA 종합 비교
-
-> ✅ **분석 완료** (2026-01-07)
-
-#### Architecture 별 Best Configuration
-
-| Architecture | Best Config | Img AUC | Pix AUC | Pix AP | Rt Acc | 특징 |
-|--------------|-------------|---------|---------|--------|--------|------|
-| **MoLE+DIA2** | NCL=6, DIA=2 | 98.05% | 97.81% | **55.80%** | 100% | Task-specific + 안정성 |
-| **DIA-Only** | DIA=4 | **98.13%** | **97.86%** | 53.28% | 100% | 안정적 학습 |
-| **MoLE-Only** | NCL=8 | 92.74% | 94.55% | 50.06% | 100% | 불안정, 낮은 성능 |
-
-#### Depth Scaling 안정성 비교
-
-| Architecture | 안정 학습 범위 | 최대 Depth | 비고 |
-|--------------|---------------|-----------|------|
-| **MoLE-Only** | NCL 4~8 | NCL=8 | NCL≥10에서 급격한 성능 하락 |
-| **DIA-Only** | DIA 4~10+ | DIA=10+ | 모든 depth에서 98%+ 안정 |
-| **MoLE+DIA2** | NCL 4~10 | NCL=10 | DIA가 MoLE 학습 안정화 |
-
-#### 핵심 Findings
-
-1. **MoLE의 역할**: Task-specific LoRA adaptation
-   - Pixel-level 정밀도 향상 (Pix AP: +2.5~5.7%p)
-   - 단점: 깊은 모델에서 학습 불안정
-
-2. **DIA의 역할**: 학습 안정화
-   - 모든 depth에서 Img AUC 98%+ 유지
-   - MoLE의 학습 가능 범위 확장 (NCL 8→10)
-   - 단점: Task-specific 학습 없어 Pix AP 제한적
-
-3. **시너지 효과 (MoLE+DIA)**:
-   - MoLE의 Task-specific 장점 + DIA의 안정화 장점 결합
-   - 최적: MoLE6+DIA2 (총 8 blocks)
-
-#### 권장 구성
-
-| 우선순위 | Configuration | Img AUC | Pix AP | 용도 |
-|---------|---------------|---------|--------|------|
-| 1 (추천) | **MoLE6+DIA2** | 98.05% | 55.80% | Production (최고 Pix AP) |
-| 2 | DIA-Only (DIA=4) | 98.13% | 53.28% | 빠른 학습, 안정성 우선 |
-| 3 | MoLE-Only (NCL=8) | 92.74% | 50.06% | ⚠️ 비권장 (불안정)
 
 
 ---
-
-## 4. Base Weight Sharing vs. Sequential/Independent Training
-
-> ⚠️ **주의**: 이전 실험들이 실제로는 `use_dia=true`로 DIA가 활성화된 상태였음. 결과는 참고용.
-
-Base backbone의 가중치 공유(sequential/independent) 방식에 따른 continual setting의 영향 분석:
-
-| 설정                      | Description                                                  | Img AUC | Pix AUC | Img AP | Pix AP | 비고          |
-|---------------------------|-------------------------------------------------------------|---------|---------|--------|--------|---------------|
-| (a) **Base Frozen(default)**       | Base Weight Task 0 학습 후 고정 (freeze), downstream만 학습          | TBD | TBD | TBD | TBD | ⚠️ 재실험 필요 |
-| (b) **Sequential Training**| Base Weight는 모든 task에서 공유하되 순차적으로 학습 | 57.47 | 55.81 | 77.38 | 7.90 | ❌ Catastrophic Forgetting (MoLE8+DIA4 기준) |
-| (c) **Complete Separated**| 각 task별로 base+flow 완전 독립 (multi-head) | 98.13 | 97.74 | 99.22 | 52.49 | MoLE6+DIA2 기준 |
-
-**실험 목적:**
-- Base backbone의 동결, 순차 학습, 완전 독립 세팅 간 성능/일반화/forgetting trade-off 비교
-- 실제 deployment scenario에 맞는 가중치 공유 전략 도출
-
-### 4.2 분석
-
-> ⚠️ 이전 분석은 config 불일치로 인해 유효하지 않음. 재실험 후 업데이트 필요.
-
 # Hyperparameter Analysis
-
-> ⚠️ **주의**: 아래 실험들은 실제로 `use_dia=true, dia_n_blocks=2`로 수행됨 (MoLE+DIA2 기준)
 
 ## lora_rank (MoLE6+DIA2 기준)
 
@@ -285,6 +213,8 @@ Base backbone의 가중치 공유(sequential/independent) 방식에 따른 conti
 - 모든 LoRA rank(16~128)에서 유사한 성능
 - Pix AP: 55.80~55.89% 범위로 안정적
 - **결론**: LoRA rank는 성능에 큰 영향 없음. 파라미터 효율성을 위해 rank=16~32 권장
+- LoRA 자체는 성능에 크게 영향을 주기 보다는, 파라미터 효율성을 위한 장치.
+- 한편으로는 Linear Layer보다 파라미터 수는 적음에도 불구하고 똑같은 성능을 보여줌 
 
 ## lambda_logdet
 > ⚠️ MoLE+DIA2 기준 (NCL=6, DIA=2)
@@ -299,15 +229,21 @@ Base backbone의 가중치 공유(sequential/independent) 방식에 따른 conti
 
 | scale_context_kernel | Img AUC | Img AP | Pix AUC | Pix AP | 비고 |
 |---------------------|---------|--------|---------|--------|------|
-| **5**               | 98.05 | 99.25 | 97.81 | 55.80 | MoLE6+DIA2 |
 | 0 (disabled)        | TBD     | TBD    | TBD     | TBD    | 재실험 필요 |
+| 3                   | TBD     | TBD    | TBD     | TBD    | 재실험 필요 |
+| **5**               | 98.05 | 99.25 | 97.81 | 55.80 | MoLE6+DIA2 |
+| 7                   | TBD     | TBD    | TBD     | TBD    | 재실험 필요 |
+
 
 ## spatial_context_kernel
 > ⚠️ MoLE+DIA2 기준 (NCL=6, DIA=2)
 
 | spatial_context_kernel | Img AUC | Img AP | Pix AUC | Pix AP | 비고 |
 |-----------------------|---------|--------|---------|--------|------|
+| 0 (disabled)          | TBD     | TBD    | TBD     | TBD    | 재실험 필요 |
 | **3**                 | 98.05 | 99.25 | 97.81 | 55.80 | MoLE6+DIA2 |
+| 5                     | TBD     | TBD    | TBD     | TBD    | 재실험 필요 |
+| 7                     | TBD     | TBD    | TBD     | TBD    | 재실험 필요 |
 
 ## Tail Aware Loss weight (tail_weight)
 > ⚠️ MoLE+DIA2 기준 (NCL=6, DIA=2)
