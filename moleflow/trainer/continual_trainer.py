@@ -946,7 +946,7 @@ class MoLEContinualTrainer:
     def _train_base_task(self, task_id: int, task_classes: List[str],
                          train_loader: DataLoader, num_epochs: int,
                          lr: float, log_interval: int):
-        """Train base NF + LoRA for Task 0."""
+        """Train base NF + LoRA for Task 0, or independent NF for Complete Separated mode."""
         trainable_params = self.nf_model.get_trainable_params(task_id)
         num_params = sum(p.numel() for p in trainable_params)
 
@@ -954,10 +954,19 @@ class MoLEContinualTrainer:
         def _get_first_layer(subnet):
             return subnet.s_layer1 if hasattr(subnet, 's_layer1') else subnet.layer1
 
-        has_lora = self.use_lora and any(
-            str(task_id) in _get_first_layer(subnet).lora_A for subnet in self.nf_model.subnets
-        )
-        phase_name = "Base + LoRA Training" if has_lora else "Base Training"
+        # For Complete Separated mode (task > 0), check task-specific subnets
+        task_key = str(task_id)
+        if self.use_task_separated and task_id > 0 and task_key in self.nf_model.task_subnets:
+            subnets_to_check = self.nf_model.task_subnets[task_key]
+            has_lora = self.use_lora and any(
+                str(task_id) in _get_first_layer(subnet).lora_A for subnet in subnets_to_check
+            )
+            phase_name = "Complete Separated NF Training" if not has_lora else "Complete Separated NF + LoRA Training"
+        else:
+            has_lora = self.use_lora and any(
+                str(task_id) in _get_first_layer(subnet).lora_A for subnet in self.nf_model.subnets
+            )
+            phase_name = "Base + LoRA Training" if has_lora else "Base Training"
 
         if self.logger:
             self.logger.log_model_info(
@@ -1131,7 +1140,9 @@ class MoLEContinualTrainer:
                           train_loader: DataLoader, num_epochs: int,
                           lr: float, log_interval: int):
         """Stage 1: FAST Adaptation (LoRA + InputAdapter, base frozen)."""
-        self.nf_model.freeze_all_base()
+        # Freeze base NF unless no_freeze_base is enabled (for sequential training ablation)
+        if not self.ablation_config.no_freeze_base:
+            self.nf_model.freeze_all_base()
 
         fast_params = self.nf_model.get_fast_params(task_id)
         num_params = sum(p.numel() for p in fast_params)
@@ -1149,6 +1160,11 @@ class MoLEContinualTrainer:
         all_fast_params = list(fast_params)
         if self.use_stn and self.stn is not None:
             all_fast_params.extend(self.stn.parameters())
+
+        # Sequential Training ablation: include base NF parameters
+        if self.ablation_config.no_freeze_base:
+            base_params = [p for p in self.nf_model.parameters() if p.requires_grad]
+            all_fast_params.extend(base_params)
 
         # Create optimizer (AdamP if available, AdamW fallback)
         optimizer = create_optimizer(all_fast_params, lr=lr)

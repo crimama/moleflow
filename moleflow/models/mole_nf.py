@@ -237,6 +237,12 @@ class MoLESpatialAwareNF(nn.Module):
         # Applied AFTER base NF for nonlinear manifold adaptation
         self.dia_adapters = nn.ModuleDict()
 
+        # V6: Complete Separated Mode - independent NF for each task
+        # When use_task_separated=True, each task gets its own complete NF
+        # This is the upper bound experiment (no parameter sharing)
+        self.task_flows = nn.ModuleDict()  # task_id -> (flow, subnets list)
+        self.task_subnets = {}  # task_id -> list of subnets (not nn.Module, just reference)
+
         # Spatial Context Mixer (Baseline 1.5) or MS-Context (V3)
         # Priority: TaskConditionedMSContext > LightweightMSContext > SpatialContextMixer
         if self.use_task_conditioned_ms_context:
@@ -470,6 +476,67 @@ class MoLESpatialAwareNF(nn.Module):
 
         return coder
 
+    def _build_task_flow(self, task_id: int) -> Ff.SequenceINN:
+        """
+        Build a completely independent NF for a specific task (Complete Separated mode).
+
+        This creates a fresh flow with new weights, not sharing any parameters with
+        the base flow or other tasks. Used when use_task_separated=True.
+
+        Args:
+            task_id: The task ID for which to create the flow
+
+        Returns:
+            A new SequenceINN flow instance
+        """
+        task_subnets = []
+
+        def make_task_subnet(dims_in, dims_out):
+            if self.use_scale_context:
+                subnet = MoLEContextSubnet(
+                    dims_in, dims_out,
+                    rank=self.lora_rank,
+                    alpha=self.lora_alpha,
+                    use_lora=self.use_lora,
+                    use_task_bias=self.use_task_bias,
+                    context_kernel=self.scale_context_kernel,
+                    context_init_scale=self.scale_context_init_scale,
+                    context_max_alpha=self.scale_context_max_alpha
+                )
+            else:
+                subnet = MoLESubnet(
+                    dims_in, dims_out,
+                    rank=self.lora_rank,
+                    alpha=self.lora_alpha,
+                    use_lora=self.use_lora,
+                    use_task_bias=self.use_task_bias,
+                    use_regular_linear=self.use_regular_linear,
+                    use_spectral_norm=self.use_spectral_norm
+                )
+            task_subnets.append(subnet)
+            return subnet
+
+        flow = Ff.SequenceINN(self.embed_dim)
+        for k in range(self.coupling_layers):
+            flow.append(
+                Fm.AllInOneBlock,
+                subnet_constructor=make_task_subnet,
+                affine_clamping=self.clamp_alpha,
+                global_affine_type='SOFTPLUS',
+                permute_soft=False
+            )
+
+        # Store subnet references
+        self.task_subnets[str(task_id)] = task_subnets
+
+        # Initialize subnets for this task (unfreeze base, add adapters)
+        for subnet in task_subnets:
+            subnet.unfreeze_base()
+            if self.use_lora or self.use_task_bias:
+                subnet.add_task_adapter(task_id)
+
+        return flow.to(self.device)
+
     def add_task(self, task_id: int):
         """
         Add LoRA adapters and input adapter for a new task.
@@ -539,14 +606,15 @@ class MoLESpatialAwareNF(nn.Module):
             # Task > 0: Freeze or partially unfreeze base, add LoRA adapters + task biases
             # V6-Exp2: Task-separated mode - each task trains independently
             if self.use_task_separated:
-                # Each task gets its own complete set of parameters
-                # Unfreeze base for independent training
-                for subnet in self.subnets:
-                    subnet.unfreeze_base()
-                    if self.use_lora or self.use_task_bias or self.use_regular_linear:
-                        subnet.add_task_adapter(task_id)
+                # Complete Separated: Create a brand new, independent NF for this task
+                # No parameter sharing with base flow or other tasks
+                task_flow = self._build_task_flow(task_id)
+                self.task_flows[task_key] = task_flow
 
-                print(f"   🔀 [V6] Task-Separated Mode: Training complete NF for Task {task_id}")
+                # Count parameters for this task's flow
+                task_params = sum(p.numel() for p in task_flow.parameters())
+                print(f"   🔀 [V6] Complete Separated: Created independent NF for Task {task_id}")
+                print(f"      📊 Task {task_id} NF parameters: {task_params:,}")
 
             elif self.use_adaptive_unfreeze:
                 # V3: Adaptive unfreezing - unfreeze later blocks
@@ -600,26 +668,27 @@ class MoLESpatialAwareNF(nn.Module):
                 ).to(self.device)
                 print(f"   🔄 [V3] DIA added: {self.dia_n_blocks} coupling blocks")
 
-            # Print status
-            components = []
-            if self.use_lora:
-                components.append(f"LoRA (rank={self.lora_rank})")
-            if self.use_task_bias:
-                components.append("Task Biases")
-            if self.use_task_adapter:
-                adapter_info = f"Input Adapter ({self.adapter_mode})"
-                if self.adapter_mode == "soft_ln":
-                    adapter_info += f" [init_scale={self.soft_ln_init_scale}]"
-                elif self.adapter_mode == "no_ln_after_task0":
-                    adapter_info += " [LN=OFF]"
-                components.append(adapter_info)
-            if self.use_dia:
-                components.append(f"DIA ({self.dia_n_blocks} blocks)")
+            # Print status (skip for task_separated mode - already printed above)
+            if not self.use_task_separated:
+                components = []
+                if self.use_lora:
+                    components.append(f"LoRA (rank={self.lora_rank})")
+                if self.use_task_bias:
+                    components.append("Task Biases")
+                if self.use_task_adapter:
+                    adapter_info = f"Input Adapter ({self.adapter_mode})"
+                    if self.adapter_mode == "soft_ln":
+                        adapter_info += f" [init_scale={self.soft_ln_init_scale}]"
+                    elif self.adapter_mode == "no_ln_after_task0":
+                        adapter_info += " [LN=OFF]"
+                    components.append(adapter_info)
+                if self.use_dia:
+                    components.append(f"DIA ({self.dia_n_blocks} blocks)")
 
-            if components:
-                print(f"✅ Task {task_id}: Base frozen, {' + '.join(components)} added")
-            else:
-                print(f"✅ Task {task_id}: Base frozen (no task-specific components - ablation mode)")
+                if components:
+                    print(f"✅ Task {task_id}: Base frozen, {' + '.join(components)} added")
+                else:
+                    print(f"✅ Task {task_id}: Base frozen (no task-specific components - ablation mode)")
 
         # V3: Add task to TaskConditionedMSContext (handles its own freeze/unfreeze)
         if self.use_task_conditioned_ms_context and self.spatial_mixer is not None:
@@ -926,6 +995,22 @@ class MoLESpatialAwareNF(nn.Module):
         params = []
         task_key = str(task_id)
 
+        # V6: Complete Separated Mode - task > 0 has its own independent flow
+        if self.use_task_separated and task_id > 0:
+            # Return parameters from the task-specific flow
+            if task_key in self.task_flows:
+                params.extend(self.task_flows[task_key].parameters())
+
+            # Input adapter parameters
+            if task_key in self.input_adapters:
+                params.extend(self.input_adapters[task_key].parameters())
+
+            # V3: DIA parameters
+            if task_key in self.dia_adapters:
+                params.extend(self.dia_adapters[task_key].parameters())
+
+            return params
+
         if task_id == 0:
             # Task 0: Base parameters + LoRA parameters + InputAdapter
             for subnet in self.subnets:
@@ -1127,11 +1212,21 @@ class MoLESpatialAwareNF(nn.Module):
         if self.use_scale_context:
             MoLEContextSubnet._spatial_info = (B, H, W)
 
+        # Select the appropriate flow based on task_separated mode
+        # Complete Separated: Each task > 0 has its own independent NF
+        task_key = str(self.current_task_id) if self.current_task_id is not None else "0"
+        if self.use_task_separated and task_key in self.task_flows:
+            # Use task-specific flow (Complete Separated mode)
+            current_flow = self.task_flows[task_key]
+        else:
+            # Use base flow (standard mode or Task 0)
+            current_flow = self.flow
+
         # Flow transformation
         if not reverse:
-            z_flat, log_jac_det_flat = self.flow(x_flat)
+            z_flat, log_jac_det_flat = current_flow(x_flat)
         else:
-            z_flat, log_jac_det_flat = self.flow(x_flat, rev=True)
+            z_flat, log_jac_det_flat = current_flow(x_flat, rev=True)
 
         # Clear spatial info after forward pass
         if self.use_scale_context:
