@@ -194,7 +194,7 @@
 |----------|------|------|--------|
 | Main (Base Frozen) | Base 모델 학습 후 freeze | `--freeze_base` (default) | ✅ 완료 |
 | Sequential Training | Base freeze 없이 순차 학습 | `--no_freeze_base` | ✅ 완료 |
-| Complete Separated | Task별 완전 분리 | `--use_task_separated` | ⏳ 대기 (Batch 3) |
+| Complete Separated | Task별 완전 분리 | `--use_task_separated` | ✅ 완료 |
 
 ### 결과 테이블
 
@@ -202,7 +202,7 @@
 |---------------|---------|---------|--------|--------|-----------|----------|--------|
 | **MAIN (Base Frozen)** | **98.05** | **97.81** | **55.80** | 100.0 | - | - | ✅ |
 | Sequential Training | 60.10 | 68.20 | 12.29 | 100.0 | **-37.95** | **-43.51** | ✅ |
-| Complete Separated | TBD | TBD | TBD | TBD | TBD | TBD | ⏳ |
+| Complete Separated | 98.13 | 97.74 | 52.49 | 100.0 | +0.08 | -3.31 | ✅ |
 
 ### 분석
 
@@ -212,6 +212,13 @@
 - Pix AP: 55.80% → 12.29% (**-43.51%p**)
 - 이전 Task의 지식이 새로운 Task 학습 시 완전히 망각됨
 - **결론**: Base Frozen 전략이 Continual Learning에 필수
+
+**Complete Separated의 특성**:
+- Task별 완전 분리 학습 (공유 weight 없음)
+- Img AUC: 98.13% (+0.08%p) - MAIN과 유사
+- Pix AP: 52.49% (**-3.31%p**) - 성능 하락
+- 공유 representation 학습의 이점을 잃어버림
+- **결론**: Base Frozen이 Complete Separated보다 Pix AP에서 우수
 
 
 
@@ -276,16 +283,17 @@
 | spatial_context_kernel | Img AUC | Pix AUC | Pix AP | Δ Pix AP | 비고 |
 |-----------------------|---------|---------|--------|----------|------|
 | 0 (disabled)          | 97.98   | 97.54   | 52.93  | -2.87    | MoLE6-DIA2-woSpatialCtx |
-| **3**                 | **98.05** | **97.81** | **55.80** | - | **MoLE6+DIA2 기준** |
-| 5                     | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
-| 7                     | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
+| **3**                 | **98.05** | **97.81** | **55.80** | - | **✅ MoLE6+DIA2 기준** |
+| 5                     | 96.12   | 96.97   | 51.38  | -4.42    | ❌ 성능 하락 |
+| 7                     | 90.90   | 93.91   | 44.33  | -11.47   | ❌ 심각한 성능 하락 |
 
 
 ### 분석
-- spatial_context_kernel=3이 최적
+- **spatial_context_kernel=3이 최적** (Pix AP 55.80%)
 - disabled(0) 대비 +2.87%p Pix AP 향상, Pix AUC +0.27%p
-- kernel=5는 오히려 성능 저하 (NCL8+DIA4 참고)
-- **결론**: spatial_context_kernel=3 권장, 더 큰 kernel은 비권장
+- kernel=5: Pix AP 51.38% (**-4.42%p**), Img AUC 96.12% (-1.93%p)
+- kernel=7: Pix AP 44.33% (**-11.47%p**), Img AUC 90.90% (-7.15%p) - 심각한 성능 저하
+- **결론**: spatial_context_kernel=3 권장, 더 큰 kernel은 성능 저하 유발
 
 
 ## Tail Aware Loss weight (tail_weight)
@@ -294,22 +302,23 @@
 | tail_weight | Img AUC | Pix AUC | Pix AP | Δ Pix AP | 비고 |
 |-------------|---------|---------|--------|----------|------|
 | 0 (disabled) | 94.97   | 97.21   | 48.61  | **-7.19** | ❌ w/o Tail Loss |
-| 0.1         | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
-| 0.3         | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
-| 0.5         | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
+| 0.1         | TBD     | TBD     | TBD    | TBD      | ⏳ 실험 중 |
+| 0.3         | TBD     | TBD     | TBD    | TBD      | ⏳ 실험 중 |
+| 0.5         | TBD     | TBD     | TBD    | TBD      | ⏳ 실험 중 |
 | **0.7**     | **98.05** | **97.81** | **55.80** | - | **✅ MoLE6+DIA2 기준** |
-| 0.8         | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
+| 0.8         | 98.01   | 97.82   | 56.00  | +0.20    | ✅ 약간 향상 |
+| 1.0         | TBD     | TBD     | TBD    | TBD      | ⏳ 실험 중 |
 
 ## Tail Top-K Ratio (tail_top_k_ratio)
 > MoLE6+DIA2 기준 (NCL=6, DIA=2)
 
 | tail_top_k_ratio | Img AUC | Pix AUC | Pix AP | Δ Pix AP | 비고 |
 |------------------|---------|---------|--------|----------|------|
-| 0.01             | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
-| **0.02**         | **98.05** | **97.81** | **55.80** | - | **MoLE6+DIA2 기준** |
-| 0.03             | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
-| 0.05             | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
-| 0.10             | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
+| 0.01             | 98.02   | 97.79   | 55.85  | +0.05    | ✅ 유사 |
+| **0.02**         | **98.05** | **97.81** | **55.80** | - | **✅ MoLE6+DIA2 기준** |
+| 0.03             | TBD     | TBD     | TBD    | TBD      | ⏳ 실험 중 |
+| 0.05             | TBD     | TBD     | TBD    | TBD      | ⏳ 실험 중 |
+| 0.10             | 97.83   | 97.83   | 55.24  | -0.56    | ✅ 약간 하락 |
 
 ### 분석
 - tail_weight 증가에 따라 Pix AP 증가 경향 (0.1 → 0.7)
@@ -323,16 +332,15 @@
 
 | top_k | Img AUC | Pix AUC | Pix AP | Δ Pix AP | 비고 |
 |-------|---------|---------|--------|----------|------|
-| **3** | **98.05** | **97.81** | **55.80** | - | **MoLE6+DIA2 기준** |
-| 5     | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
-| 7     | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
-| 10    | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
+| **3** | **98.05** | **97.81** | **55.80** | - | **✅ MoLE6+DIA2 기준** |
+| 5     | 98.05   | 97.81   | 55.80  | 0.00     | ✅ 동일 |
+| 7     | TBD     | TBD     | TBD    | TBD      | ⏳ 실험 중 |
+| 10    | TBD     | TBD     | TBD    | TBD      | ⏳ 실험 중 |
 
 ### 분석
-- top_k=3이 최적 (Pix AP 기준)
-- k 증가 시 Image AUC는 유지되나 Pix AP 하락 경향
-- k=5~7에서 유사, k=10에서 큰 성능 저하
-- **결론**: score_aggregation_top_k=3 권장
+- top_k=3과 top_k=5가 동일한 성능 (Pix AP 55.80%)
+- k=7, k=10 실험 진행 중
+- **결론**: score_aggregation_top_k=3~5 권장
 
 
 ---
