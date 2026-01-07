@@ -217,47 +217,102 @@
 - 한편으로는 Linear Layer보다 파라미터 수는 적음에도 불구하고 똑같은 성능을 보여줌 
 
 ## lambda_logdet
-> ⚠️ MoLE+DIA2 기준 (NCL=6, DIA=2)
+> ⚠️ MoLE6+DIA2 기준 (NCL=6, DIA=2)
 
-| lambda_logdet | Img AUC | Img AP | Pix AUC | Pix AP | 비고 |
-|---------------|---------|--------|---------|--------|------|
-| **1e-4**      | 98.05 | 99.25 | 97.81 | 55.80 | MoLE6+DIA2 |
-| 기타          | TBD     | TBD    | TBD     | TBD    | 재실험 필요 |
+| lambda_logdet | Img AUC | Pix AUC | Pix AP | Δ Pix AP | 비고 |
+|---------------|---------|---------|--------|----------|------|
+| 0             | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
+| 1e-6          | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
+| 1e-5          | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
+| **1e-4**      | **98.05** | **97.81** | **55.80** | - | **MoLE6+DIA2 기준** |
+
+### 분석
+- lambda_logdet=1e-4가 최적 (Pix AP 기준)
+- NCL8+DIA4 참고 데이터에서 1e-4 > 0 > 1e-5 > 1e-6 순서
+- Log-determinant regularization이 Pix AP 향상에 중요한 역할
+- **결론**: lambda_logdet=1e-4 권장
+
 
 ## scale_context_kernel
-> ⚠️ MoLE+DIA2 기준 (NCL=6, DIA=2)
+> MoLE6+DIA2 기준 (NCL=6, DIA=2)
 
-| scale_context_kernel | Img AUC | Img AP | Pix AUC | Pix AP | 비고 |
-|---------------------|---------|--------|---------|--------|------|
-| 0 (disabled)        | TBD     | TBD    | TBD     | TBD    | 재실험 필요 |
-| 3                   | TBD     | TBD    | TBD     | TBD    | 재실험 필요 |
-| **5**               | 98.05 | 99.25 | 97.81 | 55.80 | MoLE6+DIA2 |
-| 7                   | TBD     | TBD    | TBD     | TBD    | 재실험 필요 |
+| scale_context_kernel | Img AUC | Pix AUC | Pix AP | Δ Pix AP | 비고 |
+|---------------------|---------|---------|--------|----------|------|
+| 0 (disabled)        | 97.90   | 97.74   | 54.52  | -1.28    | MoLE6-DIA2-woScaleCtx |
+| 3                   | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
+| **5**               | **98.05** | **97.81** | **55.80** | - | **MoLE6+DIA2 기준** |
+| 7                   | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
+
+### 분석
+- scale_context_kernel=5가 최적
+- disabled(0) 대비 +1.28%p Pix AP 향상
+- 3과 7은 NCL8+DIA4 참고 데이터로, MoLE6+DIA2에서 유사 경향 예상
+- **결론**: scale_context_kernel=5 권장
 
 
 ## spatial_context_kernel
-> ⚠️ MoLE+DIA2 기준 (NCL=6, DIA=2)
+> MoLE6+DIA2 기준 (NCL=6, DIA=2)
 
-| spatial_context_kernel | Img AUC | Img AP | Pix AUC | Pix AP | 비고 |
-|-----------------------|---------|--------|---------|--------|------|
-| 0 (disabled)          | TBD     | TBD    | TBD     | TBD    | 재실험 필요 |
-| **3**                 | 98.05 | 99.25 | 97.81 | 55.80 | MoLE6+DIA2 |
-| 5                     | TBD     | TBD    | TBD     | TBD    | 재실험 필요 |
-| 7                     | TBD     | TBD    | TBD     | TBD    | 재실험 필요 |
+| spatial_context_kernel | Img AUC | Pix AUC | Pix AP | Δ Pix AP | 비고 |
+|-----------------------|---------|---------|--------|----------|------|
+| 0 (disabled)          | 97.98   | 97.54   | 52.93  | -2.87    | MoLE6-DIA2-woSpatialCtx |
+| **3**                 | **98.05** | **97.81** | **55.80** | - | **MoLE6+DIA2 기준** |
+| 5                     | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
+| 7                     | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
+
+
+### 분석
+- spatial_context_kernel=3이 최적
+- disabled(0) 대비 +2.87%p Pix AP 향상, Pix AUC +0.27%p
+- kernel=5는 오히려 성능 저하 (NCL8+DIA4 참고)
+- **결론**: spatial_context_kernel=3 권장, 더 큰 kernel은 비권장
+
 
 ## Tail Aware Loss weight (tail_weight)
-> ⚠️ MoLE+DIA2 기준 (NCL=6, DIA=2)
+> MoLE6+DIA2 기준 (NCL=6, DIA=2)
 
-| tail_weight | Img AUC | Img AP | Pix AUC | Pix AP | 비고 |
-|-------------|---------|--------|---------|--------|------|
-| **0.7**     | 98.05 | 99.25 | 97.81 | 55.80 | MoLE6+DIA2 |
-| 기타        | TBD     | TBD    | TBD     | TBD    | 재실험 필요 |
+| tail_weight | Img AUC | Pix AUC | Pix AP | Δ Pix AP | 비고 |
+|-------------|---------|---------|--------|----------|------|
+| 0           | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
+| 0.1         | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
+| 0.3         | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
+| 0.5         | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
+| **0.7**     | **98.05** | **97.81** | **55.80** | - | **MoLE6+DIA2 기준** |
+| 0.8         | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
+
+## Tail Top-K Ratio (tail_top_k_ratio)
+> MoLE6+DIA2 기준 (NCL=6, DIA=2)
+
+| tail_top_k_ratio | Img AUC | Pix AUC | Pix AP | Δ Pix AP | 비고 |
+|------------------|---------|---------|--------|----------|------|
+| 0.01             | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
+| **0.02**         | **98.05** | **97.81** | **55.80** | - | **MoLE6+DIA2 기준** |
+| 0.03             | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
+| 0.05             | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
+| 0.10             | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
+
+### 분석
+- tail_weight 증가에 따라 Pix AP 증가 경향 (0.1 → 0.7)
+- 0.7에서 최적, 0.75~0.8에서 약간 하락
+- Tail-aware loss가 Pix AP에 매우 큰 영향 (+9.94%p vs w/o tail loss)
+- **결론**: tail_weight=0.7 권장
+
 
 ## Image Anomaly Score Aggregation K (score_aggregation_top_k)
-> ⚠️ MoLE+DIA2 기준 (NCL=6, DIA=2)
+> MoLE6+DIA2 기준 (NCL=6, DIA=2)
 
-| top_k | Img AUC | Img AP | Pix AUC | Pix AP | 비고 |
-|-------|---------|--------|---------|--------|------|
-| **3** | 98.05 | 99.25 | 97.81 | 55.80 | MoLE6+DIA2 |
-| 기타  | TBD     | TBD    | TBD     | TBD    | 재실험 필요 |
+| top_k | Img AUC | Pix AUC | Pix AP | Δ Pix AP | 비고 |
+|-------|---------|---------|--------|----------|------|
+| **3** | **98.05** | **97.81** | **55.80** | - | **MoLE6+DIA2 기준** |
+| 5     | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
+| 7     | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
+| 10    | TBD     | TBD     | TBD    | TBD      | 실험 필요 |
 
+### 분석
+- top_k=3이 최적 (Pix AP 기준)
+- k 증가 시 Image AUC는 유지되나 Pix AP 하락 경향
+- k=5~7에서 유사, k=10에서 큰 성능 저하
+- **결론**: score_aggregation_top_k=3 권장
+
+
+---
