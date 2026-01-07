@@ -50,6 +50,7 @@ class AblationConfig:
 
     # Training strategies
     use_slow_stage: bool = False
+    no_freeze_base: bool = False  # If True, base NF is NOT frozen after Task 0 (for sequential training ablation)
 
     # Fine-grained controls
     use_task_bias: bool = True
@@ -308,7 +309,7 @@ class AblationConfig:
     # Deep Invertible Adapter (DIA)
     # Adds a small task-specific flow after base NF for nonlinear manifold adaptation
     use_dia: bool = True
-    dia_n_blocks: int = 4                    # Number of coupling blocks per DIA
+    dia_n_blocks: int = 2                    # Number of coupling blocks per DIA (MAIN: 2)
     dia_hidden_ratio: float = 0.5            # Hidden dim = channels * hidden_ratio
 
     # Orthogonal Gradient Projection (OGP)
@@ -612,6 +613,12 @@ def add_ablation_args(parser):
     ablation_group.add_argument(
         '--no_pos_embedding', action='store_true',
         help='Disable positional embedding'
+    )
+
+    # Training strategy
+    ablation_group.add_argument(
+        '--no_freeze_base', action='store_true',
+        help='Do NOT freeze base NF after Task 0 (for sequential training ablation)'
     )
 
     # Fine-grained controls
@@ -1209,6 +1216,10 @@ def parse_ablation_args(parsed_args) -> AblationConfig:
     # Apply slow stage setting
     if hasattr(parsed_args, 'enable_slow_stage'):
         config.use_slow_stage = parsed_args.enable_slow_stage
+
+    # Apply no_freeze_base setting
+    if hasattr(parsed_args, 'no_freeze_base') and parsed_args.no_freeze_base:
+        config.no_freeze_base = True
 
     # Apply LoRA settings
     if hasattr(parsed_args, 'lora_rank'):

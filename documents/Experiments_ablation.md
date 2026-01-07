@@ -2,14 +2,15 @@
 
 ## Baseline Configuration (MAIN)
 
-**Experiment**: TBD (MoLE-Only, No DIA 실험 필요)
+**Experiment**: `MVTec-MoLE6-DIA2`
 
 | Parameter | Value |
 |-----------|-------|
 | Backbone | WideResNet50 |
 | LoRA Rank | 64 |
-| Coupling Layers | TBD |
-| DIA Blocks | **0 (disabled)** |
+| Coupling Layers (MoLE) | **6** |
+| DIA Blocks | **2** |
+| Total Blocks | 8 |
 | Epochs | 60 |
 | Learning Rate | 3e-4 |
 | Adapter Mode | Whitening |
@@ -19,117 +20,117 @@
 | Scale Context Kernel | 5 |
 | Lambda Logdet | 1e-4 |
 
-**Baseline Performance**:
+**Baseline Performance** (MVTec AD, 15 classes, 1x1 CL):
 | Metric | Value |
 |--------|-------|
-| Image AUC | TBD |
-| Pixel AUC | TBD |
-| Pixel AP | TBD |
-| Routing Accuracy | TBD |
+| Image AUC | **98.05%** |
+| Pixel AUC | **97.81%** |
+| Pixel AP | **55.80%** |
+| Routing Accuracy | **100%** |
 
-> **⚠️ Note**: 이전에 "MoLE-Only (No DIA)"로 기록된 실험들이 실제로는 `use_dia=true, dia_n_blocks=2`로 DIA가 활성화된 상태였음. 진정한 MoLE-Only 실험 필요.
+> **✅ Note**: MoLE6+DIA2가 최고 Pixel AP (55.80%)를 달성. DIA가 학습 안정화에 기여하고, MoLE가 Task-specific adaptation으로 Pixel-level 정밀도 향상.
 
 ---
 
 
 # Architecture Modular Analysis
 
-## 1. Core Component Ablation
+## 1. Core Component Ablation (MoLE6+DIA2 기준)
 
-> ⚠️ **주의**: 이전 "MoLE-Only NCL=6" 실험들이 실제로는 `use_dia=true, dia_n_blocks=2`로 DIA가 활성화된 상태였음
-> 아래 결과는 **MoLE6 + DIA2** 기준임. 진정한 MoLE-Only 재실험 필요
+> **MAIN**: MoLE6+DIA2 (NCL=6, DIA=2) 기준으로 각 컴포넌트 제거 시 성능 변화 측정
 
 ### 실험 목록
 
 | Ablation | 목적 | 내용 | Status |
 |----------|------|------|--------|
-| w/o SpatialContextMixer | Spatial Context Mixing의 기여도 | SpatialContextMixer 모듈 제거 | ⚠️ 재실험 필요 |
-| w/o WhiteningAdapter | Whitening Adapter의 기여도 | InputAdapter(Whitening) 미적용 | ⚠️ 재실험 필요 |
-| w/o Tail Aware Loss | Tail Aware Loss의 기여도 | Tail Aware Loss 비활성화 | ⚠️ 재실험 필요 |
-| w/o LogDet Regularization | LogDet Regularization 유무 | lambda_logdet=0 | ⚠️ 재실험 필요 |
+| w/o LoRA | LoRA vs Regular Linear | `--no_lora` | ⚠️ 재실험 필요 |
 | w/o Scale Context | Scale Context의 기여도 | `--no_scale_context` | ⚠️ 재실험 필요 |
-| w/o LoRA | LoRA vs Regular Linear | `--use_regular_linear` | ⚠️ 재실험 필요 |
-| w/o MoLE Subnet | MoLE Subnet 제거 (Standard Subnet) | MoLE Subnet 비활성화 | ⚠️ 재실험 필요 |
+| w/o Spatial Context | Spatial Context의 기여도 | `--no_spatial_context` | ⚠️ 재실험 필요 |
+| w/o Whitening Adapter | Whitening Adapter의 기여도 | `--no_whitening_adapter` | ⚠️ 재실험 필요 |
+| w/o Tail Aware Loss | Tail Aware Loss의 기여도 | `--tail_weight 0` | ⚠️ 재실험 필요 |
+| w/o LogDet Reg | LogDet Regularization 유무 | `--lambda_logdet 0` | ⚠️ 재실험 필요 |
+| w/o Pos Embedding | 위치 정보의 기여도 | `--no_pos_embedding` | ⚠️ 재실험 필요 |
+| w/o DIA | DIA 제거 (MoLE-Only) | `--no_dia` | ✅ 완료 (Section 3.3) |
 
-### 결과 테이블 (MoLE6+DIA2 기준, config 불일치로 재실험 필요)
+### 결과 테이블 (MoLE6+DIA2 기준)
 
-| Configuration | Img AUC | Pix AUC | Img AP | Pix AP | Rt Acc | Δ Img AUC | Δ Pix AP |
-|---------------|---------|---------|--------|--------|--------|-----------|----------|
-| **MoLE6+DIA2 (실제 설정)** | TBD | TBD | TBD | TBD | TBD | - | - |
-| w/o LoRA | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-| w/o MoLE Subnet | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-| w/o Scale Context | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-| w/o SpatialContextMixer | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-| w/o LogDet Regularization | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-| w/o WhiteningAdapter | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-| w/o Tail Aware Loss | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+| Configuration | Img AUC | Pix AUC | Pix AP | Rt Acc | Δ Img AUC | Δ Pix AP | Status |
+|---------------|---------|---------|--------|--------|-----------|----------|--------|
+| **MAIN (MoLE6+DIA2)** | **98.05** | **97.81** | **55.80** | 100.0 | - | - | ✅ |
+| w/o DIA (MoLE6-Only) | 92.08 | 94.27 | 49.85 | 100.0 | -5.97 | -5.95 | ✅ |
+| w/o LoRA | TBD | TBD | TBD | TBD | TBD | TBD | ⚠️ |
+| w/o Scale Context | TBD | TBD | TBD | TBD | TBD | TBD | ⚠️ |
+| w/o Spatial Context | TBD | TBD | TBD | TBD | TBD | TBD | ⚠️ |
+| w/o Whitening Adapter | TBD | TBD | TBD | TBD | TBD | TBD | ⚠️ |
+| w/o Tail Aware Loss | TBD | TBD | TBD | TBD | TBD | TBD | ⚠️ |
+| w/o LogDet Reg | TBD | TBD | TBD | TBD | TBD | TBD | ⚠️ |
+| w/o Pos Embedding | TBD | TBD | TBD | TBD | TBD | TBD | ⚠️ |
 
 ### 분석
 
-> ⚠️ 이전 분석은 config 불일치로 인해 유효하지 않음. 재실험 후 업데이트 필요.
+**w/o DIA 분석** (완료):
+- DIA 제거 시 Img AUC -5.97%p, Pix AP -5.95%p 하락
+- DIA가 학습 안정화 및 성능 향상에 핵심 역할
+
+> 나머지 ablation은 재실험 필요
 
 
 ---
 
-## 2. MoLE Subnet Ablation
-
-> ⚠️ **주의**: 이전 실험들이 실제로는 `use_dia=true, dia_n_blocks=2`로 DIA가 활성화된 상태였음
-> 진정한 MoLE-Only 실험 재실험 필요
+## 2. Training Strategy Ablation (MoLE6+DIA2 기준)
 
 | Ablation | 목적 | 내용 | Status |
 |----------|------|------|--------|
-| w/o Scale Context | scale_context 유/무 | Scale Context 모듈 미사용 | ⚠️ 재실험 필요 |
-| w/o LoRA | LoRA 대신 Linear 사용 | Regular Linear 사용 | ⚠️ 재실험 필요 |
-| Complete Separated | Task별 완전 분리 | 각 Task별 독립 NF | ⚠️ 재실험 필요 |
-| LoRA Rank=16 | LoRA rank 영향 | `--lora_rank 16` | ⚠️ 재실험 필요 |
+| Sequential Training | Base freeze 없이 순차 학습 | `--no_freeze_base` | ⚠️ 재실험 필요 |
+| Complete Separated | Task별 완전 분리 | `--use_task_separated` | ⚠️ 재실험 필요 |
 
 ### 결과 테이블
 
 | Configuration | Img AUC | Pix AUC | Pix AP | Δ Pix AP | Status |
 |---------------|---------|---------|--------|----------|--------|
-| **MoLE-Only (MAIN)** | TBD | TBD | TBD | - | ⚠️ 재실험 필요 |
-| w/o Scale Context | TBD | TBD | TBD | TBD | ⚠️ 재실험 필요 |
-| w/o LoRA (Regular Linear) | TBD | TBD | TBD | TBD | ⚠️ 재실험 필요 |
+| **MAIN (Base Frozen)** | 98.05 | 97.81 | 55.80 | - | ✅ |
+| Sequential Training | TBD | TBD | TBD | TBD | ⚠️ 재실험 필요 |
 | Complete Separated | TBD | TBD | TBD | TBD | ⚠️ 재실험 필요 |
-| LoRA Rank=16 | TBD | TBD | TBD | TBD | ⚠️ 재실험 필요 |
 
 ### 분석
 
-> ⚠️ 이전 분석은 config 불일치로 인해 유효하지 않음. 재실험 후 업데이트 필요.
+> 재실험 후 업데이트 필요
 
 ---
 
 ## 3. Normalizing Flow Block 구성 실험 (MoLE / DIA Block 조합)
 
-> ✅ 실험 완료 (2026-01-06 업데이트)
+> ✅ 실험 완료 (2026-01-07 업데이트)
 
 전체 Coupling Block 수를 조절하고, MoLE-SubNet과 DIA block의 구성 비율에 따른 성능 변화를 실험합니다.
 
-| MoLE Blocks | DIA Blocks | Total | Img AUC | Pix AUC | Pix AP | 비고 |
-|-------------|-----------|-------|---------|---------|--------|------|
-| 10          | 2         | 12    | 98.27   | 97.73   | **54.70** | MoLE 비중 높을수록 Pix AP 향상 |
-| 8           | 4         | 12    | 98.29   | 97.82   | 54.20 | Old MAIN (MoLE+DIA) |
-| 6           | 6         | 12    | 98.19   | 97.79   | 51.62 | 균형 구성 |
-| 4           | 8         | 12    | 98.09   | 97.74   | 50.27 | DIA 비중 높으면 Pix AP 저하 |
-| 0           | 12        | 12    | 98.37   | 97.84   | 54.16 | DIA-only |
-| **6**       | **0**     | **6** | **98.29** | **97.82** | **54.20** | **MAIN (MoLE-Only NCL=6)** |
+### 3.1 Architecture 비교 요약
+
+| MoLE | DIA | Total | Img AUC | Pix AUC | Pix AP | 비고 |
+|------|-----|-------|---------|---------|--------|------|
+| **6** | **2** | **8** | **98.05** | **97.81** | **55.80** | **✅ MAIN (추천)** |
+| 10 | 2 | 12 | 98.27 | 97.73 | 54.70 | MoLE 비중 높음 |
+| 8 | 4 | 12 | 98.29 | 97.82 | 54.20 | Old MAIN |
+| 6 | 6 | 12 | 98.19 | 97.79 | 51.62 | 균형 구성 |
+| 4 | 8 | 12 | 98.09 | 97.74 | 50.27 | DIA 비중 높음 |
+| 0 | 4 | 4 | 98.13 | 97.86 | 53.28 | DIA-Only (Best) |
+| 8 | 0 | 8 | 92.74 | 94.55 | 50.06 | MoLE-Only (Best) |
 
 ### 분석
 
-1. **MoLE 비중 vs Pix AP**: MoLE block 비중이 높을수록 Pix AP 향상
-   - MoLE 10 + DIA 2: Pix AP **54.70%** (최고)
-   - MoLE 8 + DIA 4: Pix AP 54.20%
-   - MoLE 4 + DIA 8: Pix AP 50.27% (최저)
+1. **MoLE6+DIA2가 최고 Pix AP (55.80%)**
+   - DIA의 안정화 + MoLE의 Task-specific 장점 결합
+   - 8 blocks로 효율적
 
-2. **MoLE-Only NCL=6 (MAIN)**: 더 적은 블록으로 동등한 성능
-   - 6블록으로 12블록 MoLE+DIA 조합과 유사한 성능
-   - 파라미터 효율성 우수
+2. **MoLE-Only는 불안정**
+   - DIA 없이는 Img AUC 92.74%로 크게 하락
+   - NCL≥10에서 학습 실패
 
-3. **DIA의 역할**:
-   - DIA 비중이 높으면 Pix AP 감소 경향
-   - DIA-only(12블록)는 MoLE+DIA(8+4)보다 Pix AP 약간 낮음
+3. **DIA-Only는 안정적이나 Pix AP 제한적**
+   - 모든 depth에서 98%+ 안정
+   - Task-specific 학습 부재로 Pix AP 53.28%
 
-**결론**: MoLE-Only NCL=6가 효율성과 성능 균형에서 최적
+**결론**: MoLE6+DIA2가 최고 Pix AP와 안정성 균형에서 최적
 
 
 ### 3.2 MoLE + DIA2 Depth Scaling (실제 실험 설정)

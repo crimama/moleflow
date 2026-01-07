@@ -46,17 +46,17 @@ pip install -r requirements.txt
 
 ## Default Configuration (MAIN)
 
-**Reference Experiment**: `MVTec-WRN50-TailW0.7-TopK3-TailTopK2-ScaleK5-lr3e-4-MAIN`
+**Reference Experiment**: `MVTec-MoLE6-DIA2`
 
-This is the best-performing configuration. Use these settings as the baseline for new experiments.
+MoLE6 + DIA2 configuration. Best Pixel AP with stable training.
 
 ### Hyperparameters
 ```python
 # Model Architecture
 backbone_name = "wide_resnet50_2"
 lora_rank = 64
-num_coupling_layers = 8
-dia_n_blocks = 4
+num_coupling_layers = 6  # MoLE blocks
+dia_n_blocks = 2         # DIA blocks (total: 8 blocks)
 
 # Training
 num_epochs = 60
@@ -73,9 +73,9 @@ tail_top_k_ratio = 0.02  # or tail_top_k = 2
 scale_context_kernel = 5
 spatial_context_kernel = 3
 
-# Modules (all enabled)
+# Modules
 use_lora = True
-use_dia = True
+use_dia = True           # DIA enabled
 use_whitening_adapter = True
 use_router = True
 use_pos_embedding = True
@@ -86,9 +86,9 @@ use_scale_context = True
 ### Expected Performance (MVTec AD, 15 classes, 1x1 CL scenario)
 | Metric | Value |
 |--------|-------|
-| Image AUC | **98.29%** |
-| Pixel AUC | **97.82%** |
-| Pixel AP | **54.20%** |
+| Image AUC | **98.05%** |
+| Pixel AUC | **97.81%** |
+| Pixel AP | **55.80%** |
 | Routing Accuracy | **100%** |
 
 ### Command
@@ -101,10 +101,9 @@ python run_moleflow.py \
     --num_epochs 60 \
     --lr 3e-4 \
     --lora_rank 64 \
-    --num_coupling_layers 8 \
+    --num_coupling_layers 6 \
+    --dia_n_blocks 2 \
     --batch_size 16 \
-    --use_dia \
-    --dia_n_blocks 4 \
     --use_whitening_adapter \
     --use_tail_aware_loss \
     --tail_weight 0.7 \
