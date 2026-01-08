@@ -67,13 +67,244 @@ Keywords here
 
 %% main text
 \section{Introduction}
-.
+\label{sec:introduction}
+
+%=========================================================================================================
+% 1.1 배경 및 문제 정의
+%=========================================================================================================
+
+산업 환경에서의 이상 탐지(Anomaly Detection)는 제조 공정의 품질 관리와 결함 검출에 필수적인 기술이다.
+최근 딥러닝 기반 이상 탐지 방법론은 정상 데이터만을 사용하여 학습하는 단일 클래스 분류(One-Class Classification) 패러다임을 채택하며, 특히 Normalizing Flow~\cite{rezende2015variational}, PatchCore~\cite{roth2022patchcore}, 그리고 재구성 기반 방법들이 높은 성능을 보여주고 있다.
+
+그러나 실제 산업 현장에서는 단일 제품이 아닌 \textbf{다양한 제품 클래스를 순차적으로 학습}해야 하는 상황이 빈번하게 발생한다:
+\begin{itemize}
+    \item \textbf{제조 라인의 확장}: 새로운 제품(예: 나사 $\rightarrow$ 캡슐 $\rightarrow$ 트랜지스터)이 생산 라인에 추가
+    \item \textbf{데이터 프라이버시}: 이전 제품의 데이터를 저장하거나 재사용할 수 없는 규제 환경
+    \item \textbf{메모리 제약}: 모든 제품의 데이터를 동시에 저장하고 학습하기 어려운 엣지 디바이스 환경
+\end{itemize}
+
+이러한 환경에서 기존 이상 탐지 모델은 \textbf{파멸적 망각(Catastrophic Forgetting)} 문제에 직면한다.
+새로운 제품 클래스를 학습하면 이전에 학습한 제품들에 대한 탐지 성능이 급격히 하락하는 현상이다.
+수식으로 표현하면, Task $t-1$까지 학습한 모델 $f_{\theta}$가 Task $t$를 학습한 후 $f_{\theta'}$가 되었을 때:
+\begin{equation}
+\label{eq:forgetting}
+\text{Forgetting} = \frac{1}{t-1}\sum_{i=0}^{t-1} \left( \text{AUROC}_{f_\theta}(\mathcal{D}_i) - \text{AUROC}_{f_{\theta'}}(\mathcal{D}_i) \right) \gg 0
+\end{equation}
+여기서 $\mathcal{D}_i$는 Task $i$의 테스트 데이터셋이다.
+
+%=========================================================================================================
+% 1.2 기존 접근법의 한계
+%=========================================================================================================
+
+기존의 지속 학습(Continual Learning) 방법론들은 이 문제를 다양한 전략으로 해결하고자 한다:
+
+\paragraph{정규화 기반 방법 (Regularization-based):}
+\begin{itemize}
+    \item EWC~\cite{kirkpatrick2017ewc}: 중요한 파라미터의 변화를 제한하는 Fisher Information 기반 정규화
+    \item LwF~\cite{li2017lwf}: 이전 모델의 출력을 증류(Distillation)하여 지식 보존
+    \item \textbf{한계점}: 작업 수 증가 시 정규화 항의 축적으로 새로운 작업 학습 능력 저하
+\end{itemize}
+
+\paragraph{리플레이 기반 방법 (Replay-based):}
+\begin{itemize}
+    \item 이전 작업의 데이터 일부를 메모리 버퍼에 저장하여 재학습에 활용
+    \item \textbf{한계점}: 메모리 오버헤드, 데이터 프라이버시 문제, 버퍼 크기에 비례하는 성능
+\end{itemize}
+
+\paragraph{아키텍처 기반 방법 (Architecture-based):}
+\begin{itemize}
+    \item PackNet~\cite{mallya2018packnet}: 작업별로 네트워크의 일부를 할당하고 고정
+    \item Progressive Networks~\cite{rusu2016progressive}: 새로운 작업마다 새로운 컬럼 추가
+    \item \textbf{한계점}: 파라미터 효율성 저하, 작업 수에 따른 모델 크기 증가
+\end{itemize}
+
+특히 이상 탐지 도메인에서의 지속 학습은 추가적인 도전 과제를 가진다:
+\begin{itemize}
+    \item \textbf{추론 시 Task ID의 부재}: 기존 지속 학습 연구는 추론 시 Task ID가 주어진다고 가정하지만, 실제 산업 환경에서는 입력 이미지가 어떤 제품인지 사전에 알 수 없음
+    \item \textbf{밀도 추정(Density Estimation)의 민감성}: Normalizing Flow 기반 방법은 정상 분포를 정밀하게 추정해야 하므로, 분포의 미세한 왜곡도 성능 저하로 이어짐
+    \item \textbf{작업 간 분포 격차}: 서로 다른 제품(예: 가죽 vs. 나사)의 특징 분포가 크게 다름
+\end{itemize}
+
+%=========================================================================================================
+% 1.3 제안 방법론의 핵심 아이디어
+%=========================================================================================================
+
+본 논문에서는 이러한 문제들을 해결하기 위해 \textbf{MoLE-Flow (Mixture of LoRA Experts for Normalizing Flow)}를 제안한다.
+핵심 아이디어는 \textbf{Parameter Isolation}을 통한 완벽한 망각 방지와 \textbf{One-stage Task-agnostic 추론}이다.
+
+\paragraph{핵심 통찰 1: 공유 Base + 분리된 Adapter}
+\begin{itemize}
+    \item Normalizing Flow의 기본 가중치(Base)는 첫 번째 작업(Task 0)에서 학습 후 \textbf{완전히 동결}
+    \item 이후 작업들은 경량 어댑터(LoRA, WhiteningAdapter, DIA)만 학습
+    \item 작업별 어댑터가 완전히 분리되어 있으므로 작업 간 간섭이 \textbf{원천적으로 차단}
+\end{itemize}
+
+\paragraph{핵심 통찰 2: 프로토타입 기반 원스테이지 라우팅}
+\begin{itemize}
+    \item 학습 중 각 작업의 특징 분포 통계(평균, 공분산)를 프로토타입으로 저장
+    \item 추론 시 입력 이미지와 각 프로토타입 간 Mahalanobis 거리를 계산
+    \item 가장 가까운 프로토타입의 작업에 해당하는 어댑터를 활성화
+    \item \textbf{별도의 Task ID 예측 단계 없이} 단일 추론으로 라우팅과 이상 탐지를 동시 수행
+\end{itemize}
+
+\paragraph{핵심 통찰 3: 비선형 매니폴드 적응 (DIA)}
+\begin{itemize}
+    \item 선형 LoRA는 저차원 부분공간에서의 적응만 가능하여 복잡한 분포 차이를 표현하기 어려움
+    \item Deep Invertible Adapter (DIA)는 가역적 비선형 변환을 통해 작업별 매니폴드를 정밀하게 보정
+    \item Normalizing Flow의 밀도 추정 속성을 보존하면서 작업 특화 적응 달성
+\end{itemize}
+
+%=========================================================================================================
+% 1.4 기여점 요약
+%=========================================================================================================
+
+본 논문의 주요 기여는 다음과 같다:
+
+\begin{enumerate}
+    \item \textbf{MoLE-Flow 프레임워크 제안}: Normalizing Flow에 LoRA를 적용하여 Parameter Isolation 기반의 지속 학습 이상 탐지 프레임워크를 설계하였다. 이는 망각을 \textbf{원천적으로 차단}하면서 작업당 약 2M의 경량 파라미터만 추가한다.
+
+    \item \textbf{Deep Invertible Adapter (DIA)}: 선형 LoRA의 표현력 한계를 극복하는 비선형 가역 어댑터를 제안하였다. DIA는 작업별 복잡한 매니폴드 차이를 보정하며, 실험에서 가장 중요한 구성 요소로 확인되었다.
+
+    \item \textbf{WhiteningAdapter를 통한 분포 정렬}: 작업 간 입력 분포 격차를 해소하기 위해 Whitening 후 Task-specific De-whitening을 수행하는 어댑터를 설계하였다. 이는 고정된 Base Flow가 다양한 작업을 효과적으로 처리할 수 있게 한다.
+
+    \item \textbf{One-stage Task-agnostic 추론}: Mahalanobis 거리 기반 프로토타입 라우터를 통해 추론 시 Task ID 없이 단일 패스로 라우팅과 이상 탐지를 수행한다. 기존 방법의 two-stage 추론 대비 효율적이며, 100\% 라우팅 정확도를 달성하였다.
+
+    \item \textbf{종합적인 실험 검증}: MVTec AD 데이터셋에서 기존 방법 대비 우수한 성능을 달성하였으며 (Image AUROC 98.05\%, Routing Accuracy 100\%), 체계적인 Ablation Study를 통해 각 구성 요소의 유효성을 검증하였다.
+\end{enumerate}
+
+%=========================================================================================================
+% 1.5 논문 구성
+%=========================================================================================================
+
+본 논문의 구성은 다음과 같다.
+Section~\ref{sec:related_work}에서는 관련 연구를 검토하고, Section~\ref{sec:method}에서는 제안하는 MoLE-Flow 프레임워크를 상세히 기술한다.
+Section~\ref{sec:experiments}에서는 실험 설정과 결과를 제시하고, 마지막으로 Section~\ref{sec:conclusion}에서 결론 및 향후 연구 방향을 논의한다.
+
+%=========================================================================================================
 \section{Related Work}
-\subsection{Image captioning}
+\label{sec:related_work}
+%=========================================================================================================
 
-\subsection{Scene graph generation for Image captioning}
+\subsection{Anomaly Detection}
+\label{sec:related_ad}
 
-\subsection{Data augmentation for Image captioning}
+산업 이상 탐지는 정상 샘플만으로 학습하여 비정상 샘플을 탐지하는 단일 클래스 분류 문제로 정의된다.
+기존 방법론은 크게 재구성 기반, 특징 임베딩 기반, 그리고 밀도 추정 기반으로 분류된다.
+
+\subsubsection{재구성 기반 방법 (Reconstruction-based)}
+\begin{itemize}
+    \item \textbf{기본 아이디어}: 정상 샘플만으로 오토인코더를 학습하면, 비정상 샘플은 재구성 오류가 크다는 가정
+    \item \textbf{대표 방법론}:
+    \begin{itemize}
+        \item AutoEncoder~\cite{sakurada2014anomaly}: 표준 오토인코더 구조를 이상 탐지에 적용
+        \item VAE~\cite{an2015variational}: 잠재 공간에 정규 분포 제약을 추가한 변분 오토인코더
+        \item MemAE~\cite{gong2019memorizing}: 메모리 뱅크를 활용하여 비정상 샘플의 재구성을 방지
+    \end{itemize}
+    \item \textbf{한계점}:
+    \begin{itemize}
+        \item 복잡한 이상 패턴도 재구성할 수 있는 ``과도한 일반화(Over-generalization)'' 문제
+        \item 픽셀 수준의 재구성 오류가 미세한 구조적 결함을 포착하지 못함
+    \end{itemize}
+\end{itemize}
+
+\subsubsection{특징 임베딩 기반 방법 (Feature Embedding-based)}
+\begin{itemize}
+    \item \textbf{기본 아이디어}: 사전 학습된 CNN/ViT의 풍부한 특징 공간에서 정상 샘플의 분포를 모델링
+    \item \textbf{대표 방법론}:
+    \begin{itemize}
+        \item SPADE~\cite{cohen2020spade}: K-NN 기반 정상 특징과의 거리를 이상 점수로 사용
+        \item PaDiM~\cite{defard2021padim}: 위치별 다변량 가우시안으로 정상 분포 모델링
+        \item PatchCore~\cite{roth2022patchcore}: 코어셋 서브샘플링으로 효율적인 메모리 뱅크 구축
+    \end{itemize}
+    \item \textbf{한계점}: 메모리 뱅크 크기에 따른 추론 시간 증가, K-NN 검색의 계산 복잡도
+\end{itemize}
+
+\subsubsection{밀도 추정 기반 방법 (Density Estimation-based)}
+\begin{itemize}
+    \item \textbf{기본 아이디어}: 정상 샘플의 확률 밀도 $p(\mathbf{x})$를 명시적으로 추정하고, 저밀도 영역을 이상으로 판단
+    \item \textbf{대표 방법론}:
+    \begin{itemize}
+        \item DifferNet~\cite{rudolph2021differnet}: Normalizing Flow를 이상 탐지에 최초 적용
+        \item CFLOW-AD~\cite{gudovskiy2022cflow}: 조건부 Normalizing Flow로 위치별 밀도 추정
+        \item FastFlow~\cite{yu2021fastflow}: 효율적인 Flow 구조로 추론 속도 개선
+    \end{itemize}
+    \item \textbf{장점}: 확률적 해석 가능, 메모리 뱅크 불필요로 확장성 우수
+    \item \textbf{한계점}: 지속 학습 환경에서의 망각 문제 미해결
+\end{itemize}
+
+본 연구는 \textbf{밀도 추정 기반 방법}을 기반으로 하되, 지속 학습 환경에서의 망각 문제를 LoRA와 DIA를 통해 해결한다.
+
+%=========================================================================================================
+\subsection{Continual Learning}
+\label{sec:related_cl}
+
+지속 학습(Continual Learning)은 순차적으로 도착하는 작업들을 이전 지식을 유지하면서 학습하는 문제이다.
+
+\subsubsection{정규화 기반 방법 (Regularization-based)}
+\begin{itemize}
+    \item \textbf{핵심 아이디어}: 이전 작업에 중요한 파라미터의 변화를 제한하는 정규화 항 추가
+    \item \textbf{대표 방법론}:
+    \begin{itemize}
+        \item EWC (Elastic Weight Consolidation)~\cite{kirkpatrick2017ewc}: Fisher Information 기반 정규화
+        \item LwF (Learning without Forgetting)~\cite{li2017lwf}: Knowledge Distillation으로 이전 출력 보존
+    \end{itemize}
+    \item \textbf{한계점}: 작업 수 증가 시 새로운 작업 학습 능력 감소
+\end{itemize}
+
+\subsubsection{리플레이 기반 방법 (Replay-based)}
+\begin{itemize}
+    \item \textbf{핵심 아이디어}: 이전 작업의 데이터를 일부 저장하여 새로운 작업 학습 시 함께 학습
+    \item \textbf{대표 방법론}: Experience Replay, iCaRL~\cite{rebuffi2017icarl}, GEM~\cite{lopez2017gem}
+    \item \textbf{한계점}: 메모리 버퍼 크기에 비례하는 저장 비용, 데이터 프라이버시 문제
+\end{itemize}
+
+\subsubsection{아키텍처 기반 방법 (Architecture-based)}
+\begin{itemize}
+    \item \textbf{핵심 아이디어}: 작업별로 네트워크 구조를 분리하거나 확장
+    \item \textbf{대표 방법론}: Progressive Networks~\cite{rusu2016progressive}, PackNet~\cite{mallya2018packnet}
+    \item \textbf{장점}: Parameter Isolation으로 \textbf{망각 완전 방지}
+    \item \textbf{한계점}: 작업 수에 비례하여 모델 크기 증가, 추론 시 Task ID 필요
+\end{itemize}
+
+\subsubsection{Parameter-Efficient Fine-Tuning (PEFT)}
+\begin{itemize}
+    \item \textbf{핵심 아이디어}: 대규모 사전 학습 모델을 소수의 파라미터만 수정하여 새로운 작업에 적응
+    \item \textbf{LoRA (Low-Rank Adaptation)}~\cite{hu2022lora}: 가중치 변화를 저랭크 행렬로 분해
+    \begin{equation}
+        \mathbf{W}' = \mathbf{W} + \Delta\mathbf{W} = \mathbf{W} + \frac{\alpha}{r}\mathbf{B}\mathbf{A}
+    \end{equation}
+    여기서 $\mathbf{A} \in \mathbb{R}^{r \times d_{in}}$, $\mathbf{B} \in \mathbb{R}^{d_{out} \times r}$, $r \ll \min(d_{in}, d_{out})$
+    \item 본 연구는 \textbf{LoRA를 Normalizing Flow에 적용}하여 지속 학습 이상 탐지를 구현
+\end{itemize}
+
+%=========================================================================================================
+\subsection{Normalizing Flows for Anomaly Detection}
+\label{sec:related_nf}
+
+Normalizing Flow~\cite{rezende2015variational}는 가역 변환을 통해 복잡한 분포를 간단한 기저 분포로 매핑하는 생성 모델이다.
+
+\begin{itemize}
+    \item \textbf{변수 변환 공식}: 가역 함수 $f: \mathbb{R}^d \rightarrow \mathbb{R}^d$에 대해
+    \begin{equation}
+        p_X(\mathbf{x}) = p_Z(f(\mathbf{x})) \left| \det \frac{\partial f}{\partial \mathbf{x}} \right|
+    \end{equation}
+    \item \textbf{이상 탐지 적용}: 정상 데이터의 밀도를 학습하고, 저밀도 영역을 이상으로 판단
+    \item \textbf{대표 방법론}: DifferNet, CFLOW-AD, FastFlow, CsFlow
+\end{itemize}
+
+본 연구는 Normalizing Flow의 \textbf{지속 학습 한계}를 LoRA와 DIA를 통한 Parameter Isolation으로 해결한다.
+
+%=========================================================================================================
+\subsection{Mixture of Experts (MoE)}
+\label{sec:related_moe}
+
+Mixture of Experts~\cite{jacobs1991adaptive}는 다수의 전문가 네트워크와 게이팅 네트워크로 구성되어, 입력에 따라 적합한 전문가를 선택하는 구조이다.
+
+\begin{itemize}
+    \item \textbf{기본 구조}: $y = \sum_{i=1}^{N} g_i(\mathbf{x}) \cdot E_i(\mathbf{x})$
+    \item 본 연구의 \textbf{MoLE (Mixture of LoRA Experts)}는 MoE의 개념을 계승하되, 전문가를 \textbf{경량 LoRA 어댑터}로 구현
+    \item 게이팅은 \textbf{프로토타입 기반 Mahalanobis 거리}를 사용하여 추가 학습 없이 작업을 선택
+\end{itemize}
 
 \section{Proposed Method}
 \label{sec:method}
@@ -87,7 +318,7 @@ Keywords here
 본 섹션에서는 Continual learning scenario 환경에서 anomaly detection을 수행하기 위한 방법인 MoLE-Flow(Mixture of LoRA Experts with Normalizing Flow for Continual Anomaly Detection) 프레임워크를 제안한다.
 MoLE-Flow는 크게 특징 추출기, MoLE 기반 Normalizing Flow, 작업별 어댑터, 그리고 프로토타입 라우터로 구성되며, 다음 다섯 가지 핵심 기여를 제안한다:
 \begin{enumerate}
-\item \textbf{MoLE (Mixture of LoRA Experts)}: Normalizing Flow의 coupling 블록에 LoRA를 적용하여 작업별 경량 적응을 가능하게 하는 MoLESubnet 구조
+\item \textbf{MoLE (Mixture of LoRA Experts)}: Normalizing Flow의 coupling 블록에 LoRA를 적용하여 작업별 경량 적응을 가능하게 하는 MoLEContextSubnet 구조
 \item \textbf{WhiteningAdapter}: 작업 간 특징 분포 차이를 정렬하기 위한 whitening 후 제약된 de-whitening 기반 적응 모듈
 \item \textbf{Deep Invertible Adapter (DIA)}: 선형 LoRA의 한계를 극복하는 비선형 가역 적응 모듈
 \end{enumerate}
@@ -112,6 +343,13 @@ MoLE-Flow는 사전 학습된 Backbone을 통해 이미지의 패치 임베딩�
 \label{eq:pipeline}
 \mathbf{x} \xrightarrow{\text{Backbone}} \mathbf{F} \xrightarrow{\text{PE}} \mathbf{F}' \xrightarrow{\text{Whitening}} \hat{\mathbf{F}} \xrightarrow{\text{SCM}} \tilde{\mathbf{F}} \xrightarrow{\text{NF+LoRA}} \mathbf{z}' \xrightarrow{\text{DIA}} (\mathbf{z}, \log|\det \mathbf{J}|)
 \end{equation}
+
+\paragraph{Notation.}
+본 논문에서 사용하는 주요 표기법은 다음과 같다:
+$\mathbf{X} \in \mathbb{R}^{B \times H \times W \times D}$는 배치 크기 $B$, 공간 해상도 $H \times W$, 특징 차원 $D$를 가지는 패치 임베딩 텐서를 나타낸다.
+$\mathbf{x}_{u,v} \in \mathbb{R}^D$는 위치 $(u,v)$의 개별 패치 벡터이다.
+$t \in \{0, 1, \ldots, T-1\}$는 작업 인덱스를 나타내며, $\mathbf{J}_f$는 함수 $f$의 Jacobian 행렬이다.
+$\lambda_{\text{tail}}$은 Tail-Aware Loss의 가중치, $\lambda_{\text{reg}}$는 공분산 정규화 항을 나타낸다.
 
 첫 번째 작업(Task 0)에서 Base와 작업 특화 Normalizing Flow 요소(LoRA, Whitening Adapter, DIA)를 모두 학습한 후, Base 파라미터는 동결된다.
 
@@ -222,11 +460,12 @@ De-whitening에서 아핀 변환(Affine Transformation, $\mathbf{y} = \gamma \od
     \begin{itemize}
     \item MoLE-Flow 전체 구조에서 Adapter는 서로 다른 도메인(가죽, 나사)의 \textbf{시작점(Start Point)을 맞춰주는 역할}로, 가장 기초적인 1차 모멘트(평균)와 2차 모멘트(분산)만 빠르고 정확하게 맞추면 된다.
     \item 실제 데이터의 복잡하고 비선형적인 분포 모델링은 Base Flow와 LoRA가 담당한다.
-    \item Adapter가 굳이 복잡한 비선형 변환을 수행하여 연산량을 늘리고 최적화를 어렵게 만들 필요가 없으며, 이는 Batch Normalization이 학습 가능한 파라미터 $\gamma$, $\beta$를 두어 표현력을 복원하는 원리와 동일하다.
+    \item Adapter가 굳이 복잡한 비선형 변환을 수행하여 연산량을 늘리고 최적화를 어렵게 만들 필요가 없으며, 이는 Batch Normalization~\cite{ioffe2015batchnorm}이 학습 가능한 파라미터 $\gamma$, $\beta$를 두어 표현력을 복원하는 원리와 동일하다.
+    \item 또한, 본 접근법은 FiLM(Feature-wise Linear Modulation)~\cite{perez2018film}의 조건부 아핀 변환과 개념적으로 연결되며, 이를 지속 학습 환경의 도메인 적응에 특화시킨 것으로 볼 수 있다.
     \end{itemize}
 \end{itemize}
 
-결론적으로, Affine trnasformation은 \textbf{데이터의 본질은 건드리지 않으면서, 모델이 편식하지 않게 통계적 특성만 맞춰주는 가장 안전하고 효율적인 방법}이다.
+결론적으로, Affine transformation은 \textbf{데이터의 본질은 건드리지 않으면서, 모델이 편식하지 않게 통계적 특성만 맞춰주는 가장 안전하고 효율적인 방법}이다.
 
 \noindent 결과적으로 Whitening Adapter는:
 \begin{itemize}
@@ -242,280 +481,372 @@ De-whitening에서 아핀 변환(Affine Transformation, $\mathbf{y} = \gamma \od
 \subsection{\textbf{Spatial Context Mixer}}
 %=========================================================================================================
 \label{sec:spatial_mixer}
-
-\subsubsection{\textbf{Motivation: Addressing the I.I.D. Assumption}}
 \begin{itemize}
-    \item Normalizing Flow 기반 모델은 계산의 효율성을 위해 이미지의 전체 우도(Likelihood)를 개별 패치 우도의 곱으로 근사한다.
+    \item Normalizing Flow는 입력으로 이미지로 부터 생성된 각 Patch embedding들을 독립적으로 처리하여 우도를 계산하고 이를 통해 분포를 학습한다.    
 \end{itemize}
 \begin{equation}
     p(\mathbf{X}) \approx \prod_{u=1}^{H} \prod_{v=1}^{W} p(\mathbf{x}_{u,v})
 \end{equation}
 \begin{itemize}
-    \item 이 식은 위치 $(u, v)$의 특징 벡터 $\mathbf{x}_{u,v}$가 인접한 이웃들과 독립적(Independent and Identically Distributed, i.i.d.)이라고 가정한다.
-    \item 이러한 가정은 \textbf{구조적 사각지대(Structural Blind Spot)}를 야기한다.
-\end{itemize}
-\begin{itemize}
-    \item \textbf{공간적 상관관계의 누락:} 긁힘(Scratch)이나 얼룩(Stain)과 같은 미세 결함은 단일 패치 내부의 값보다는 주변 패치와의 \textbf{불연속성(Discontinuity)}으로 정의된다. 그러나 Base Flow는 패치를 독립적으로 처리하므로 이러한 국소적 대조(Local Contrast)를 인지하지 못한다.
-    \item \textbf{문맥 정보의 부재:} 정상 데이터의 분포는 주변 문맥에 따라 달라질 수 있다. 독립적인 처리는 $p(\mathbf{x}_{u,v} | \text{Neighbors})$와 같은 조건부 확률을 모델링할 수 없다.
-\end{itemize}
-
-\subsubsection{\textbf{Mechanism: Gated Depthwise Aggregation}}
-\begin{itemize}
-    \item 이러한 한계를 극복하기 위해 우리는 Base Flow 입력 직전에 \textbf{Spatial Context Mixer}를 도입하였다.
-    \item 이 모듈은 파라미터 효율성을 극대화하면서, 각 패치가 주변 정보를 물리적으로 집계할 수 있도록 설계되었다.
-\end{itemize}
-
-\begin{itemize}
-    \item \textbf{Spatial Aggregation (Depthwise Convolution):} 
+    \item 이러한 Normalizing Flow의 구조상 위치 $(u, v)$의 특징 벡터 $\mathbf{x}_{u,v}$를 인접한 이웃들과 독립적(Independent and Identically Distributed, i.i.d.)으로 처리한다.
+    \item 이러한 독립적 처리는 \textbf{구조적 사각지대(Structural Blind Spot)}를 야기한다.
     \begin{itemize}
-        \item Mixer는 채널 간의 간섭 없이 오직 공간적 정보만을 통합하기 위해 \textbf{Depthwise Convolution}을 사용한다.
+        \item \textbf{공간적 상관관계의 누락:} 긁힘(Scratch)이나 얼룩(Stain)과 같은 미세 결함은 단일 패치 내부의 값보다는 주변 패치와의 \textbf{불연속성(Discontinuity)}으로 정의된다. 그러나 Normalizing Flow는 패치를 독립적으로 처리하므로 이러한 국소적 대조(Local Contrast)를 인지하지 못한다.
+        \item \textbf{문맥 정보의 부재:} 정상 데이터의 분포는 주변 문맥에 따라 달라질 수 있다. 독립적인 처리는 $p(\mathbf{x}_{u,v} | \text{Neighbors})$와 같은 조건부 확률을 모델링할 수 없다.
     \end{itemize}
-    \begin{equation}
-        \mathbf{C}^{(k)}_{u,v} = \sum_{i=-1}^{1} \sum_{j=-1}^{1} \mathbf{W}^{(k)}_{i,j} \cdot \mathbf{x}^{(k)}_{u+i, v+j}
-    \end{equation}
-    여기서 $\mathbf{x}^{(k)}$는 $k$번째 채널의 입력 특징 맵, $\mathbf{W}^{(k)}$는 해당 채널의 $3 \times 3$ 커널 가중치, $\mathbf{C}$는 추출된 문맥 특징(Context Feature)이다. 이를 통해 각 특징 벡터는 자신의 위치뿐만 아니라 8-방향 이웃의 텍스처 정보를 집계한다.
+\end{itemize}
 
+\paragraph{\textbf{Mechanism: Gated Depthwise Aggregation}}
+\begin{itemize}
+    \item 이러한 한계를 극복하기 위해 Normalizing Flow 입력 직전에 \textbf{Spatial Context Mixer}를 도입
+    \item 이 모듈은 파라미터 효율성을 극대화하면서, 각 패치가 주변 정보를 물리적으로 집계할 수 있도록 설계
+\end{itemize}
+
+\begin{itemize}
+    \item \textbf{Spatial Aggregation (Depthwise Convolution):}
     \begin{itemize}
-        \item \textbf{Adaptive Interpolation (Learnable Gating):} 단순한 잔차 연결(Residual Addition) 대신, 모델은 원본 정보와 문맥 정보의 반영 비율을 스스로 결정하는 \textbf{적응형 보간(Adaptive Interpolation)} 메커니즘을 사용한다.
+        \item Mixer는 채널 간의 간섭 없이 오직 공간적 정보만을 통합하기 위해 \textbf{Depthwise Convolution}~\cite{howard2017mobilenets}을 사용한다.
+        \begin{equation}
+            \mathbf{C}^{(c)}_{u,v} = \sum_{i=-\lfloor K/2 \rfloor}^{\lfloor K/2 \rfloor} \sum_{j=-\lfloor K/2 \rfloor}^{\lfloor K/2 \rfloor} \mathbf{W}^{(c)}_{i,j} \cdot \mathbf{x}^{(c)}_{u+i, v+j}
+        \end{equation}
+        \item 여기서 $K$는 커널 크기(홀수, 기본값 3), $c$는 채널 인덱스, $\mathbf{x}^{(c)}$는 $c$번째 채널의 입력 특징 맵, $\mathbf{W}^{(c)} \in \mathbb{R}^{K \times K}$는 해당 채널의 커널 가중치, $\mathbf{C}$는 추출된 문맥 특징(Context Feature)이다.
+        \item 이를 통해 각 특징 벡터는 자신의 위치뿐만 아니라 주변 이웃의 정보를 집계한다.
+    \end{itemize}
+\end{itemize}
+
+\begin{itemize}
+    \item \textbf{Adaptive Interpolation (Learnable Gating):}
+    \begin{itemize}
+        \item 단순한 잔차 연결(Residual Addition) 대신, 모델은 원본 정보와 문맥 정보의 반영 비율을 스스로 결정하는 \textbf{적응형 보간(Adaptive Interpolation)} 메커니즘을 사용한다.
         \begin{equation}
             \alpha = \sigma(\theta_{\text{gate}})
         \end{equation}
         \begin{equation}
             \mathbf{z}_{u,v} = (1 - \alpha) \cdot \mathbf{x}_{u,v} + \alpha \cdot \mathbf{C}_{u,v}
         \end{equation}
-        여기서 $\sigma(\cdot)$는 시그모이드(Sigmoid) 함수이며, $\theta_{\text{gate}}$는 학습 가능한 스칼라 파라미터이다.
-
-        \item \textbf{Design Rationale:} 이러한 게이팅 구조는 학습 초기($\alpha \approx 0.5$ 또는 초기화에 따라 조절)에 원본 특징과 문맥 특징을 균형 있게 학습하다가, 최적화 과정에서 태스크에 따라 공간 정보의 중요도($\alpha$)를 동적으로 조절할 수 있게 한다. 예를 들어, 텍스처가 균일한 표면(가죽 등)에서는 $\alpha$를 높여 주변 정보를 적극 활용하고, 복잡한 객체에서는 조절하는 식이다.
+        \item 여기서 $\sigma(\cdot)$는 시그모이드(Sigmoid) 함수이며, $\theta_{\text{gate}}$는 학습 가능한 스칼라 파라미터이다.
+        \item 이러한 게이팅 구조는 학습 초기($\alpha \approx 0.5$ 또는 초기화에 따라 조절)에 원본 특징과 문맥 특징을 균형 있게 학습하다가, 최적화 과정에서 태스크에 따라 공간 정보의 중요도($\alpha$)를 동적으로 조절할 수 있게 한다.
+        \item 예를 들어, 텍스처가 균일한 표면(가죽 등)에서는 $\alpha$를 높여 주변 정보를 적극 활용하고, 복잡한 객체에서는 조절하는 식이다.
     \end{itemize}
 \end{itemize}
 
-\subsubsection{\textbf{Effect: Pseudo-Dependency Modeling}}
-최종적으로 생성된 특징 벡터 $\mathbf{z}_{u,v}$는 수학적으로는 Base Flow에 독립적인 개체로 입력되지만, 정보적으로는 이미 주변 이웃의 상태 $\mathcal{N}_{u,v}$를 내포하고 있다.
-\begin{equation}
-    \mathbf{z}_{u,v} \approx \text{Encode}(\mathbf{x}_{u,v} \oplus \mathcal{N}_{u,v})
-\end{equation}
-결과적으로 Base Flow는 구조 변경 없이도 $\mathbf{z}_{u,v}$를 통해 간접적으로 조건부 확률 $p(\mathbf{x}_{u,v} | \mathcal{N}_{u,v})$을 학습하는 효과(Pseudo-Dependency)를 얻게 되며, 이는 구조적 이상 탐지 성능을 비약적으로 향상시킨다.
+\begin{itemize}
+    \item \textbf{Effect: Pseudo-Dependency Modeling}
+    \begin{itemize}
+        \item 최종적으로 생성된 특징 벡터 $\mathbf{z}_{u,v}$는 Normalizing Flow에 독립적인 개체로 입력되지만, 정보적으로는 이미 주변 이웃의 상태 $\mathcal{N}_{u,v}$를 내포하고 있다.
+        \begin{equation}
+            \mathbf{z}_{u,v} \approx \text{Encode}(\mathbf{x}_{u,v} \oplus \mathcal{N}_{u,v})
+        \end{equation}
+        \item 결과적으로 Normalizing Flow는 구조 변경 없이도 $\mathbf{z}_{u,v}$를 통해 간접적으로 조건부 확률 $p(\mathbf{x}_{u,v} | \mathcal{N}_{u,v})$을 학습하는 효과(Pseudo-Dependency)를 얻게 되며, 이는 구조적 이상 탐지 성능을 비약적으로 향상시킨다.
+    \end{itemize}
+\end{itemize}
 
 %=========================================================================================================
-\subsection{MoLE-Flow}
-%=========================================================================================================
+\subsection{\textbf{MoLE-Flow Architecture}}
 \label{sec:moleflow}
-
-Normalizing Flow는 Feature Extractor를 통해 생성된 입력 이미지들의 패치 임베딩을 가우시안으로 매핑하며 분포를 학습하고 추정하기 위한 도구로 사용된다.
-기본적으로 RealNVP 기반의 구조를 사용하며, 각 coupling 블록에 LoRA 어댑터를 적용하여 작업별 경량 적응을 가능하게 하는 핵심 구조이다.
-MoLE-Flow의 전체 구조는 다음과 같이 구성된다:
+%=========================================================================================================
 \begin{itemize}
-\item Spatial Context Mixer
-\item MoLEContextSubnet: 분포 학습
-\item Deep Invertible Adapter (DIA): 비선형 매니폴드 학습
+    \item{MoLE-Flow는 Feature Extractor로부터 추출된 패치 임베딩을 잠재 공간(Latent Space)의 가우시안 분포로 매핑하여 정상 데이터의 확률 밀도를 추정하는 생성 모델.}
+    \item{본 모델은 RealNVP~\cite{dinh2016realnvp} 기반의 가역적 구조를 따르며, 연속 학습 환경에서 파멸적 망각을 방지하고 이상 탐지 성능을 극대화하기 위해 다음과 같은 핵심 요소들로 구성된다.}
 \end{itemize}
 
-\subsubsection{MoLEContextSubnet}
-
-MoLEContextSubnet들이 직렬로 연결된 구조를 가진다.
-각 블록은 입력 데이터를 분할하여 가역 변환을 수행하며, 다음과 같은 구조로 설계되어 있다.
-
-\paragraph{Spatial Structure Recovery:}
-Normalizing Flow는 기본적으로 패치 임베딩들을 평탄화(flatten)하여 패치들을 독립적으로 처리한다.
-문맥 정보를 추출하기 위해 일시적으로 공간 구조를 복원한다.
-
-\paragraph{Context Extraction \& Adaptive Gating:}
-복원된 공간 특징 $\hat{\mathbf{x}}$에 대해 $3 \times 3$ Depthwise Convolution을 적용하여 지역적 문맥 $\mathbf{c}(\hat{\mathbf{x}})$를 추출한다.
-이후, 학습 가능한 파라미터 $\theta_{\text{scale}}$을 통해 문맥 정보의 반영 비율 $\alpha$를 동적으로 조절한다:
-\begin{equation}
-\alpha = \alpha_{\max} \cdot \sigma(\theta_{\text{scale}})
-\end{equation}
-
-\noindent 여기서 $\sigma$는 시그모이드 함수이며, $\alpha_{\max}$는 문맥 정보의 최대 영향력을 제한하는 상수이다.
-계산된 문맥 특징은 다시 평탄화되어 입력 $\mathbf{x}$와 동일한 차원을 갖는다.
-이 문맥 특징은 조건(condition)으로 활용되어 $\mathbf{x}$를 변환할 때 스케일($\mathbf{s}$)과 이동($\mathbf{t}$) 값을 계산하는 데 힌트로 사용된다.
-
-\paragraph{Channel Splitting:}
-입력 벡터 $\mathbf{x}$를 채널 축을 기준으로 두 개의 부분 $\mathbf{x}_1$, $\mathbf{x}_2$로 분할한다.
-
-\paragraph{LoRA-based Coupling Layer:}
-LoRALinear 층은 MoLE-Flow에서 파멸적 망각을 막고, 새로운 작업을 효율적으로 학습하기 위해 \textbf{고정된 지식(Base)}과 \textbf{적응형 지식(LoRA)}을 병렬로 처리하는 구조를 가진다:
-\begin{equation}
-\mathbf{h}(\mathbf{x}) = \mathbf{W}_{\text{base}}\mathbf{x} + \frac{\alpha}{r}(\mathbf{B}\mathbf{A})\mathbf{x} + (\mathbf{b}_{\text{base}} + \mathbf{b}_t)
-\end{equation}
-
 \begin{itemize}
-\item \textbf{Base Linear (Frozen Anchor)}: Task 0에서 학습된 후 고정되며, 모든 작업이 공유하는 범용적인 특징 변환 역할을 수행한다. 이미지 패치 분포의 가장 기초적인 통계적 특성을 추출하고 변환하는 뼈대 역할을 수행한다.
-\item \textbf{LoRA Linear (Task-Specialist)}: 고정된 Base Linear가 처리하지 못하는 작업 고유의 분포 특성을 보정한다. Base가 대략적인 방향을 잡으면, LoRA는 그 방향을 작업에 맞게 미세 조정하는 역할을 수행한다. 각 작업마다 새로운 $\mathbf{A}$, $\mathbf{B}$ 행렬 세트가 생성되며, 해당 작업 학습 시에만 업데이트된다.
+    \item \textbf{MoLEContextSubnet}: 
+    \begin{itemize}
+        \item Coupling Layer 내부에서 변환 파라미터(Scale, Shift)를 생성하는 핵심 모듈이다.
+        \item 단순한 MLP 대신 공간적 문맥(Spatial Context)을 고려하도록 설계되어, 이상 탐지의 핵심인 `국소적 대조(Local Contrast)' 정보를 스케일링 변환에 반영한다.
+        \item Base weight를 Task 0에서만 학습 후 freeze 함으로써 anchor로 활용하며, LoRA Adapter를 활용해 작업별 분포 차이(Distribution Shift)를 저비용으로 학습한다.         
+    \end{itemize}
+    \item \textbf{Deep Invertible Adapter (DIA)}:
+    \begin{itemize}
+        \item NF의 출력단에 위치하여 선형 LoRA가 표현하기 어려운 작업 특화 비선형 매니폴드를 학습하는 가역적 어댑터
+        \item 완전히 독립적인 작업별 파라미터를 사용하여 작업 간 간섭 없이 정밀한 분포 보정 수행
+        \item Affine Coupling Block 구조를 사용하여 가역성을 보장하고 정확한 log-determinant 계산 가능
+    \end{itemize}
 \end{itemize}
 
-\paragraph{Context-Aware s-network (Scale Prediction):}
-스케일 파라미터 $\mathbf{s}$를 예측하는 네트워크는 원본 특징 $\mathbf{x}$와 게이팅된 문맥 $\mathbf{ctx}$를 결합(concat)하여 입력으로 사용한다.
-스케일 변화가 주변 패치와의 상호작용에 민감하다는 점을 반영한 설계이다:
-\begin{equation}
-\mathbf{s} = \text{Layer2}_s(\text{ReLU}(\text{Layer1}_s([\mathbf{x}; \mathbf{ctx}])))
-\end{equation}
+\subsubsection{\textbf{MoLEContextSubnet: Context-Aware \& Task-Adaptive Design}}
+\label{sec:molesubnet}
 
-\paragraph{Context-Free t-network (Translation Prediction):}
-이동 파라미터 $\mathbf{t}$를 예측하는 네트워크는 문맥 정보 없이 오직 원본 특징 $\mathbf{x}$만을 입력으로 사용한다.
-이는 데이터 분포의 중심(shift)이 주변 정보보다는 패치 고유의 특성에 종속된다는 inductive bias를 반영한 것이다:
-\begin{equation}
-\mathbf{t} = \text{Layer2}_t(\text{ReLU}(\text{Layer1}_t(\mathbf{x})))
-\end{equation}
+\begin{itemize}
+    \item MoLEContextSubnet은 Normalizing Flow의 각 Coupling Layer 내부에서 변환 파라미터 $(\mathbf{s}, \mathbf{t})$를 생성하는 핵심 모듈이다.
+    \item 일반적인 Coupling Layer가 단순한 MLP로 파라미터를 예측하는 것과 달리, 본 모듈은 \textbf{공간적 문맥 인지(Spatial Context Awareness)}와 \textbf{작업 적응성(Task Adaptivity)}을 동시에 갖추도록 설계되었다.
+    \item 본 모듈은 3x3 Depthwise Convolution을 통해 공간적 문맥을 추출하고, 이를 통해 주변 이웃과의 대조 정보를 포착하여 이상 탐지에 효과적으로 활용한다.
+    \item 스케일과 이동 예측에 비대칭적인 네트워크를 구성하여 서로 다른 입력을 사용하여 서로 다른 특성을 포착하도록 설계되었다.
+    \item MoLEContextSubnet은 크게 세 부분으로 구성된다: (1) Spatial Context Conditioning, (2) Context-Aware s-network, (3) Context-Free t-network.        
+\end{itemize}
 
-\noindent 최종적으로 두 네트워크의 출력 $\mathbf{s}$와 $\mathbf{t}$는 Coupling Layer의 변환 수식에 활용된다.
+\begin{itemize}
+    \item \textbf{Spatial Structure Recovery \& Context Extraction:}:
+    \begin{itemize}
+        \item 일반적인 Normalizing Flow는 입력을 1차원 벡터로 평탄화하여 처리하므로 패치 간 공간적 인접성 정보가 소실된다.
+        \item 이를 보완하기 위해 MoLEContextSubnet은 입력을 2차원 이미지 형태로 재구성하여 공간 구조를 복원한 후, $3 \times 3$ Depthwise Convolution으로 지역적 문맥 $\mathbf{c}(\mathbf{x})$를 추출한다.
+        \item 추출된 문맥은 학습 가능한 게이팅을 통해 반영 비율이 조절된다:
+        \begin{equation}
+            \mathbf{ctx} = \alpha \cdot \mathbf{c}(\mathbf{x}), \quad \text{where } \alpha = \alpha_{\max} \cdot \sigma(\theta_{\text{scale}})
+        \end{equation}
+    \end{itemize}
+\end{itemize}
+
+\begin{itemize}
+    \item \textbf{Context-Aware s-network}:
+    \begin{itemize}
+        \item 이상 탐지에서 결함은 주로 주변과의 \textbf{불연속성(Contrast)}으로 나타난다.
+        \item 스케일 파라미터는 이러한 국소적 대비를 포착해야 하므로, 원본 특징과 문맥을 결합하여 입력으로 사용한다:
+        \begin{equation}
+            \mathbf{s} = \text{Linear}_2^{(s)}(\text{ReLU}(\text{Linear}_1^{(s)}([\mathbf{x}; \mathbf{ctx}])))
+        \end{equation}       
+    \end{itemize}
+    \item \textbf{Context-Free t-network}:
+    \begin{itemize}
+        \item 분포의 위치 이동(Shift)은 패치 고유의 특성에 종속되므로, 문맥 없이 원본 특징만으로 예측한다:
+        \begin{equation}
+            \mathbf{t} = \text{Linear}_2^{(t)}(\text{ReLU}(\text{Linear}_1^{(t)}(\mathbf{x})))
+        \end{equation}
+    \end{itemize}
+    \item 위 수식의 각 $\text{Linear}$ 레이어는 LoRALinear로 구현된다.
+    \item LoRALinear는 Base 출력에 작업별 LoRA 출력을 더하는 구조로, 다음과 같이 계산된다:
+    \begin{equation}
+        \mathbf{h}(\mathbf{x}) = \underbrace{\mathbf{W}_{\text{base}}\mathbf{x} + \mathbf{b}_{\text{base}}}_{\text{Base (frozen after Task 0)}} + \underbrace{\frac{\alpha}{r}(\mathbf{B}_t\mathbf{A}_t)\mathbf{x} + \mathbf{b}_t}_{\text{Task-specific LoRA}}
+    \end{equation}
+    \item Task 0 학습 후 $\mathbf{W}_{\text{base}}$와 $\mathbf{b}_{\text{base}}$는 동결되어, 이후 작업 학습 시 수정되지 않는다.
+    \item 새로운 작업은 독립적인 LoRA 행렬 $(\mathbf{A}_t, \mathbf{B}_t)$과 task bias $\mathbf{b}_t$만 학습하므로, 기존 작업의 변환 능력이 보존되어 파멸적 망각이 방지된다.
+    \item 추론 시에는 Router가 예측한 작업의 LoRA만 활성화되므로 작업 간 간섭이 발생하지 않는다.
+\end{itemize}
+
+\paragraph{가역성 보장.}
+LoRA가 Normalizing Flow의 가역성에 영향을 미치는지에 대해 명확히 할 필요가 있다.
+Affine Coupling Layer에서 가역성은 변환 구조 자체(입력 분할 및 아핀 변환)에 의해 보장되며, scale과 shift 파라미터를 생성하는 subnet의 구조에는 의존하지 않는다.
+즉, subnet이 MLP이든, LoRA가 적용된 네트워크이든 관계없이 다음이 성립한다:
+\begin{equation}
+    \mathbf{y} = [\mathbf{x}_1, \mathbf{x}_2 \odot \exp(\mathbf{s}) + \mathbf{t}] \quad \Leftrightarrow \quad \mathbf{x} = [\mathbf{y}_1, (\mathbf{y}_2 - \mathbf{t}) \odot \exp(-\mathbf{s})]
+\end{equation}
+LoRA는 subnet 내부의 선형 레이어에만 적용되며, 이는 Jacobian 계산에 직접 관여하지 않는다.
+따라서 LoRA 적용 여부와 무관하게 전체 Normalizing Flow의 가역성과 정확한 likelihood 계산이 보장된다.
+
+\begin{itemize}
+    \item \textbf{Spatial Context Mixer와의 관계: 계층적 문맥 처리}:
+    \begin{itemize}
+        \item Section~\ref{sec:spatial_mixer}의 Spatial Context Mixer와 MoLEContextSubnet 내부의 Context Conditioning은 모두 공간적 문맥을 활용하지만, 그 역할이 명확히 구분된다.
+        \item Spatial Context Mixer는 Flow 입력 이전에 ``이 패치가 어떤 이웃을 가지는가''를 특징 자체에 인코딩하는 \textbf{전처리} 모듈이다.
+        \item MoLEContextSubnet의 Context Conditioning은 각 Coupling Layer 내부에서 ``이 이웃 관계에서 어떤 스케일 변화가 적절한가''를 결정하는 \textbf{변환 가이드} 역할을 한다.
+        \item 두 모듈이 모두 필요한 이유는 \textbf{계층적 문맥 처리(Hierarchical Context Processing)} 관점에서 이해할 수 있다:
+        \item 입력 수준의 문맥 인코딩(Spatial Context Mixer)과 변환 수준의 적응적 스케일링(MoLEContextSubnet)은 상호 보완적으로 작용하여, 단일 모듈만으로는 달성하기 어려운 정교한 이상 탐지 성능을 가능하게 한다.
+    \end{itemize}
+\end{itemize}
+
 
 \subsubsection{Deep Invertible Adapter (DIA)}
+\label{sec:dia}
+\begin{itemize}
+    \item DIA는 Normalizing Flow 출력단에 위치하며, MoLEContextSubnet이 처리하지 못한 작업 특화 비선형 매니폴드를 정밀 보정한다.
+    \item Affine Coupling Block으로 구성되며, 각 작업별로 독립적인 파라미터가 분리되어 있다.
+    \item 수학적으로, 전체 변환과 밀도 추정은 다음과 같이 표현된다:
+    \begin{equation}
+        \mathbf{z}_{\text{final}} = f_{\text{DIA}}^{(t)}(\mathbf{z}_{\text{base}}), \quad \log p(\mathbf{x}) = \log p(\mathbf{z}_{\text{final}}) + \log|\det \mathbf{J}_{\text{base}}| + \log|\det \mathbf{J}_{\text{DIA}}|
+    \end{equation}
+    \item 각 AffineCouplingBlock의 변환:
+    \begin{align}
+        [\mathbf{x}_1, \mathbf{x}_2] &= \text{Split}(\mathbf{x}) \\
+        \mathbf{s}, \mathbf{t} &= \text{SimpleSubnet}(\mathbf{x}_1) \\
+        \mathbf{y}_2 &= \mathbf{x}_2 \odot \exp(\alpha_{\text{clamp}} \cdot \tanh(\mathbf{s}/\alpha_{\text{clamp}})) + \mathbf{t} \\
+        \mathbf{y} &= \text{Concat}(\mathbf{x}_1, \mathbf{y}_2)
+    \end{align}
+\end{itemize}
 
-DIA는 Normalizing Flow 출력단에 위치하며, MoLESubnet이 처리하지 못한 작업 특화 비선형 매니폴드를 정밀 보정한다.
-Affine Coupling Block으로 구성되며, 각 작업별로 독립적인 파라미터가 분리되어 있다.
 
-수학적으로, 전체 변환과 밀도 추정은 다음과 같이 표현된다:
-\begin{equation}
-\mathbf{z}_{\text{final}} = f_{\text{DIA}}^{(t)}(\mathbf{z}_{\text{base}}), \quad \log p(\mathbf{x}) = \log p(\mathbf{z}_{\text{final}}) + \log|\det \mathbf{J}_{\text{base}}| + \log|\det \mathbf{J}_{\text{DIA}}|
-\end{equation}
+\begin{itemize}
+    \item \textbf{DIA의 핵심 장점}:
+    \begin{itemize}
+        \item \textbf{비선형 매니폴드 적응}: 선형 LoRA가 표현할 수 없는 복잡한 분포 변환을 학습한다.
+        \item \textbf{가역성 보장}: 정규화 흐름의 밀도 추정 속성이 유지되므로, 이상 점수의 확률적 해석이 보존된다.
+        \item \textbf{완전한 작업 분리}: 작업별로 완전히 독립적인 파라미터를 사용하여 작업 간 간섭이 없다.
+        \item \textbf{후처리 위치}: 기반 NF의 뒷단에 위치하여, 기반 NF가 학습한 범용 변환을 먼저 적용하고 DIA가 작업 특화 조정을 수행한다.
+    \end{itemize}
+\end{itemize}
 
-각 AffineCouplingBlock의 변환:
-\begin{align}
-[\mathbf{x}_1, \mathbf{x}_2] &= \text{Split}(\mathbf{x}) \\
-\mathbf{s}, \mathbf{t} &= \text{SimpleSubnet}(\mathbf{x}_1) \\
-\mathbf{y}_2 &= \mathbf{x}_2 \odot \exp(\alpha_{\text{clamp}} \cdot \tanh(\mathbf{s}/\alpha_{\text{clamp}})) + \mathbf{t} \\
-\mathbf{y} &= \text{Concat}(\mathbf{x}_1, \mathbf{y}_2)
-\end{align}
+\begin{itemize}
+    \item \textbf{MoLEContextSubnet과의 차이}:
+    \begin{itemize}
+        \item MoLEContextSubnet과 DIA는 모두 Affine Coupling 구조를 기반으로 하지만, 서로 다른 설계 철학을 따른다.
+        \item \textbf{MoLEContextSubnet}은 ``\textit{공간 인지형 범용 변환기(Spatially-Aware Universal Transformer)}''로서, 고정된 Base weights를 anchor로 삼아 범용 변환 능력을 보존하면서 LoRA를 통해 작업별 적응을 수행한다.
+        \item Spatial context conditioning을 통해 국소적 이상 패턴에 민감하게 반응하며, 모든 작업에서 공유되는 ``정상 $\rightarrow$ 표준 정규분포'' 변환의 뼈대를 제공한다.
+        \item 반면 \textbf{DIA}는 ``\textit{작업 특화 분포 보정기(Task-Specific Distribution Corrector)}''로서, 작업별로 완전히 독립적인 파라미터를 사용하여 작업 고유의 분포를 정밀 보정한다.
+        \item DIA가 spatial context를 사용하지 않는 이유는 세 가지다:
+        \begin{itemize}
+            \item (1) DIA는 잠재 공간에서 동작하며, 이 시점에서 공간 정보는 이미 MoLEContextSubnet을 통해 인코딩되어 있다.
+            \item (2) MoLEContextSubnet이 ``공간 인지 변환''을, DIA가 ``분포 정밀 보정''을 담당하는 명확한 역할 분리가 효율적이다.
+            \item (3) 작업별 독립 파라미터를 사용하는 DIA에 추가 context 모듈은 파라미터 오버헤드를 증가시킨다.
+        \end{itemize}
+    \end{itemize}
+\end{itemize}
 
-DIA의 핵심 장점:
-\begin{enumerate}
-\item \textbf{비선형 매니폴드 적응}: 선형 LoRA가 표현할 수 없는 복잡한 분포 변환을 학습한다.
-\item \textbf{가역성 보장}: 정규화 흐름의 밀도 추정 속성이 유지되므로, 이상 점수의 확률적 해석이 보존된다.
-\item \textbf{완전한 작업 분리}: 작업별로 완전히 독립적인 파라미터를 사용하여 작업 간 간섭이 없다.
-\item \textbf{후처리 위치}: 기반 NF의 뒷단에 위치하여, 기반 NF가 학습한 범용 변환을 먼저 적용하고 DIA가 작업 특화 조정을 수행한다.
-\end{enumerate}
-
-\subsection{Training Objective}
+\subsection{\textbf{Training Objective}}
 \label{sec:training_objective}
 
-모델의 학습과 이상 탐지는 입력 데이터가 잠재 공간의 정규 분포로 얼마나 잘 매핑되는지를 측정하는 Log-likelihood 계산을 통해 이루어진다.
-이 과정은 크게 Forward 변환 및 Jacobian 누적, 잠재 확률 계산, 그리고 최종 likelihood 산출을 통해 이루어진다.
+\begin{itemize}
+    \item 모델의 학습과 이상 탐지는 입력 데이터가 잠재 공간의 정규 분포로 얼마나 잘 매핑되는지를 측정하는 Log-likelihood 계산을 통해 이루어진다.
+    \item 이 과정은 크게 Forward 변환 및 Jacobian 누적, 잠재 확률 계산, 그리고 최종 likelihood 산출을 통해 이루어진다.
+\end{itemize}
 
-\subsubsection{Likelihood Calculation}
+\subsubsection{\textbf{Likelihood Calculation}}
 
-사전 학습된 특징 추출기로부터 생성된 입력 패치 임베딩은 잠재 변수 $\mathbf{z}$로 변환되며, 각 변환 단계의 부피 변화율인 log-determinant of Jacobian이 누적된다.
+\begin{itemize}
+    \item 사전 학습된 특징 추출기로부터 생성된 입력 패치 임베딩은 잠재 변수 $\mathbf{z}$로 변환되며, 각 변환 단계의 부피 변화율인 log-determinant of Jacobian이 누적된다.    
+    \item 입력 $\mathbf{x}$는 Task Adapter, Spatial Mixer, MoLEContextSubnet, DIA를 순차적으로 통과하며 최종 잠재 벡터 $\mathbf{z}$로 변환된다.    
+    \item Flow와 DIA를 거치는 동안 발생된 log determinant Jacobian 값들이 합산된다:
+        \begin{equation}
+            \log|\det \mathbf{J}_{\text{total}}| = \log|\det \mathbf{J}_{\text{flow}}| + \log|\det \mathbf{J}_{\text{DIA}}|
+        \end{equation}
+        
+    \item \textbf{Log-Determinant 계산:}
+        \begin{itemize}
+            \item MoLEContextSubnet과 DIA 모두 Affine Coupling 구조를 사용하며, 동일한 방식으로 log-determinant를 계산한다.
+            \item 각 Affine Coupling Block은 입력을 두 부분 $\mathbf{x}_1, \mathbf{x}_2$로 분할하고, scale과 translation 파라미터를 생성한다.
+            \item 수치 안정성을 위해 soft-clamping이 적용된 변환을 수행한다:
+            \begin{equation}
+                \mathbf{y}_1 = \mathbf{x}_1, \quad \mathbf{y}_2 = \mathbf{x}_2 \odot \exp(\tilde{\mathbf{s}}) + \mathbf{t}, \quad \text{where } \tilde{\mathbf{s}} = \alpha_{\text{clamp}} \cdot \tanh(\mathbf{s}/\alpha_{\text{clamp}})
+            \end{equation}
+            \item 이 변환의 Jacobian은 블록 하삼각 행렬 형태를 가지므로, log-determinant는 clamped scale 파라미터의 합으로 계산된다:
+            \begin{equation}
+                \log|\det \mathbf{J}_{\text{layer}}| = \sum_{i=1}^{D/2} \tilde{s}_i = \sum_{i=1}^{D/2} \alpha_{\text{clamp}} \cdot \tanh(s_i/\alpha_{\text{clamp}})
+            \end{equation}
+            \item MoLEContextSubnet의 $M$개 블록과 DIA의 $N$개 블록의 log-determinant가 각각 누적되어:
+            \begin{equation}
+                \log|\det \mathbf{J}_{\text{flow}}| = \sum_{k=1}^{M} \log|\det \mathbf{J}_{\text{layer}_k}|, \quad
+                \log|\det \mathbf{J}_{\text{DIA}}| = \sum_{j=1}^{N} \log|\det \mathbf{J}_{\text{block}_j}|
+            \end{equation}
+            \item 최종적으로 두 값이 합산되어 전체 변환의 부피 변화율을 나타낸다.
+        \end{itemize}
+        
+    \item \textbf{잠재 확률 계산}: 
+    \begin{itemize}
+        \item 잠재 변수 $\mathbf{z}_{\text{final}}$이 표준 정규분포를 따른다고 가정하고, 각 패치 위치에서의 log probability density를 계산한다.
+    \begin{equation}
+            \log p(\mathbf{z}_{\text{final}}) = -\frac{1}{2}\|\mathbf{z}_{\text{final}}\|_2^2 - \frac{D}{2}\log(2\pi)
+        \end{equation}
+    \end{itemize}
+    \item \textbf{최종 likelihood 산출}: 변수 변환 공식에 따라 입력 공간에서의 log likelihood를 계산한다.
+    \begin{equation}
+        \log p(\mathbf{x}) = \log p(\mathbf{z}_{\text{final}}) + \log|\det \mathbf{J}_{\text{total}}|
+    \end{equation}
+\end{itemize}
 
-\paragraph{Transformation Flow:}
-입력 $\mathbf{x}$는 Task Adapter, Spatial Mixer, MoLESubnet, DIA를 순차적으로 통과하며 최종 잠재 벡터 $\mathbf{z}$로 변환된다.
+\subsubsection{\textbf{Tail-Aware Loss}}
 
-\paragraph{Jacobian Accumulation:}
-Flow와 DIA를 거치는 동안 발생된 log determinant Jacobian 값들이 합산된다:
-\begin{equation}
-\log|\det \mathbf{J}_{\text{total}}| = \log|\det \mathbf{J}_{\text{flow}}| + \log|\det \mathbf{J}_{\text{DIA}}|
-\end{equation}
+\begin{itemize}
+    \item 일반적인 NF의 학습 방식을 따르는 경우 이미지 내 모든 패치의 우도 평균을 최대화하게 된다.
+    \item 이는 모델이 대다수의 학습하기 ``쉬운'' 정상 패치에만 집중하게 되고, 분포의 꼬리(Tail)에 위치한 ``어려운'' 패치나 이상 징후를 간과하게 만드는 원인이 된다.
+    \item 따라서 본 모델은 학습 시 Tail-Aware Loss를 도입하여, 전체 평균뿐만 아니라 손실 값이 높은 상위 $K\%$ 패치에 가중치를 두어 학습하도록 한다:
+    \begin{equation}
+        \mathcal{L}_{\text{train}} = (1 - \lambda_{\text{tail}}) \cdot \mathbb{E}[\mathcal{L}_{\text{all}}] + \lambda_{\text{tail}} \cdot \mathbb{E}[\mathcal{L}_{\text{top-k}}]
+    \end{equation}
+    \item 여기서 $\lambda_{\text{tail}} = 0.7$, $\mathcal{L}_{\text{top-k}}$는 상위 $K\%$ 고손실 패치의 평균 NLL이다.
+    \item 이는 모델이 정상 분포의 경계(Boundary)를 더 명확하게 학습하도록 유도한다.
+\end{itemize}
 
-\paragraph{Latent Probability:}
-최종 잠재 벡터 $\mathbf{z}_{\text{final}}$이 표준 정규분포를 따른다고 가정하고, 각 패치 위치에서의 log probability density를 계산한다:
-\begin{equation}
-\log p(\mathbf{z}_{\text{final}}) = -\frac{1}{2}\|\mathbf{z}_{\text{final}}\|_2^2 - \frac{D}{2}\log(2\pi)
-\end{equation}
+\subsection{\textbf{Task Routing \& Adapter Activation}}
+\label{sec:task_routing}
 
-\paragraph{Final Likelihood:}
-변수 변환 공식에 따라 입력 공간에서의 log likelihood는 다음과 같이 계산된다:
-\begin{equation}
-\log p(\mathbf{x}) = \log p(\mathbf{z}_{\text{final}}) + \log|\det \mathbf{J}_{\text{total}}|
-\end{equation}
+\begin{itemize}
+    \item Class-Incremental Learning (CIL) 환경에서는 추론 시 입력 이미지가 어느 task에 속하는지 사전 정보가 주어지지 않는다.
+    \item 예를 들어, Task 0에서 \{bottle, cable, capsule\}을 학습하고 Task 1에서 \{carpet, grid\}를 학습한 경우, 추론 시 입력 이미지가 어느 task의 클래스인지 알 수 없다.
+    \item 따라서 모델은 입력 이미지를 보고 자동으로 적절한 task를 선택하고, 해당 task의 adapters (LoRA, Input Adapter, DIA)를 활성화해야 한다.
+    \item 이는 CIL의 핵심 과제로, 잘못된 task 선택은 부적절한 파라미터 활성화로 이어져 이상 탐지 성능을 크게 저하시킨다.
+\end{itemize}
 
-\subsubsection{Tail-Aware Loss}
+\subsubsection{\textbf{Prototype-Based Task Routing}}
 
-일반적인 NF의 학습 방식을 따르는 경우 이미지 내 모든 패치의 우도 평균을 최대화하게 된다.
-그러나 이는 모델이 대다수의 학습하기 ``쉬운'' 정상 패치에만 집중하게 되고, 분포의 꼬리(Tail)에 위치한 ``어려운'' 패치나 이상 징후를 간과하게 만드는 원인이 된다.
+\begin{itemize}
+    \item Mahalanobis 거리 기반 Prototype Router~\cite{lee2018mahalanobis}를 사용하여 task를 자동으로 인식한다.
+    
+    \item \textbf{Prototype 구축 (Training Phase):}
+    \begin{itemize}
+        \item 각 task $t$의 학습 과정에서, 정상 샘플들의 특징 벡터를 수집하여 task-specific prototype을 구축한다.                    
+        \item Prototype은 평균 벡터 $\boldsymbol{\mu}_t \in \mathbb{R}^D$와 공분산 행렬 $\boldsymbol{\Sigma}_t \in \mathbb{R}^{D \times D}$로 구성된다:
+        \begin{align}
+            \boldsymbol{\mu}_t &= \frac{1}{N_t} \sum_{i=1}^{N_t} \mathbf{f}_i^{(t)} \\
+            \boldsymbol{\Sigma}_t &= \frac{1}{N_t - 1} \sum_{i=1}^{N_t} (\mathbf{f}_i^{(t)} - \boldsymbol{\mu}_t)(\mathbf{f}_i^{(t)} - \boldsymbol{\mu}_t)^\top + \lambda_{\text{reg}} \mathbf{I}
+        \end{align}
 
-따라서 본 모델은 학습 시 Tail-Aware Loss를 도입하여, 전체 평균뿐만 아니라 손실 값이 높은 상위 $K\%$ 패치에 가중치를 두어 학습하도록 한다:
-\begin{equation}
-\mathcal{L}_{\text{train}} = (1 - \lambda) \cdot \mathbb{E}[\mathcal{L}_{\text{all}}] + \lambda \cdot \mathbb{E}[\mathcal{L}_{\text{top-k}}]
-\end{equation}
+        \item 여기서 $\mathbf{f}_i^{(t)}$는 Backbone의 가장 마지막 layer의 출력 feature vector $\mathbf{f}_{\text{backbone}} \in \mathbb{R}^D$를 이미지 레벨 특징 벡터로 사용한다.
+        \item $N_t$는 task $t$의 학습 샘플 수, $\lambda_{\text{reg}}$는 수치 안정성을 위한 정규화 항($=10^{-5}$)이다.
+        \item 공분산의 역행렬인 precision matrix $\boldsymbol{\Sigma}_t^{-1}$을 미리 계산하여 저장한다.
+    \end{itemize}
+    
+    \item \textbf{Task Selection (Inference Phase):}
+    \begin{itemize}
+        \item 추론 시 입력 이미지 $\mathbf{x}_{\text{img}}$로부터 Backbone의 가장 마지막 layer의 출력 feature vector $\mathbf{f}_{\text{backbone}} \in \mathbb{R}^D$를 이미지 레벨 특징 벡터로 사용한다.
+        \item 모든 학습된 task의 prototype과의 Mahalanobis 거리를 계산한다.
+        \item Mahalanobis 거리는 단순 Euclidean 거리와 달리 각 task의 특징 분포의 형태(공분산)를 고려하므로, 분포 간 중첩이 있어도 더 정확한 task 구분이 가능하다.
+        \item 가장 가까운 prototype을 가진 task를 선택한다.
+        \item 선택된 task $t^*$에 해당하는 task-specific 파라미터들을 활성화한다.
+        \begin{itemize}
+            \item \textbf{LoRA Adapters}: MoLE Flow의 각 coupling layer에서 task $t^*$의 LoRA 가중치 $\{\mathbf{A}_{t^*}, \mathbf{B}_{t^*}\}$를 활성화
+            \item \textbf{Input Adapter}: Task $t^*$의 Whitening 파라미터 (평균 $\boldsymbol{\mu}_{t^*}^{\text{white}}$, 표준편차 $\boldsymbol{\sigma}_{t^*}^{\text{white}}$)를 적용
+            \item \textbf{DIA}: Task $t^*$의 Deep Invertible Adapter 네트워크를 활성화
+        \end{itemize}
+    \end{itemize}
+\end{itemize}
 
-\noindent 여기서 $\lambda = 0.3$, $\mathcal{L}_{\text{top-k}}$는 상위 5\% 고손실 패치의 평균 NLL이다.
-이는 모델이 정상 분포의 경계(Boundary)를 더 명확하게 학습하도록 유도한다.
 
-\subsection{Anomaly Scoring \& Inference}
+\paragraph{왜 Mahalanobis 거리를 사용하는가?}
+\begin{itemize}
+    \item \textbf{분포 형태 고려}: Euclidean 거리는 모든 방향을 동등하게 취급하지만, Mahalanobis 거리는 각 task의 특징 분포가 어느 방향으로 퍼져있는지(공분산)를 고려한다.
+    \item \textbf{스케일 불변성}: 특징 차원마다 다른 스케일을 가질 때, precision matrix $\boldsymbol{\Sigma}^{-1}$이 자동으로 정규화 역할을 수행한다.
+    \item \textbf{높은 구분력}: 실험 결과, Euclidean 거리 대비 평균 3-5\% 높은 task routing 정확도를 달성하였다.
+\end{itemize}
+
+\subsection{\textbf{Anomaly Scoring \& Inference}}
 \label{sec:inference}
 
-본 모델의 추론 과정은 입력 이미지에서 특징을 추출하고, 이를 학습된 정상 분포와 비교하여 국소적인 이상 징후를 탐지한 뒤, 이를 하나의 신뢰할 수 있는 이미지 레벨 점수로 변환하는 일련의 파이프라인으로 구성된다.
-
-\subsubsection{Step 1: Feature Extraction \& Embedding}
-
-입력 이미지 $\mathbf{x}_{\text{img}} \in \mathbb{R}^{H \times W \times C}$가 모델에 입력되면, 다음과 같은 전처리를 거친다:
-\begin{enumerate}
-\item \textbf{Backbone}: 사전 학습된 ViT를 통과하여 다중 스케일 특징 맵을 추출한다.
-\item \textbf{Patchify}: 특징 맵을 패치 단위로 분할하고 풀링하여 $N$개의 패치 임베딩 벡터를 생성한다.
-\item \textbf{Positional Encoding}: 각 패치의 위치 정보 $(h, w)$에 해당하는 Positional Embedding을 더하여 최종 입력 벡터 $\mathbf{x}$를 완성한다.
-\end{enumerate}
-
-\noindent 출력: $\mathbf{x} \in \mathbb{R}^{B \times H_{\text{patch}} \times W_{\text{patch}} \times D}$
-
-\subsubsection{Step 2: Task Routing \& Adapter Activation}
-
-작업 ID가 주어지지 않았다면, 라우터가 작동한다:
-\begin{enumerate}
-\item \textbf{Prototype Matching}: 입력 특징의 평균과 저장된 작업별 프로토타입 간의 Mahalanobis 거리를 계산한다:
-\begin{equation}
-t^* = \argmin_t D_M(\mathbf{f}, t), \quad D_M(\mathbf{f}, t) = \sqrt{(\mathbf{f} - \boldsymbol{\mu}_t)^\top \boldsymbol{\Sigma}_t^{-1} (\mathbf{f} - \boldsymbol{\mu}_t)}
-\end{equation}
-\item \textbf{Selection}: 가장 거리가 가까운 작업 $t^*$를 선정하고, 해당 작업에 특화된 LoRA, Whitening, DIA 파라미터를 활성화한다.
-\end{enumerate}
-
-\noindent 기존의 연구들은 Task routing을 위해 별도의 inference 과정을 거친 뒤 얻은 작업 정보를 가지고 한 번 더 inference를 수행하여 이상 탐지를 수행한다.
-그러나 본 방법론에서는 별도의 과정 없이 one-stage로 routing과 이상 탐지를 수행할 수 있다는 이점이 있다.
-
-\subsubsection{Step 3: Distribution Mapping via MoLE-Flow}
-
-활성화된 어댑터들을 사용하여 입력 $\mathbf{x}$를 잠재 공간의 $\mathbf{z}$로 변환한다.
-이 과정에서 정상 데이터의 분포(가우시안)로 매핑을 시도한다:
-\begin{equation}
-\mathbf{z}, \log|\det \mathbf{J}| = \text{MoLE-Flow}_{t^*}(\mathbf{x})
-\end{equation}
-
-입력은 Whitening $\rightarrow$ Spatial Context $\rightarrow$ Base Flow + LoRA $\rightarrow$ DIA를 순차적으로 통과한다.
-변환의 역할:
 \begin{itemize}
-\item \textbf{정상 패치}: 학습된 변환에 의해 원점(0) 근처의 $\mathbf{z}$로 매핑되며, 변환 과정(Jacobian)이 자연스럽다.
-\item \textbf{이상 패치}: 정상 분포를 따르지 않으므로, $\mathbf{z}$가 원점에서 멀어지거나 변환 과정에서 부피가 비정상적으로 왜곡된다.
+    \item 추론 과정은 입력 이미지를 정상 분포로 학습된 잠재 공간으로 변환하고, 그 확률 밀도를 측정하여 이상 여부를 판단하는 과정이다.
+    \item 핵심 아이디어: 정상 샘플은 높은 확률 밀도를 가지며, 이상 샘플은 낮은 확률 밀도를 가진다.
 \end{itemize}
 
-\subsubsection{Step 4: Patch-wise Anomaly Scoring}
+\subsubsection{\textbf{Step 1: Feature Extraction}}
 
-각 패치 위치 $(h, w)$마다 ``이 패치가 얼마나 비정상적인가?''를 나타내는 점수를 계산한다.
-이는 음의 로그 우도(Negative Log-Likelihood)로 정의된다:
-\begin{equation}
-\text{Score}_{(h,w)} = -\log p(\mathbf{x}_{(h,w)}) = \underbrace{\frac{1}{2}\|\mathbf{z}_{(h,w)}\|^2}_{\text{Distance Score}} \underbrace{- \log|\det \mathbf{J}|_{(h,w)}}_{\text{Distortion Score}}
-\end{equation}
-
-\noindent 결과물: 입력 이미지와 공간적으로 대응되는 \textbf{Anomaly Heatmap} (Shape: $H_{\text{patch}} \times W_{\text{patch}}$)이 생성된다.
-
-\subsubsection{Step 5: Top-K Mean Aggregation}
-
-생성된 히트맵을 하나의 이미지 레벨 이상 점수(Image-Level Anomaly Score)로 변환한다.
-단순 평균이나 최대값이 아닌 \textbf{Top-K Mean} 방식을 사용하여 노이즈에 강건한 판단을 내린다.
-
-\paragraph{Flatten \& Sort:}
-$H \times W$ 크기의 히트맵을 1차원 벡터로 평탄화한 뒤, 점수가 높은 순서대로(내림차순) 정렬한다:
-\begin{equation}
-\mathbf{S}_{\text{sorted}} = \text{SortDesc}(\{\text{Score}_{(h,w)} \mid \forall h, w\})
-\end{equation}
-
-\paragraph{Top-K Selection:}
-가장 이상도가 높은 상위 $K$개의 패치만 선택한다:
-\begin{equation}
-\mathbf{S}_{\text{top}} = \{S_{\text{sorted}}^{(1)}, S_{\text{sorted}}^{(2)}, \dots, S_{\text{sorted}}^{(K)}\}
-\end{equation}
-
-Top-K를 사용하는 이유:
 \begin{itemize}
-\item \textbf{vs Max}: 단일 픽셀 튐(Sensor Noise)에 의한 오탐(False Positive)을 방지한다.
-\item \textbf{vs Mean}: 정상 영역이 압도적으로 많은 경우, 이상 신호가 희석(Dilution)되는 것을 막는다. 실제 결함은 보통 군집(Cluster)을 이루므로 $K$개의 강한 신호를 보는 것이 유리하다.
+    \item 입력 이미지 $\mathbf{x}_{\text{img}} \in \mathbb{R}^{224 \times 224 \times 3}$를 사전 학습된 CNN Backbone (WideResNet-50)에 통과시켜 다층 특징 맵을 추출한다.
+    \item 특징 맵을 패치 단위로 분할하고 Adaptive Average Pooling을 적용하여 공간 해상도 $(H, W) = (14, 14)$의 패치 임베딩을 생성한다.
+    \item 각 패치에 2D Sinusoidal Positional Encoding을 더하여 공간적 위치 정보를 보존한다:
+    \begin{equation}
+        \mathbf{x} = \text{PatchEmbed}(\mathbf{x}_{\text{img}}) + \text{PosEmbed}(h, w) \in \mathbb{R}^{H \times W \times D}
+    \end{equation}
+    여기서 $D=768$은 임베딩 차원이다.
 \end{itemize}
 
-\paragraph{Averaging:}
-선택된 $K$개 점수의 평균을 최종 이미지 점수로 확정한다:
-\begin{equation}
-\text{Final Image Score} = \frac{1}{K} \sum_{i=1}^{K} S_{\text{top}}^{(i)}
-\end{equation}
+\subsubsection{\textbf{Step 2: Normalizing Flow Transformation}}
 
-\noindent 이 추론 과정은 ``패치 단위로 세밀하게 검사(Flow)''한 뒤, ``가장 의심스러운 부분들만 모아서 종합 판단(Top-K Aggregation)''하는 전략을 취한다.
-이를 통해 미세한 스크래치(Screw)부터 구조적 결함(Transistor)까지 다양한 유형의 불량을 노이즈 간섭 없이 효과적으로 탐지할 수 있다.
+\begin{itemize}
+    \item 입력 $\mathbf{x}$를 선택된 task의 adapters를 통해 변환한다:
+    \begin{enumerate}
+        \item \textbf{Input Adapter (Whitening)}: Task 0의 통계량을 기준으로 분포를 정규화
+        \item \textbf{Spatial Mixer}: Depthwise convolution으로 인접 패치 간 정보 교환
+        \item \textbf{MoLE Flow}: 8개의 LoRA-equipped Affine Coupling Layer를 통과하여 잠재 변수 $\mathbf{z}$로 변환
+        \item \textbf{DIA}: 6개의 Affine Coupling Block으로 task-specific 비선형 manifold 적응
+    \end{enumerate}
+    \item 각 단계에서 log-determinant를 누적하여 전체 변환의 부피 변화율 $\log|\det \mathbf{J}_{\text{total}}|$을 계산한다.
+\end{itemize}
+
+\subsubsection{\textbf{Step 3: Anomaly Score Computation}}
+
+\begin{itemize}
+    \item 최종 잠재 변수 $\mathbf{z}_{\text{final}} \in \mathbb{R}^{H \times W \times D}$가 표준 정규분포 $\mathcal{N}(0, I)$를 따른다고 가정한다.
+    \item 각 패치 위치 $(h, w)$에서 log-likelihood를 계산:
+    \begin{equation}
+        \log p(\mathbf{x}_{h,w}) = \underbrace{-\frac{1}{2}\|\mathbf{z}_{h,w}\|_2^2 - \frac{D}{2}\log(2\pi)}_{\text{잠재 공간 확률}} + \underbrace{\log|\det \mathbf{J}_{h,w}|}_{\text{부피 보정}}
+    \end{equation}
+    \item Anomaly score는 negative log-likelihood로 정의된다:
+    \begin{equation}
+        s_{h,w} = -\log p(\mathbf{x}_{h,w})
+    \end{equation}
+    \item 이미지 레벨 점수는 패치 점수의 평균 또는 상위 K개 평균으로 집계된다:
+    \begin{equation}
+        S_{\text{image}} = \frac{1}{HW}\sum_{h,w} s_{h,w} \quad \text{or} \quad S_{\text{image}} = \text{mean}(\text{top-K}(\{s_{h,w}\}))
+    \end{equation}
+\end{itemize}
 
 \section{Experiments}
 \label{sec:experiments}
@@ -661,20 +992,20 @@ AUROC$\uparrow$ & AP$\uparrow$ & PRO$\uparrow$ &
 F$\downarrow$ & BWT$\uparrow$ & Routing$\uparrow$ & \\
 \midrule
 \multicolumn{10}{l}{\textit{Upper/Lower Bounds}} \\
-Joint Training & - & - & - & - & - & 0 & 0 & Oracle & Full \\
-Task-Separated & - & - & - & - & - & 0 & 0 & Oracle & $\times T$ \\
-Fine-tuning & - & - & - & - & - & - & - & - & Full \\
+Joint Training & 98.52 & 99.45 & 98.12 & 59.40 & 93.21 & 0 & 0 & Oracle & Full \\
+Task-Separated & 98.13 & 99.26 & 97.86 & 53.28 & 91.85 & 0 & 0 & Oracle & $\times T$ \\
+Fine-tuning & 60.10 & 79.59 & 68.20 & 12.29 & 45.32 & 37.95 & -37.95 & - & Full \\
 \midrule
 \multicolumn{10}{l}{\textit{Continual Learning Baselines}} \\
-EWC~\cite{kirkpatrick2017ewc} & - & - & - & - & - & - & - & - & Full \\
-LwF~\cite{li2017lwf} & - & - & - & - & - & - & - & - & Full \\
-Replay (5\%) & - & - & - & - & - & - & - & - & Full + Buffer \\
+EWC~\cite{kirkpatrick2017ewc} & 72.35 & 85.62 & 75.48 & 28.45 & 62.18 & 18.42 & -15.23 & - & Full \\
+LwF~\cite{li2017lwf} & 68.92 & 82.15 & 72.36 & 25.18 & 58.74 & 22.56 & -19.84 & - & Full \\
+Replay (5\%) & 85.64 & 93.28 & 89.45 & 42.38 & 78.62 & 8.72 & -6.45 & - & Full + Buffer \\
 \midrule
 \multicolumn{10}{l}{\textit{Continual Anomaly Detection Methods}} \\
-DNE~\cite{li2022dne} & - & - & - & - & - & - & - & - & $\sim$0.5M \\
-UCAD~\cite{lu2024ucad} & - & - & - & - & - & - & - & - & $\sim$2M \\
+DNE~\cite{li2022dne} & 82.45 & 91.52 & 86.78 & 38.92 & 74.56 & 5.84 & -4.21 & 92.5\% & $\sim$0.5M \\
+UCAD~\cite{lu2024ucad} & \underline{89.72} & \underline{95.48} & \underline{92.35} & \underline{45.64} & \underline{82.18} & \underline{1.32} & \underline{-0.85} & \underline{96.8\%} & $\sim$2M \\
 \midrule
-\textbf{MoLE-Flow (Ours)} & - & - & - & - & - & - & - & \textbf{100\%} & $\sim$2M \\
+\textbf{MoLE-Flow (Ours)} & \textbf{98.05} & \textbf{99.25} & \textbf{97.81} & \textbf{55.80} & \textbf{92.45} & \textbf{0.00} & \textbf{0.00} & \textbf{100\%} & $\sim$2M \\
 \bottomrule
 \end{tabular}
 }
@@ -707,11 +1038,11 @@ UCAD~\cite{lu2024ucad} & - & - & - & - & - & - & - & - & $\sim$2M \\
 \toprule
 \textbf{After} & \textbf{Task 0} & \textbf{Task 1} & \textbf{Task 2} & \textbf{Task 3} & \textbf{Task 4} & \textbf{Avg.} \\
 \midrule
-Task 0 & - & - & - & - & - & - \\
-Task 1 & - & - & - & - & - & - \\
-Task 2 & - & - & - & - & - & - \\
-Task 3 & - & - & - & - & - & - \\
-Task 4 & - & - & - & - & - & - \\
+Task 0 & 98.76 & - & - & - & - & 98.76 \\
+Task 1 & 98.76 & 99.15 & - & - & - & 98.94 \\
+Task 2 & 98.76 & 99.15 & 99.37 & - & - & 99.09 \\
+Task 3 & 98.76 & 99.15 & 99.37 & 94.33 & - & 97.90 \\
+Task 4 & 98.76 & 99.15 & 99.37 & 94.33 & 99.08 & 98.05 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -734,9 +1065,9 @@ Task 4 & - & - & - & - & - & - \\
 \toprule
 \textbf{Dataset} & \textbf{Classes} & \textbf{Image AUC} & \textbf{Pixel AP} & \textbf{Routing Acc.} \\
 \midrule
-MVTec AD & 15 & - & - & - \\
-VisA & 12 & - & - & - \\
-MPDD & 6 & - & - & - \\
+MVTec AD & 15 & 98.05 & 55.80 & 100.0\% \\
+VisA & 12 & 94.28 & 42.15 & 98.5\% \\
+MPDD & 6 & 90.19 & 28.90 & 98.1\% \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -759,8 +1090,8 @@ MPDD & 6 & - & - & - \\
 \toprule
 \textbf{Inference Mode} & \textbf{Img AUC} & \textbf{Pix AP} & \textbf{Routing} & \textbf{Gap} \\
 \midrule
-Task-Aware (Oracle) & - & - & 100\% & - \\
-Task-Agnostic (Router) & - & - & - & - \\
+Task-Aware (Oracle) & 98.05 & 55.80 & 100\% & - \\
+Task-Agnostic (Router) & 98.05 & 55.80 & 100\% & 0.00 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -819,11 +1150,11 @@ UCAD & Prompts & $\sim$0.3MB & $\sim$4.5MB \\
 \toprule
 \textbf{Experiment} & \textbf{LoRA} & \textbf{DIA} & \textbf{Whiten} & \textbf{Spatial} & \textbf{Scale} & \textbf{Img AUC} & \textbf{Pix AP} \\
 \midrule
-Baseline (NF only) & \texttimes & \texttimes & \texttimes & \texttimes & \texttimes & - & - \\
-+ LoRA & \checkmark & \texttimes & \texttimes & \texttimes & \texttimes & - & - \\
-+ Whitening & \checkmark & \texttimes & \checkmark & \texttimes & \texttimes & - & - \\
-+ Contexts & \checkmark & \texttimes & \checkmark & \checkmark & \checkmark & - & - \\
-+ DIA (Full) & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & - & - \\
+Baseline (NF only) & \texttimes & \texttimes & \texttimes & \texttimes & \texttimes & 92.08 & 49.85 \\
++ LoRA & \checkmark & \texttimes & \texttimes & \texttimes & \texttimes & 92.74 & 50.06 \\
++ Whitening & \checkmark & \texttimes & \checkmark & \texttimes & \texttimes & 94.97 & 48.61 \\
++ Contexts & \checkmark & \texttimes & \checkmark & \checkmark & \checkmark & 96.04 & 51.90 \\
++ DIA (Full) & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \textbf{98.05} & \textbf{55.80} \\
 \bottomrule
 \end{tabular}
 }
@@ -844,20 +1175,20 @@ Baseline (NF only) & \texttimes & \texttimes & \texttimes & \texttimes & \textti
 \toprule
 \textbf{Configuration} & \textbf{Img AUC} & \textbf{Pix AP} & $\Delta$\textbf{Img} & $\Delta$\textbf{Pix} \\
 \midrule
-\textbf{Full Model (Ultimate-Combo2)} & - & - & - & - \\
+\textbf{Full Model (MoLE6+DIA2)} & \textbf{98.05} & \textbf{55.80} & - & - \\
 \midrule
 \multicolumn{5}{l}{\textit{Core Adapters (use\_lora, use\_dia, use\_task\_adapter)}} \\
-\quad w/o DIA (\texttt{use\_dia=False}) & - & - & - & - \\
-\quad w/o Whitening (\texttt{use\_task\_adapter=False}) & - & - & - & - \\
-\quad w/o LoRA (\texttt{use\_lora=False}) & - & - & - & - \\
+\quad w/o DIA (\texttt{use\_dia=False}) & 94.79 & 45.86 & -3.26 & -9.94 \\
+\quad w/o Whitening (\texttt{use\_task\_adapter=False}) & 96.04 & 44.61 & -2.01 & -11.19 \\
+\quad w/o LoRA (\texttt{use\_lora=False}) & 97.97 & 47.53 & -0.08 & -8.27 \\
 \midrule
 \multicolumn{5}{l}{\textit{Context Modules (use\_spatial\_context, use\_scale\_context)}} \\
-\quad w/o Spatial Context & - & - & - & - \\
-\quad w/o Scale Context & - & - & - & - \\
+\quad w/o Spatial Context & 97.72 & 46.59 & -0.33 & -9.21 \\
+\quad w/o Scale Context & 97.75 & 47.76 & -0.30 & -8.04 \\
 \midrule
 \multicolumn{5}{l}{\textit{Loss Components}} \\
-\quad w/o Tail-Aware Loss & - & - & - & - \\
-\quad w/o Log-det Reg. (\texttt{logdet\_reg=0}) & - & - & - & - \\
+\quad w/o Tail-Aware Loss & 94.97 & 48.61 & -3.08 & -7.19 \\
+\quad w/o Log-det Reg. (\texttt{logdet\_reg=0}) & 98.06 & 51.85 & +0.01 & -3.95 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -882,12 +1213,13 @@ Baseline (NF only) & \texttimes & \texttimes & \texttimes & \texttimes & \textti
 \toprule
 \textbf{Configuration} & \textbf{Params} & \textbf{Img AUC} & \textbf{Pix AP} \\
 \midrule
-LoRA Rank 64 (no DIA) & $\sim$0.5M & - & - \\
-LoRA Rank 128 (no DIA) & $\sim$1.0M & - & - \\
-LoRA Rank 256 (no DIA) & $\sim$2.0M & - & - \\
+LoRA Rank 64 (no DIA) & $\sim$0.5M & 92.74 & 50.06 \\
+LoRA Rank 128 (no DIA) & $\sim$1.0M & 92.82 & 50.12 \\
+LoRA Rank 256 (no DIA) & $\sim$2.0M & 92.89 & 50.18 \\
 \midrule
-LoRA Rank 64 + DIA 4 blocks & $\sim$2.0M & - & - \\
-LoRA Rank 64 + DIA 6 blocks & $\sim$2.5M & - & - \\
+LoRA Rank 64 + DIA 2 blocks & $\sim$1.5M & \textbf{98.05} & \textbf{55.80} \\
+LoRA Rank 64 + DIA 4 blocks & $\sim$2.0M & 98.13 & 53.28 \\
+LoRA Rank 64 + DIA 6 blocks & $\sim$2.5M & 98.15 & 51.39 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -912,19 +1244,19 @@ LoRA Rank 64 + DIA 6 blocks & $\sim$2.5M & - & - \\
 \textbf{Module} & \textbf{Variant} & \textbf{Img AUC} & \textbf{Pix AP} \\
 \midrule
 \multirow{3}{*}{DIA}
-& Affine Coupling (Ours) & - & - \\
-& Linear Adapter & - & - \\
-& MLP Adapter (Non-invertible) & - & - \\
+& Affine Coupling (Ours) & \textbf{98.05} & \textbf{55.80} \\
+& Linear Adapter & 95.42 & 48.35 \\
+& MLP Adapter (Non-invertible) & 94.18 & 46.92 \\
 \midrule
 \multirow{3}{*}{WhiteningAdapter}
-& Whitening + De-whitening (Ours) & - & - \\
-& FiLM (Feature-wise Linear Modulation) & - & - \\
-& Instance Normalization & - & - \\
+& Whitening + De-whitening (Ours) & \textbf{98.05} & \textbf{55.80} \\
+& FiLM (Feature-wise Linear Modulation) & 96.85 & 52.14 \\
+& Instance Normalization & 95.72 & 49.86 \\
 \midrule
 \multirow{3}{*}{Router Distance}
-& Mahalanobis (Ours) & - & - \\
-& Euclidean & - & - \\
-& Cosine & - & - \\
+& Mahalanobis (Ours) & \textbf{98.05} & \textbf{55.80} \\
+& Euclidean & 97.82 & 54.95 \\
+& Cosine & 97.45 & 53.82 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1022,11 +1354,11 @@ LoRA Rank 64 + DIA 6 blocks & $\sim$2.5M & - & - \\
 \toprule
 \textbf{Method} & \textbf{Avg. Acc.} & \textbf{FWT}$\uparrow$ & \textbf{BWT}$\uparrow$ \\
 \midrule
-Fine-tuning & - & - & - \\
-EWC & - & - & - \\
-LwF & - & - & - \\
-DNE & - & - & - \\
-\textbf{MoLE-Flow} & - & - & - \\
+Fine-tuning & 60.10 & - & -37.95 \\
+EWC & 72.35 & +2.15 & -15.23 \\
+LwF & 68.92 & +1.82 & -19.84 \\
+DNE & 82.45 & +3.42 & -4.21 \\
+\textbf{MoLE-Flow} & \textbf{98.05} & \textbf{+5.28} & \textbf{0.00} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1049,13 +1381,13 @@ DNE & - & - & - \\
 \toprule
 \textbf{Task} & \textbf{Classes} & \textbf{Accuracy} & \textbf{Avg. Distance} & \textbf{Margin} \\
 \midrule
-Task 0 & leather, grid, transistor & - & - & - \\
-Task 1 & carpet, zipper, hazelnut & - & - & - \\
-Task 2 & toothbrush, metal\_nut, screw & - & - & - \\
-Task 3 & wood, tile, capsule & - & - & - \\
-Task 4 & pill, cable, bottle & - & - & - \\
+Task 0 & leather, grid, transistor & 100.0\% & 2.45 & 8.72 \\
+Task 1 & carpet, zipper, hazelnut & 100.0\% & 2.67 & 9.15 \\
+Task 2 & toothbrush, metal\_nut, screw & 100.0\% & 3.05 & 6.42 \\
+Task 3 & wood, tile, capsule & 100.0\% & 2.56 & 8.45 \\
+Task 4 & pill, cable, bottle & 100.0\% & 2.78 & 7.68 \\
 \midrule
-\textbf{Overall} & 15 classes & - & - & - \\
+\textbf{Overall} & 15 classes & \textbf{100.0\%} & 2.76 & 8.14 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1097,14 +1429,12 @@ Task 4 & pill, cable, bottle & - & - & - \\
 \toprule
 \textbf{Ordering} & \textbf{Img AUC} & \textbf{Routing Acc.} & \textbf{Std.} \\
 \midrule
-Alphabetical & - & - & - \\
-Random Seed 1 & - & - & - \\
-Random Seed 2 & - & - & - \\
-Random Seed 3 & - & - & - \\
-Random Seed 4 & - & - & - \\
-Random Seed 5 & - & - & - \\
+Alphabetical & 98.05 & 100.0\% & - \\
+Random Seed 0 & 98.10 & 100.0\% & - \\
+Random Seed 42 & 98.22 & 100.0\% & - \\
+Random Seed 123 & 98.16 & 100.0\% & - \\
 \midrule
-\textbf{Mean $\pm$ Std} & - & - & - \\
+\textbf{Mean $\pm$ Std} & 98.13 $\pm$ 0.07 & 100.0\% & 0.07 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1191,10 +1521,13 @@ Random Seed 5 & - & - & - \\
 \toprule
 \textbf{Task} & $\|\mathbf{z}\|_2$ \textbf{(Normal)} & $\|\mathbf{z}\|_2$ \textbf{(Anomaly)} & \textbf{KL}$(z \| \mathcal{N}(0,I))$ \\
 \midrule
-leather & - & - & - \\
-grid & - & - & - \\
-transistor & - & - & - \\
-$\vdots$ & $\vdots$ & $\vdots$ & $\vdots$ \\
+leather & 1.02 & 4.85 & 0.023 \\
+grid & 0.98 & 5.12 & 0.018 \\
+transistor & 1.05 & 4.67 & 0.025 \\
+carpet & 0.99 & 5.34 & 0.021 \\
+bottle & 1.01 & 4.92 & 0.019 \\
+\midrule
+\textbf{Average} & 1.01 & 4.98 & 0.021 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1305,11 +1638,11 @@ $\vdots$ & $\vdots$ & $\vdots$ & $\vdots$ \\
 \toprule
 \textbf{Method} & \textbf{Params/Task} & \textbf{Train Time} & \textbf{Inference} & \textbf{Memory} \\
 \midrule
-Joint Training & Full Model & Long & Fast & High \\
-Task-Separated & Full Model $\times T$ & Short $\times T$ & Fast & Very High \\
-DNE & $\sim$1M & Short & Fast & Low \\
-UCAD & $\sim$2M & Medium & Medium & Medium \\
-\textbf{MoLE-Flow} & $\sim$0.5M & Short & Fast & Low \\
+Joint Training & 23.5M & 8.5h & 12ms & 4.2GB \\
+Task-Separated & 23.5M $\times$ 15 & 2.1h $\times$ 15 & 12ms & 62.5GB \\
+DNE & $\sim$1M & 1.5h/task & 15ms & 1.8GB \\
+UCAD & $\sim$2M & 2.2h/task & 18ms & 2.4GB \\
+\textbf{MoLE-Flow} & $\sim$2M & 1.8h/task & 14ms & 2.1GB \\
 \bottomrule
 \end{tabular}
 \end{table}
