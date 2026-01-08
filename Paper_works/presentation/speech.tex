@@ -256,6 +256,34 @@ Class-specific 정보를 학습하기 위한 별도의 Prompt를 학습
 \end{frame}
 
 %-------------------------------------------------------------------------------
+% Frame: Notation
+%-------------------------------------------------------------------------------
+\begin{frame}{Notation: 주요 표기법}
+\textbf{입력 및 특징}
+\begin{itemize}
+    \item $\mathbf{X} \in \mathbb{R}^{B \times H \times W \times D}$: 패치 임베딩 텐서 (배치 $B$, 공간 해상도 $H \times W$, 특징 차원 $D$)
+    \item $\mathbf{x}_{u,v} \in \mathbb{R}^D$: 위치 $(u,v)$의 개별 패치 벡터
+    \item $\mathbf{z}$: 잠재 공간 변수 (Normalizing Flow 출력)
+\end{itemize}
+
+\vspace{0.3em}
+\textbf{작업 및 변환}
+\begin{itemize}
+    \item $t \in \{0, 1, \ldots, T-1\}$: 작업 인덱스
+    \item $\mathbf{J}_f$: 함수 $f$의 Jacobian 행렬
+    \item $\log|\det \mathbf{J}|$: Log-determinant (변환의 부피 변화율)
+\end{itemize}
+
+\vspace{0.3em}
+\textbf{손실 함수 가중치}
+\begin{itemize}
+    \item $\lambda_{\text{tail}}$: Tail-Aware Loss 가중치 (default: 0.7)
+    \item $\lambda_{\text{logdet}}$: Log-determinant 정규화 계수 (default: $10^{-4}$)
+    \item $\lambda_{\text{reg}}$: 공분산 정규화 항 (default: $10^{-5}$)
+\end{itemize}
+\end{frame}
+
+%-------------------------------------------------------------------------------
 % Frame: Parameter Analysis (Backbone 제외)
 %-------------------------------------------------------------------------------
 \begin{frame}{Parameter Analysis (Backbone 제외)}
@@ -625,6 +653,50 @@ LoRA가 표현 못하는 복잡한 분포 변환 학습
 \end{columns}
 \end{frame}
 
+%-------------------------------------------------------------------------------
+% Frame: Feature Extraction - Why Positional Encoding?
+%-------------------------------------------------------------------------------
+\begin{frame}{Why Positional Encoding?}
+\textbf{Normalizing Flow의 구조적 특성:}
+\begin{itemize}
+    \item NF는 입력을 1D 벡터로 평탄화하여 처리
+    \item 각 패치 임베딩이 \textbf{독립적}으로 처리됨 (Permutation Invariance)
+    \item 패치의 \textbf{공간적 위치 정보가 소실}
+\end{itemize}
+
+\vspace{0.5em}
+\textbf{Positional Encoding 적용:}
+\begin{equation*}
+\mathbf{F}' = \mathbf{F} + \mathbf{P}, \quad \mathbf{P} \in \mathbb{R}^{H \times W \times D}
+\end{equation*}
+
+\vspace{0.3em}
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\textbf{2D Sinusoidal PE}
+\begin{itemize}
+    \item 행과 열에 대해 독립적인 주파수 사용
+    \item 연속적인 위치 관계 표현
+    \item 학습 파라미터 없음
+\end{itemize}
+\end{column}
+
+\begin{column}{0.48\textwidth}
+\textbf{효과}
+\begin{itemize}
+    \item 동일한 특징이라도 위치에 따라 다르게 처리
+    \item 이상치의 ``어디''가 중요한지 인식
+    \item 공간적 패턴 학습 가능
+\end{itemize}
+\end{column}
+\end{columns}
+
+\vspace{0.3em}
+\begin{block}{핵심}
+NF는 ``무엇(What)''만 처리 $\rightarrow$ PE 추가로 ``어디(Where)'' 정보 주입 $\rightarrow$ 위치 기반 이상 탐지
+\end{block}
+\end{frame}
+
 %===============================================================================
 \section{Task Adapters}
 %===============================================================================
@@ -636,7 +708,8 @@ LoRA가 표현 못하는 복잡한 분포 변환 학습
 \textbf{\textcolor{red}{문제}: 클래스별 이미지 분포 차이}
 \begin{itemize}
     \item 클래스별로 다른 이미지 통계량 $\rightarrow$ NF 학습 불안정
-    \item Task 전환 시 급격한 입력 분포 변화
+    \item Task 전환 시 급격한 입력 분포 변화 (Covariate Shift)
+    \item 고정된 Base Flow가 새로운 분포에 최적 반응 불가
 \end{itemize}
 
 \vspace{0.3em}
@@ -652,6 +725,7 @@ LoRA가 표현 못하는 복잡한 분포 변환 학습
 \begin{itemize}
     \item 모든 Task를 \textbf{동일한 시작점}으로
     \item LayerNorm 기반 (학습 파라미터 없음)
+    \item 분포 스케일 차이 사전 제거
 \end{itemize}
 \end{column}
 \begin{column}{0.48\textwidth}
@@ -660,16 +734,65 @@ LoRA가 표현 못하는 복잡한 분포 변환 학습
 \hat{\mathbf{F}}_t = \gamma_t \odot \mathbf{x}_{\text{white}} + \beta_t
 \end{equation*}
 \begin{itemize}
-    \item $\gamma_t \in [0.5, 2.0]$ (sigmoid)
-    \item $\beta_t \in [-2.0, 2.0]$ (tanh)
+    \item $\gamma_t$: 채널별 중요도 조절
+    \item $\beta_t$: Base Flow 최적 영역으로 이동
     \item \textbf{범위 제한}으로 안정성 확보
 \end{itemize}
 \end{column}
 \end{columns}
 
 \vspace{0.3em}
-\begin{alertblock}{\textcolor{mainblue}{효과}: wo\_Adapter 시 두 번째로 큰 성능 하락}
-Image AUC \textcolor{red}{\textbf{-1.89\%}} (0.9793 $\rightarrow$ 0.9604), Pixel AP \textcolor{red}{-2.74\%}
+\begin{block}{핵심 원리: Affine 변환을 사용하는 이유}
+\small 통계적 특성(평균, 분산)만 조절하고 데이터의 본질적 구조(Shape)는 보존 $\rightarrow$ FiLM~\cite{perez2018film}과 유사
+\end{block}
+\end{frame}
+
+%-------------------------------------------------------------------------------
+% Frame: WhiteningAdapter - Why Affine Transformation (상세)
+%-------------------------------------------------------------------------------
+\begin{frame}{WhiteningAdapter: Why Affine Transformation?}
+\textbf{De-whitening에서 Affine 변환 ($\mathbf{y} = \gamma \odot \mathbf{x} + \beta$)을 사용하는 이유:}
+
+\vspace{0.3em}
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\textbf{1. 통계적 정합성}
+\begin{itemize}
+    \item 정규분포 $\rightarrow$ 정규분포 변환의 자연스러운 방법
+    \item $\mathcal{N}(0,1) \rightarrow \mathcal{N}(\mu_t, \sigma_t^2)$
+    \item 비선형 변환 시 분포 모양 왜곡 (Bell curve 소실)
+\end{itemize}
+
+\vspace{0.3em}
+\textbf{2. 구조 보존}
+\begin{itemize}
+    \item 공간 늘림(Scale) + 이동(Shift)만 수행
+    \item 직선$\rightarrow$직선, 평행선$\rightarrow$평행선 유지
+    \item 데이터 ``내용(Content)'' 보존
+\end{itemize}
+\end{column}
+
+\begin{column}{0.48\textwidth}
+\textbf{3. 역할 분담}
+\begin{itemize}
+    \item Adapter: 1차/2차 모멘트(평균, 분산) 정렬
+    \item Base Flow + LoRA: 복잡한 비선형 분포 모델링
+    \item BatchNorm~\cite{ioffe2015batchnorm}의 $\gamma$, $\beta$와 동일 원리
+\end{itemize}
+
+\vspace{0.3em}
+\textbf{4. 채널별 중요도 조절}
+\begin{itemize}
+    \item $\gamma_t \uparrow$: 해당 특징 증폭
+    \item $\gamma_t \downarrow$: 해당 특징 억제
+    \item 예: 가죽$\rightarrow$질감 채널 증폭, 나사$\rightarrow$형태 채널 증폭
+\end{itemize}
+\end{column}
+\end{columns}
+
+\vspace{0.3em}
+\begin{alertblock}{De-whitening의 본질}
+단순 원래 분포 복원이 아닌, \textbf{고정된 Base Flow의 매니폴드 상에서 각 Task 데이터가 최적으로 표현될 위치 학습}
 \end{alertblock}
 \end{frame}
 
@@ -677,52 +800,7 @@ Image AUC \textcolor{red}{\textbf{-1.89\%}} (0.9793 $\rightarrow$ 0.9604), Pixel
 \section{MoLE-Flow}
 %===============================================================================
 
-%-------------------------------------------------------------------------------
-% Frame: Development Journey - Overview
-%-------------------------------------------------------------------------------
-\begin{frame}{Development Journey: 78개 실험에서 최적화까지}
-\begin{block}{실험 규모}
-\textbf{78개 이상의 실험}을 수행하여 최적의 하이퍼파라미터 조합 탐색
-\end{block}
-
-\vspace{0.5em}
-\textbf{Baseline에서 최적 설정까지의 개선 과정:}
-
-\begin{center}
-\begin{tikzpicture}[scale=0.75]
-    % Baseline
-    \node[draw, fill=red!20, minimum width=2.2cm, minimum height=0.7cm, font=\scriptsize] (b) at (0,0) {Baseline};
-    \node[below=0.05cm of b, font=\tiny] {Pixel AP: 0.4640};
-
-    % +LogdetReg
-    \node[draw, fill=orange!20, minimum width=2.2cm, minimum height=0.7cm, font=\scriptsize] (l) at (3.2,0) {+LogdetReg};
-    \node[below=0.05cm of l, font=\tiny] {\textcolor{accentgreen}{+4.15\%}};
-
-    % +TopK5+TailW
-    \node[draw, fill=yellow!30, minimum width=2.2cm, minimum height=0.7cm, font=\scriptsize] (t) at (6.4,0) {+TopK+TailW};
-    \node[below=0.05cm of t, font=\tiny] {\textcolor{accentgreen}{+5.81\%}};
-
-    % +ScaleCtxK5
-    \node[draw, fill=accentgreen!20, minimum width=2.2cm, minimum height=0.7cm, font=\scriptsize] (s) at (9.6,0) {+ScaleCtxK5};
-    \node[below=0.05cm of s, font=\tiny] {\textcolor{accentgreen}{+6.77\%}};
-
-    % Final
-    \node[draw, fill=accentgreen!50, minimum width=2.2cm, minimum height=0.7cm, font=\scriptsize] (f) at (12.8,0) {\textbf{Final}};
-    \node[below=0.05cm of f, font=\tiny] {\textbf{0.5350 (+7.10\%)}};
-
-    % Arrows
-    \draw[->, thick] (b) -- (l);
-    \draw[->, thick] (l) -- (t);
-    \draw[->, thick] (t) -- (s);
-    \draw[->, thick] (s) -- (f);
-\end{tikzpicture}
-\end{center}
-
-\vspace{0.5em}
-\begin{alertblock}{핵심 발견}
-각 모듈이 특정 문제를 해결하기 위해 도입됨 $\rightarrow$ 문제-해결-효과 구조로 설명
-\end{alertblock}
-\end{frame}
+% Development Journey frame removed - content moved to Experiments Part 1: Optimization Journey
 
 %-------------------------------------------------------------------------------
 % Frame: MoLE-Flow - Spatial Context Mixer
@@ -737,13 +815,13 @@ Image AUC \textcolor{red}{\textbf{-1.89\%}} (0.9793 $\rightarrow$ 0.9604), Pixel
 \begin{column}{0.42\textwidth}
 \textbf{\textcolor{red}{문제}: 패치 독립 처리의 한계}
 \begin{itemize}
-    \item 기존 NF: 각 패치 독립 처리
+    \item 기존 NF: $p(\mathbf{X}) \approx \prod_{u,v} p(\mathbf{x}_{u,v})$
     \item 주변 맥락 정보 부족
-    \item 결함 경계 인식 어려움
+    \item 결함 경계(Local Contrast) 인식 어려움
 \end{itemize}
 
 \vspace{0.3em}
-\textbf{\textcolor{accentgreen}{해결}: Spatial Context Mixer}
+\textbf{\textcolor{accentgreen}{해결}: Gated Depthwise Aggregation}
 \begin{equation*}
 \mathbf{x}_{\text{mixed}} = (1-g) \cdot \mathbf{x} + g \cdot \mathbf{x}_{\text{ctx}}
 \end{equation*}
@@ -751,14 +829,17 @@ Image AUC \textcolor{red}{\textbf{-1.89\%}} (0.9793 $\rightarrow$ 0.9604), Pixel
 \vspace{0.2em}
 \small
 \begin{itemize}
-    \item $\mathbf{x}_{\text{ctx}}$: DepthwiseConv$_{3\times3}$
+    \item $\mathbf{x}_{\text{ctx}}$: DepthwiseConv$_{K\times K}$
     \item $g = \sigma(\theta)$: 학습 가능 게이트
+    \item 채널 독립적 공간 집계
 \end{itemize}
-
-\vspace{0.3em}
-\textbf{\textcolor{mainblue}{효과}}: wo\_SpatialCtx 시 Pixel AP \textcolor{red}{-0.76\%}
 \end{column}
 \end{columns}
+
+\vspace{0.3em}
+\begin{block}{핵심 원리: Pseudo-Dependency Modeling}
+\small NF 구조 변경 없이 $\mathbf{z}_{u,v}$가 이웃 정보 $\mathcal{N}_{u,v}$를 내포 $\rightarrow$ 간접적 조건부 확률 $p(\mathbf{x}_{u,v}|\mathcal{N}_{u,v})$ 학습
+\end{block}
 \end{frame}
 
 %-------------------------------------------------------------------------------
@@ -795,47 +876,39 @@ Image AUC \textcolor{red}{\textbf{-1.89\%}} (0.9793 $\rightarrow$ 0.9604), Pixel
 \begin{itemize}
     \item Task 0에서 학습 후 \textbf{영구 고정}
     \item 범용적인 특징 변환 역할
-    \item 모든 작업이 공유
+    \item 모든 작업이 공유하는 ``공통 지식''
 \end{itemize}
 
 \vspace{0.5em}
-\textbf{LoRA Rank 민감도 분석:}
-\begin{table}
-\scriptsize
-\begin{tabular}{ccc}
-\toprule
-Rank & Image AUC & Pixel AP \\
-\midrule
-32 & 0.9794 & 0.4737 \\
-64 & 0.9793 & 0.4735 \\
-128 & 0.9794 & 0.4736 \\
-\bottomrule
-\end{tabular}
-\end{table}
-\small $\rightarrow$ Rank 64로 충분
+\textbf{Why Frozen?}
+\begin{itemize}
+    \item 새 Task 학습 시 Base 변경 $\rightarrow$ 이전 Task 성능 저하
+    \item Parameter Isolation의 핵심 원리
+\end{itemize}
 \end{column}
 
 \begin{column}{0.5\textwidth}
 \textbf{LoRA Linear (Task-Specialist)}
 \begin{itemize}
     \item 작업 고유 분포 특성 보정
-    \item 저랭크 행렬 ($r=64$)
-    \item 작업마다 새로운 $\mathbf{A}, \mathbf{B}$ 생성
+    \item 저랭크 행렬: $\Delta\mathbf{W} = \mathbf{B}\mathbf{A}$
+    \item 작업마다 독립적인 $\mathbf{A}_t, \mathbf{B}_t$ 생성
 \end{itemize}
 
 \vspace{0.5em}
 \textbf{초기화 전략:}
 \begin{itemize}
-    \item $\mathbf{A}$: Xavier uniform
-    \item $\mathbf{B}$: Zero $\rightarrow$ $\Delta\mathbf{W}=0$ at start
+    \item $\mathbf{A}$: Xavier uniform (다양성)
+    \item $\mathbf{B}$: Zero $\rightarrow$ 학습 시작 시 $\Delta\mathbf{W}=0$
+    \item Base에서 점진적으로 분기
 \end{itemize}
 \end{column}
 \end{columns}
 
 \vspace{0.5em}
-\begin{alertblock}{파라미터 효율성}
-전체 대비 \textbf{약 11\%}의 파라미터만으로 효과적인 작업 적응, Forgetting $\approx$ 0
-\end{alertblock}
+\begin{block}{핵심 원리: Parameter Isolation}
+\small Base(공유) + LoRA(분리) 구조로 작업 간 간섭을 \textbf{원천 차단} $\rightarrow$ Forgetting $\approx$ 0
+\end{block}
 \end{frame}
 
 %-------------------------------------------------------------------------------
@@ -844,8 +917,8 @@ Rank & Image AUC & Pixel AP \\
 \begin{frame}{MoLE-Flow: Scale Context (s-network only)}
 \textbf{\textcolor{red}{문제}: s-network가 anomaly 판단에 주변 정보 필요}
 \begin{itemize}
-    \item 이상치의 ``크기''는 주변 패치와의 비교에 의존
-    \item t-network는 위치 이동만 담당 $\rightarrow$ context 불필요
+    \item 이상치의 ``크기(scale)''는 주변 패치와의 \textbf{상대적 비교}에 의존
+    \item t-network는 분포 중심 이동만 담당 $\rightarrow$ context 불필요
 \end{itemize}
 
 \vspace{0.5em}
@@ -860,7 +933,8 @@ Rank & Image AUC & Pixel AP \\
 \end{equation*}
 \begin{itemize}
     \item 원본 + $K \times K$ 문맥 정보 결합
-    \item \textbf{K=5가 최적} (실험 결과)
+    \item 이상치 ``돌출'' 정도 판단
+    \item DepthwiseConv로 효율적 집계
 \end{itemize}
 \end{column}
 
@@ -871,14 +945,107 @@ Rank & Image AUC & Pixel AP \\
 \end{equation*}
 \begin{itemize}
     \item 원본 특징만 사용
-    \item 분포 중심은 패치 고유 특성에 종속
+    \item 분포 중심은 패치 고유 특성
+    \item Context 추가 시 오히려 노이즈
 \end{itemize}
 \end{column}
 \end{columns}
 
 \vspace{0.5em}
-\begin{alertblock}{\textcolor{mainblue}{효과}: Scale Context K=5}
-wo\_ScaleCtx 시 Pixel AP \textcolor{red}{-0.41\%}, Image AUC \textcolor{red}{-0.18\%}
+\begin{block}{핵심 원리: 역할 분리}
+\small Scale $\mathbf{s}$: 주변 대비 ``얼마나 다른가'' (상대적) / Translation $\mathbf{t}$: ``어디로 이동할지'' (절대적)
+\end{block}
+\end{frame}
+
+%-------------------------------------------------------------------------------
+% Frame: MoLEContextSubnet Architecture (상세)
+%-------------------------------------------------------------------------------
+\begin{frame}{MoLEContextSubnet: Context-Aware \& Task-Adaptive Design}
+\textbf{Coupling Layer 내부 핵심 모듈: 변환 파라미터 ($\mathbf{s}$, $\mathbf{t}$) 생성}
+
+\vspace{0.3em}
+\textbf{1. Spatial Structure Recovery \& Context Extraction}
+\begin{itemize}
+    \item 일반 NF: 1D 벡터 평탄화 $\rightarrow$ 공간적 인접성 소실
+    \item 본 모듈: 2D 이미지 재구성 후 $3 \times 3$ DepthwiseConv로 문맥 추출
+    \item 게이팅 적용: $\mathbf{ctx} = \alpha \cdot \mathbf{c}(\mathbf{x})$, where $\alpha = \alpha_{\max} \cdot \sigma(\theta_{\text{scale}})$
+\end{itemize}
+
+\vspace{0.3em}
+\textbf{2. 비대칭 네트워크 설계}
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\textbf{Context-Aware s-network}
+\begin{equation*}
+\mathbf{s} = \text{MLP}([\mathbf{x}; \mathbf{ctx}])
+\end{equation*}
+\begin{itemize}
+    \item 결함 = 주변과의 \textbf{불연속성}
+    \item 국소적 대비(Local Contrast) 포착
+\end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+\textbf{Context-Free t-network}
+\begin{equation*}
+\mathbf{t} = \text{MLP}(\mathbf{x})
+\end{equation*}
+\begin{itemize}
+    \item 분포 중심 이동은 패치 고유 특성
+    \item 문맥 추가 시 불필요한 간섭
+\end{itemize}
+\end{column}
+\end{columns}
+
+\vspace{0.3em}
+\begin{block}{가역성 보장}
+LoRA는 subnet 내부 선형 레이어에만 적용 $\rightarrow$ Coupling 구조의 가역성에 영향 없음 \\
+\small $\mathbf{y} = [\mathbf{x}_1, \mathbf{x}_2 \odot \exp(\mathbf{s}) + \mathbf{t}] \Leftrightarrow \mathbf{x} = [\mathbf{y}_1, (\mathbf{y}_2 - \mathbf{t}) \odot \exp(-\mathbf{s})]$
+\end{block}
+\end{frame}
+
+%-------------------------------------------------------------------------------
+% Frame: Hierarchical Context Processing
+%-------------------------------------------------------------------------------
+\begin{frame}{Hierarchical Context Processing: 문맥 모듈 비교}
+\textbf{Spatial Context Mixer vs MoLEContextSubnet 내부 Context Conditioning}
+
+\vspace{0.5em}
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\textbf{Spatial Context Mixer}
+\begin{itemize}
+    \item \textbf{위치}: Flow 입력 \textbf{이전}
+    \item \textbf{역할}: ``이 패치가 어떤 이웃을 가지는가''를 특징 자체에 인코딩
+    \item \textbf{성격}: \textbf{전처리} 모듈
+\end{itemize}
+\end{column}
+
+\begin{column}{0.48\textwidth}
+\textbf{MoLEContextSubnet Context}
+\begin{itemize}
+    \item \textbf{위치}: 각 Coupling Layer \textbf{내부}
+    \item \textbf{역할}: ``이 이웃 관계에서 어떤 스케일 변화가 적절한가'' 결정
+    \item \textbf{성격}: \textbf{변환 가이드}
+\end{itemize}
+\end{column}
+\end{columns}
+
+\vspace{0.5em}
+\begin{center}
+\begin{tikzpicture}[scale=0.85]
+    \node[draw, fill=blue!10, minimum width=2.8cm, minimum height=0.7cm] (scm) at (0,0) {\scriptsize Spatial Context Mixer};
+    \node[below=0.05cm of scm, font=\tiny] {입력 수준 문맥 인코딩};
+
+    \node[draw, fill=orange!10, minimum width=2.8cm, minimum height=0.7cm] (mole) at (5,0) {\scriptsize MoLEContextSubnet};
+    \node[below=0.05cm of mole, font=\tiny] {변환 수준 적응적 스케일링};
+
+    \draw[->, thick] (scm) -- node[above, font=\tiny] {보완적 작용} (mole);
+\end{tikzpicture}
+\end{center}
+
+\vspace{0.3em}
+\begin{alertblock}{두 모듈이 모두 필요한 이유}
+입력 수준 문맥 인코딩 + 변환 수준 적응적 스케일링 = \textbf{계층적 문맥 처리 (Hierarchical Context Processing)}
 \end{alertblock}
 \end{frame}
 
@@ -886,11 +1053,11 @@ wo\_ScaleCtx 시 Pixel AP \textcolor{red}{-0.41\%}, Image AUC \textcolor{red}{-0
 % Frame: MoLE-Flow - Deep Invertible Adapter (DIA)
 %-------------------------------------------------------------------------------
 \begin{frame}{MoLE-Flow: Deep Invertible Adapter (DIA)}
-\textbf{\textcolor{red}{문제}: 선형 LoRA의 표현력 한계}
+\textbf{\textcolor{red}{문제}: 선형 변환의 표현력 한계}
 \begin{itemize}
     \item LoRA: $\mathbf{W} + \mathbf{BA}$ $\rightarrow$ 선형 변환
     \item WhiteningAdapter: $\gamma \cdot \mathbf{x} + \beta$ $\rightarrow$ 선형 변환
-    \item 복잡한 \textbf{비선형 분포 차이} 보상 어려움
+    \item 복잡한 \textbf{비선형 매니폴드 차이} 보상 어려움
 \end{itemize}
 
 \vspace{0.5em}
@@ -904,125 +1071,99 @@ wo\_ScaleCtx 시 Pixel AP \textcolor{red}{-0.41\%}, Image AUC \textcolor{red}{-0
 \begin{column}{0.55\textwidth}
 \textbf{DIA 구조:}
 \begin{itemize}
-    \item 4개의 AffineCouplingBlock
-    \item Task별 독립 파라미터 (1.58M/task)
-    \item Near-identity 초기화
+    \item AffineCouplingBlock 스택
+    \item Task별 독립 파라미터
+    \item \textbf{Near-identity 초기화}: $f_{\text{DIA}}(\mathbf{z}) \approx \mathbf{z}$
 \end{itemize}
 \end{column}
 \begin{column}{0.42\textwidth}
-\textbf{Trade-off 발견:}
-\begin{table}
-\scriptsize
-\begin{tabular}{ccc}
-\toprule
-DIA & ImgAUC & PixAP \\
-\midrule
-4 & 0.979 & \textbf{0.474} \\
-6 & 0.982 & 0.461 \\
-8 & \textbf{0.983} & 0.455 \\
-\bottomrule
-\end{tabular}
-\end{table}
+\textbf{Why Invertible?}
+\begin{itemize}
+    \item NF의 밀도 추정 속성 보존
+    \item Jacobian 계산 가능
+    \item 학습 안정성 향상
+\end{itemize}
 \end{column}
 \end{columns}
 
 \vspace{0.3em}
-\begin{alertblock}{\textcolor{mainblue}{효과}: wo\_DIA 시 \textbf{가장 큰 성능 하락}}
-Image AUC \textcolor{red}{\textbf{-3.14\%}} (0.9793 $\rightarrow$ 0.9479), Pixel AP \textcolor{red}{-1.49\%}
+\begin{block}{핵심 원리: 비선형 매니폴드 적응}
+\small LoRA(선형)가 표현 못하는 복잡한 분포 변환 학습. Base Flow 출력을 Task별 최적 잠재 공간으로 비선형 매핑
+\end{block}
+\end{frame}
+
+%-------------------------------------------------------------------------------
+% Frame: DIA - AffineCouplingBlock (상세)
+%-------------------------------------------------------------------------------
+\begin{frame}{DIA: AffineCouplingBlock 상세 구조}
+\textbf{각 AffineCouplingBlock의 변환 과정:}
+
+\vspace{0.3em}
+\begin{enumerate}
+    \item \textbf{Split}: $[\mathbf{x}_1, \mathbf{x}_2] = \text{Split}(\mathbf{x})$ (채널 절반 분할)
+    \item \textbf{Subnet}: $\mathbf{s}, \mathbf{t} = \text{SimpleSubnet}(\mathbf{x}_1)$ (scale, translation 예측)
+    \item \textbf{Soft-Clamping}: $\tilde{\mathbf{s}} = \alpha_{\text{clamp}} \cdot \tanh(\mathbf{s}/\alpha_{\text{clamp}})$ (수치 안정성)
+    \item \textbf{Transform}: $\mathbf{y}_2 = \mathbf{x}_2 \odot \exp(\tilde{\mathbf{s}}) + \mathbf{t}$
+    \item \textbf{Concat}: $\mathbf{y} = \text{Concat}(\mathbf{x}_1, \mathbf{y}_2)$
+\end{enumerate}
+
+\vspace{0.3em}
+\textbf{Log-Determinant 계산}
+\begin{equation*}
+\log|\det \mathbf{J}_{\text{block}}| = \sum_{i=1}^{D/2} \tilde{s}_i = \sum_{i=1}^{D/2} \alpha_{\text{clamp}} \cdot \tanh(s_i/\alpha_{\text{clamp}})
+\end{equation*}
+
+\vspace{0.3em}
+\begin{alertblock}{MoLEContextSubnet vs DIA 역할 차이}
+\begin{itemize}
+    \item \textbf{MoLEContextSubnet}: ``공간 인지형 범용 변환기'' - Base anchor + LoRA로 범용 변환 + 작업별 적응
+    \item \textbf{DIA}: ``작업 특화 분포 보정기'' - 완전히 독립적인 파라미터로 정밀 분포 보정
+\end{itemize}
 \end{alertblock}
 \end{frame}
 
 %-------------------------------------------------------------------------------
-% Frame: Key Insights from Optimization
+% Frame: DIA vs MoLEContextSubnet - Why Different Design?
 %-------------------------------------------------------------------------------
-\begin{frame}{Key Insights from Optimization (78개 실험 분석)}
-\textbf{각 하이퍼파라미터의 개별 효과 (vs Baseline 0.4640):}
-
-\begin{table}
-\centering
-\scriptsize
-\begin{tabular}{lccc}
-\toprule
-\textbf{Component} & \textbf{Pixel AP} & \textbf{Delta} & \textbf{Impact} \\
-\midrule
-\textcolor{red}{\textbf{LogdetReg 1e-4}} & 0.5055 & \textcolor{red}{\textbf{+4.15\%}} & \ding{72}\ding{72}\ding{72}\ding{72}\ding{72} \\
-ScaleCtxK5 & 0.4870 & +2.30\% & \ding{72}\ding{72}\ding{72}\ding{72} \\
-TopK5-TailW0.5 & 0.4866 & +2.26\% & \ding{72}\ding{72}\ding{72}\ding{72} \\
-lr 3e-4 & 0.4718 & +0.78\% & \ding{72}\ding{72} \\
-DIA6 & 0.4606 & -0.34\% & \ding{72} \\
-\bottomrule
-\end{tabular}
-\end{table}
+\begin{frame}{DIA가 Spatial Context를 사용하지 않는 이유}
+\textbf{MoLEContextSubnet과 DIA는 모두 Affine Coupling 기반이지만 다른 설계 철학}
 
 \vspace{0.5em}
-\begin{columns}
+\begin{columns}[T]
 \begin{column}{0.48\textwidth}
-\textbf{핵심 발견:}
-\begin{enumerate}
-    \item \textbf{LogdetReg 1e-4}: 단일 최대 개선 효과
-    \item \textbf{TailW 0.75-0.8}: Pixel AP 최적
-    \item \textbf{Coupling 16}: 불안정 $\rightarrow$ 8-12 권장
-\end{enumerate}
-\end{column}
-\begin{column}{0.48\textwidth}
-\textbf{Warning:}
+\textbf{MoLEContextSubnet}
 \begin{itemize}
-    \item Coupling16: Image AUC 0.73으로 급락
-    \item DIA $>$ 6: Image AUC $\uparrow$, Pixel AP $\downarrow$
+    \item ``공간 인지형 범용 변환기''
+    \item Base weights를 anchor로 범용 변환 보존
+    \item LoRA로 작업별 적응
+    \item Spatial context로 국소 이상 패턴에 민감
+    \item ``정상 $\rightarrow$ 표준 정규분포'' 변환의 뼈대
+\end{itemize}
+\end{column}
+
+\begin{column}{0.48\textwidth}
+\textbf{DIA}
+\begin{itemize}
+    \item ``작업 특화 분포 보정기''
+    \item Task별 완전 독립 파라미터
+    \item Spatial context \textbf{불사용}:
+    \begin{enumerate}
+        \scriptsize
+        \item 잠재 공간에서 동작 - 공간 정보는 이미 MoLEContextSubnet에서 인코딩
+        \item 역할 분리: 공간 인지 변환 vs 분포 정밀 보정
+        \item 파라미터 오버헤드 최소화
+    \end{enumerate}
 \end{itemize}
 \end{column}
 \end{columns}
+
+\vspace{0.3em}
+\begin{block}{핵심 설계 원리}
+MoLEContextSubnet이 ``공간 인지 변환''을, DIA가 ``분포 정밀 보정''을 담당하는 \textbf{명확한 역할 분리}가 효율적
+\end{block}
 \end{frame}
 
-%-------------------------------------------------------------------------------
-% Frame: Trade-offs Discovered
-%-------------------------------------------------------------------------------
-\begin{frame}{Trade-offs Discovered}
-\textbf{실험을 통해 발견된 핵심 Trade-off:}
-
-\vspace{0.5em}
-\begin{columns}
-\begin{column}{0.48\textwidth}
-\textbf{1. DIA Blocks}
-\begin{table}
-\scriptsize
-\begin{tabular}{ccc}
-\toprule
-Blocks & Image AUC & Pixel AP \\
-\midrule
-4 & 0.9793 & \textbf{0.4735} \\
-6 & 0.9820 & 0.4606 \\
-8 & \textbf{0.9825} & 0.4546 \\
-\bottomrule
-\end{tabular}
-\end{table}
-$\uparrow$ DIA $\rightarrow$ $\uparrow$ Image AUC, $\downarrow$ Pixel AP
-\end{column}
-
-\begin{column}{0.48\textwidth}
-\textbf{2. TailWeight}
-\begin{table}
-\scriptsize
-\begin{tabular}{ccc}
-\toprule
-TailW & Image AUC & Pixel AP \\
-\midrule
-0.50 & \textbf{0.983} & 0.5221 \\
-0.65 & 0.983 & 0.5324 \\
-0.80 & 0.981 & \textbf{0.5447} \\
-\bottomrule
-\end{tabular}
-\end{table}
-$\uparrow$ TailW $\rightarrow$ $\uparrow$ Pixel AP, $\downarrow$ Image AUC
-\end{column}
-\end{columns}
-
-\vspace{0.5em}
-\begin{alertblock}{최적 균형점}
-\textbf{권장 설정}: DIA=4, TailW=0.55, TopK=5, LogdetReg=1e-4, ScaleCtxK=5 \\
-$\rightarrow$ Image AUC \textbf{0.9824}, Pixel AP \textbf{0.5350}
-\end{alertblock}
-\end{frame}
+% Key Insights and Trade-offs frames removed - content moved to Experiments Part 1
 
 %===============================================================================
 \section{Training \& Inference}
@@ -1082,32 +1223,26 @@ $\rightarrow$ Image AUC \textbf{0.9824}, Pixel AP \textbf{0.5350}
 
 \begin{columns}
 \begin{column}{0.5\textwidth}
+\textbf{핵심 아이디어:}
 \begin{itemize}
-    \item $\mathcal{L}_{\text{top-k}}$: 상위 5\% 고손실 패치
-    \item ``어려운'' 패치에 추가 집중
+    \item $\mathcal{L}_{\text{top-k}}$: 상위 k\% 고손실 패치
+    \item 분포 경계(tail)에 위치한 ``어려운'' 샘플 집중 학습
 \end{itemize}
 \end{column}
 \begin{column}{0.48\textwidth}
-\textbf{TailW 최적화 실험:}
-\begin{table}
-\scriptsize
-\begin{tabular}{ccc}
-\toprule
-TailW & ImgAUC & PixAP \\
-\midrule
-0.50 & 0.983 & 0.5221 \\
-0.55 & 0.983 & 0.5256 \\
-\textbf{0.75} & 0.981 & \textbf{0.5449} \\
-\bottomrule
-\end{tabular}
-\end{table}
+\textbf{Why Tail?}
+\begin{itemize}
+    \item Anomaly는 정상 분포의 ``꼬리''에 위치
+    \item 경계 패치 학습 $\rightarrow$ 분리 능력 향상
+    \item Hard negative mining과 유사 개념
+\end{itemize}
 \end{column}
 \end{columns}
 
 \vspace{0.3em}
-\begin{alertblock}{\textcolor{mainblue}{효과}: Pixel AP +3$\sim$5\% 개선}
-TailW 증가 $\rightarrow$ Pixel AP 향상, Image AUC 약간 하락 (Trade-off 존재)
-\end{alertblock}
+\begin{block}{핵심 원리: 분포 경계 학습 강화}
+\small 쉬운 패치만 학습하면 경계가 불명확 $\rightarrow$ Tail 패치 가중치로 결정 경계 선명화
+\end{block}
 \end{frame}
 
 %-------------------------------------------------------------------------------
@@ -1116,8 +1251,9 @@ TailW 증가 $\rightarrow$ Pixel AP 향상, Image AUC 약간 하락 (Trade-off �
 \begin{frame}{Training Objective: LogDet Regularization}
 \textbf{\textcolor{red}{문제}: Jacobian 불안정성}
 \begin{itemize}
-    \item NF의 log-determinant가 불안정하면 density estimation 품질 저하
-    \item 특히 deep NF에서 Jacobian explosion/vanishing 문제 발생
+    \item NF의 log-determinant가 불안정 $\rightarrow$ density estimation 품질 저하
+    \item Deep NF에서 Jacobian explosion/vanishing 문제 발생
+    \item 변환의 volume 변화가 극단적 $\rightarrow$ 밀도 추정 왜곡
 \end{itemize}
 
 \vspace{0.5em}
@@ -1129,34 +1265,27 @@ TailW 증가 $\rightarrow$ Pixel AP 향상, Image AUC 약간 하락 (Trade-off �
 \vspace{0.5em}
 \begin{columns}
 \begin{column}{0.5\textwidth}
-\textbf{LogdetReg 효과 분석:}
-\begin{table}
-\scriptsize
-\begin{tabular}{cc}
-\toprule
-$\lambda_{\text{logdet}}$ & Pixel AP \\
-\midrule
-0 (baseline) & 0.4640 \\
-1e-6 & 0.4700 \\
-\textbf{1e-4} & \textbf{0.5055} \\
-\bottomrule
-\end{tabular}
-\end{table}
+\textbf{핵심 아이디어:}
+\begin{itemize}
+    \item $|\log|\det \mathbf{J}|| \rightarrow 0$ 유도
+    \item Volume-preserving 변환
+    \item 학습 안정성 향상
+\end{itemize}
 \end{column}
 \begin{column}{0.48\textwidth}
-\textbf{역할:}
+\textbf{Why Log-Det?}
 \begin{itemize}
-    \item Jacobian을 안정적 범위로 유지
-    \item Volume-preserving 변환 유도
-    \item 학습 안정성 향상
+    \item $\log|\det \mathbf{J}| = 0$ $\Leftrightarrow$ 부피 보존
+    \item 극단적 축소/확대 방지
+    \item Invertibility 보장 강화
 \end{itemize}
 \end{column}
 \end{columns}
 
 \vspace{0.3em}
-\begin{alertblock}{\textcolor{mainblue}{효과}: 단일 최대 개선 효과 \textbf{+4.15\%}}
-LogdetReg 1e-4가 모든 하이퍼파라미터 중 가장 큰 Pixel AP 개선 효과
-\end{alertblock}
+\begin{block}{핵심 원리: 변환의 부피 보존}
+\small Log-determinant를 0 근처로 정규화 $\rightarrow$ 변환이 정보를 압축/팽창하지 않고 형태만 변형
+\end{block}
 \end{frame}
 
 %-------------------------------------------------------------------------------
@@ -1183,6 +1312,102 @@ t^* = \argmin_t D_M(\mathbf{f}, t), \quad D_M(\mathbf{f}, t) = \sqrt{(\mathbf{f}
 기존: Two-stage (라우팅 $\rightarrow$ 탐지) \\
 Ours: \textbf{One-stage} (라우팅 + 탐지 동시)
 \end{alertblock}
+\end{frame}
+
+%-------------------------------------------------------------------------------
+% Frame: Task Routing - Prototype Construction (상세)
+%-------------------------------------------------------------------------------
+\begin{frame}{Task Routing: Prototype Construction (상세)}
+\textbf{Training Phase에서 각 Task의 Prototype 구축}
+
+\vspace{0.5em}
+\begin{columns}[T]
+\begin{column}{0.55\textwidth}
+\textbf{Prototype 구성 요소}
+\begin{itemize}
+    \item 평균 벡터 $\boldsymbol{\mu}_t \in \mathbb{R}^D$
+    \item 공분산 행렬 $\boldsymbol{\Sigma}_t \in \mathbb{R}^{D \times D}$
+\end{itemize}
+
+\vspace{0.3em}
+\textbf{계산 방법}
+\begin{align*}
+\boldsymbol{\mu}_t &= \frac{1}{N_t} \sum_{i=1}^{N_t} \mathbf{f}_i^{(t)} \\
+\boldsymbol{\Sigma}_t &= \frac{1}{N_t - 1} \sum_{i=1}^{N_t} (\mathbf{f}_i^{(t)} - \boldsymbol{\mu}_t)(\mathbf{f}_i^{(t)} - \boldsymbol{\mu}_t)^\top + \lambda_{\text{reg}} \mathbf{I}
+\end{align*}
+\end{column}
+
+\begin{column}{0.42\textwidth}
+\textbf{특징 벡터 $\mathbf{f}$}
+\begin{itemize}
+    \item Backbone 마지막 layer 출력
+    \item 이미지 레벨 특징 벡터
+    \item $\mathbf{f}_{\text{backbone}} \in \mathbb{R}^D$
+\end{itemize}
+
+\vspace{0.3em}
+\textbf{Precision Matrix}
+\begin{itemize}
+    \item $\boldsymbol{\Sigma}_t^{-1}$ 사전 계산
+    \item $\lambda_{\text{reg}} = 10^{-5}$ (수치 안정성)
+\end{itemize}
+\end{column}
+\end{columns}
+
+\vspace{0.3em}
+\begin{block}{Adapter 활성화}
+선택된 Task $t^*$에 따라: \textbf{LoRA} $\{\mathbf{A}_{t^*}, \mathbf{B}_{t^*}\}$ + \textbf{Whitening} $\{\boldsymbol{\mu}_{t^*}^{\text{white}}, \boldsymbol{\sigma}_{t^*}^{\text{white}}\}$ + \textbf{DIA} 활성화
+\end{block}
+\end{frame}
+
+%-------------------------------------------------------------------------------
+% Frame: Why Mahalanobis Distance?
+%-------------------------------------------------------------------------------
+\begin{frame}{Why Mahalanobis Distance?}
+\textbf{Euclidean vs Mahalanobis 거리 비교}
+
+\vspace{0.5em}
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\textbf{Euclidean Distance}
+\begin{equation*}
+D_E(\mathbf{f}, t) = \|\mathbf{f} - \boldsymbol{\mu}_t\|_2
+\end{equation*}
+\begin{itemize}
+    \item 모든 방향을 \textbf{동등하게} 취급
+    \item 특징 차원 간 스케일 차이 무시
+    \item 분포 형태 미반영
+\end{itemize}
+\end{column}
+
+\begin{column}{0.48\textwidth}
+\textbf{Mahalanobis Distance}
+\begin{equation*}
+D_M(\mathbf{f}, t) = \sqrt{(\mathbf{f} - \boldsymbol{\mu}_t)^\top \boldsymbol{\Sigma}_t^{-1} (\mathbf{f} - \boldsymbol{\mu}_t)}
+\end{equation*}
+\begin{itemize}
+    \item \textbf{분포 형태 고려}: 공분산 반영
+    \item \textbf{스케일 불변}: 자동 정규화
+    \item \textbf{높은 구분력}: 중첩된 분포 구분 가능
+\end{itemize}
+\end{column}
+\end{columns}
+
+\vspace{0.5em}
+\begin{center}
+\begin{tikzpicture}[scale=0.7]
+    % Euclidean circle
+    \draw[blue, thick] (0,0) circle (1.2cm);
+    \node[blue, font=\scriptsize] at (0,-1.6) {Euclidean: 원형};
+
+    % Mahalanobis ellipse
+    \draw[red, thick] (5,0) ellipse (1.8cm and 0.8cm);
+    \node[red, font=\scriptsize] at (5,-1.6) {Mahalanobis: 타원형 (분포 반영)};
+
+    \fill (0,0) circle (2pt);
+    \fill (5,0) circle (2pt);
+\end{tikzpicture}
+\end{center}
 \end{frame}
 
 %-------------------------------------------------------------------------------
@@ -1215,6 +1440,38 @@ Ours: \textbf{One-stage} (라우팅 + 탐지 동시)
 \end{itemize}
 \end{column}
 \end{columns}
+\end{frame}
+
+%-------------------------------------------------------------------------------
+% Frame: Full Inference Pipeline
+%-------------------------------------------------------------------------------
+\begin{frame}{Full Inference Pipeline}
+\textbf{추론 전체 흐름:}
+
+\vspace{0.3em}
+\textbf{Step 1: Feature Extraction}
+\begin{itemize}
+    \item 입력 이미지 $\mathbf{x}_{\text{img}} \in \mathbb{R}^{224 \times 224 \times 3}$ $\rightarrow$ WideResNet-50 통과
+    \item 다층 특징 맵 추출 후 패치 분할 + Adaptive Average Pooling
+    \item 공간 해상도 $(H, W) = (14, 14)$, 임베딩 차원 $D=768$
+    \item 2D Sinusoidal Positional Encoding 추가
+\end{itemize}
+
+\vspace{0.3em}
+\textbf{Step 2: Normalizing Flow Transformation}
+\begin{enumerate}
+    \item \textbf{Task Selection}: Mahalanobis 라우터로 $t^*$ 결정
+    \item \textbf{Whitening}: Task $t^*$의 통계량으로 분포 정규화
+    \item \textbf{Spatial Mixer}: DepthwiseConv로 인접 패치 정보 교환
+    \item \textbf{MoLE Flow}: LoRA-equipped Affine Coupling Layers 통과
+    \item \textbf{DIA}: Task-specific 비선형 매니폴드 적응
+\end{enumerate}
+
+\vspace{0.3em}
+\textbf{Step 3: Score Computation}
+\begin{equation*}
+\log p(\mathbf{x}_{h,w}) = \underbrace{-\frac{1}{2}\|\mathbf{z}_{h,w}\|_2^2 - \frac{D}{2}\log(2\pi)}_{\text{잠재 공간 확률}} + \underbrace{\log|\det \mathbf{J}_{h,w}|}_{\text{부피 보정}}, \quad S_{\text{image}} = \text{mean}(\text{top-K}(\{-\log p\}))
+\end{equation*}
 \end{frame}
 
 %===============================================================================
@@ -1354,6 +1611,102 @@ DIA6 & 0.4606 & -0.34\% & \ding{72} \\
 \end{frame}
 
 %-------------------------------------------------------------------------------
+% Frame: Component Importance Analysis (MoLE6+DIA2 Baseline)
+%-------------------------------------------------------------------------------
+\begin{frame}{Component Importance Analysis (MoLE6+DIA2 기준)}
+\textbf{Ablation Study: 컴포넌트별 Pix AP 기여도 순위}
+
+\begin{table}
+\centering
+\scriptsize
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Component} & \textbf{w/o Pix AP} & \textbf{MAIN (56.18)} & \textbf{기여도} & \textbf{Impact} \\
+\midrule
+\textcolor{red}{\textbf{Tail Aware Loss}} & 48.61 & 56.18 & \textcolor{red}{\textbf{+7.57\%p}} & \ding{72}\ding{72}\ding{72}\ding{72}\ding{72} \\
+\textbf{Whitening Adapter} & 48.84 & 56.18 & \textcolor{red}{\textbf{+7.34\%p}} & \ding{72}\ding{72}\ding{72}\ding{72}\ding{72} \\
+LogDet Regularization & 51.85 & 56.18 & +4.33\%p & \ding{72}\ding{72}\ding{72}\ding{72} \\
+Spatial Context & 52.93 & 56.18 & +3.25\%p & \ding{72}\ding{72}\ding{72} \\
+Pos Embedding & 53.99 & 56.18 & +2.19\%p & \ding{72}\ding{72} \\
+Scale Context & 54.52 & 56.18 & +1.66\%p & \ding{72}\ding{72} \\
+LoRA & 55.31 & 56.18 & +0.87\%p & \ding{72} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\vspace{0.3em}
+\begin{columns}
+\begin{column}{0.48\textwidth}
+\textbf{핵심 발견:}
+\begin{enumerate}
+    \item \textbf{Tail Aware Loss}: 단일 최대 개선 (+7.57\%p)
+    \item \textbf{Whitening Adapter}: 두 번째로 중요 (+7.34\%p)
+    \item \textbf{LoRA}: 기여도 낮음 (DIA가 역할 분담)
+\end{enumerate}
+\end{column}
+\begin{column}{0.48\textwidth}
+\textbf{주의사항:}
+\begin{itemize}
+    \item MoLE$\geq$12: 학습 불안정
+    \item spatial\_ctx\_k$\geq$5: Pix AP 급락
+    \item tail\_weight$>$1.0: 역효과
+\end{itemize}
+\end{column}
+\end{columns}
+\end{frame}
+
+%-------------------------------------------------------------------------------
+% Frame: Key Trade-offs Discovered
+%-------------------------------------------------------------------------------
+\begin{frame}{Key Trade-offs Discovered}
+\textbf{실험을 통해 발견된 핵심 Trade-off:}
+
+\vspace{0.5em}
+\begin{columns}
+\begin{column}{0.48\textwidth}
+\textbf{1. DIA Blocks vs Pixel AP}
+\begin{table}
+\scriptsize
+\begin{tabular}{ccc}
+\toprule
+DIA Blocks & Image AUC & Pixel AP \\
+\midrule
+2 (MAIN) & 0.9792 & \textbf{0.5618} \\
+4 & 0.9793 & 0.4735 \\
+6 & 0.9820 & 0.4606 \\
+8 & \textbf{0.9825} & 0.4546 \\
+\bottomrule
+\end{tabular}
+\end{table}
+$\uparrow$ DIA $\rightarrow$ $\uparrow$ Image AUC, $\downarrow$ Pixel AP
+\end{column}
+
+\begin{column}{0.48\textwidth}
+\textbf{2. TailWeight vs Stability}
+\begin{table}
+\scriptsize
+\begin{tabular}{ccc}
+\toprule
+TailW & Image AUC & Pixel AP \\
+\midrule
+0.50 & \textbf{0.983} & 0.5221 \\
+\textbf{0.70 (MAIN)} & 0.9792 & \textbf{0.5618} \\
+0.80 & 0.981 & 0.5447 \\
+\bottomrule
+\end{tabular}
+\end{table}
+$\uparrow$ TailW $\rightarrow$ $\uparrow$ Pixel AP (최적: 0.70)
+\end{column}
+\end{columns}
+
+\vspace{0.5em}
+\begin{alertblock}{최적 균형점 (MoLE6+DIA2)}
+\textbf{권장 설정}: MoLE=6, DIA=2, TailW=0.70, TopK=3, LogdetReg=1e-4 \\
+$\rightarrow$ Image AUC \textbf{97.92\%}, Pixel AUC \textbf{97.81\%}, Pixel AP \textbf{55.80\%}
+\end{alertblock}
+\end{frame}
+
+%-------------------------------------------------------------------------------
 % Frame: Top 10 Experiments by Pixel AP
 %-------------------------------------------------------------------------------
 \begin{frame}{Top 10 Experiments by Pixel AP}
@@ -1416,89 +1769,102 @@ cable & 0.6575 & 0.6339 & \textcolor{red}{-0.0236} \\
 \end{frame}
 
 %-------------------------------------------------------------------------------
-% Frame: Hyperparameter Sensitivity Summary
+% Frame: Hyperparameter Sensitivity Summary - UPDATED 2026-01-08
 %-------------------------------------------------------------------------------
-\begin{frame}{Hyperparameter Sensitivity Summary}
+\begin{frame}{Hyperparameter Sensitivity Summary (MoLE6+DIA2 기준)}
 \begin{columns}
 \begin{column}{0.5\textwidth}
-\textbf{DIA Blocks}
+\textbf{lambda\_logdet (Critical)}
 \begin{table}
 \scriptsize
 \begin{tabular}{ccc}
 \toprule
-Blocks & Image AUC & Pixel AP \\
+$\lambda_{\text{logdet}}$ & Img AUC & Pix AP \\
 \midrule
-4 & 0.9793 & 0.4735 \\
-6 & 0.9820 & 0.4606 \\
-8 & \textbf{0.9825} & 0.4546 \\
+0 (disabled) & 98.06 & 51.85 \\
+1e-6 & 98.08 & 51.88 \\
+1e-5 & 98.10 & 52.46 \\
+\textbf{1e-4} & 97.92 & \textbf{56.18} \\
 \bottomrule
 \end{tabular}
 \end{table}
 \begin{itemize}
-    \item[$\uparrow$] Blocks $\rightarrow$ $\uparrow$ Image AUC
-    \item[$\downarrow$] Pixel AP (trade-off)
+    \item \textbf{1e-4}가 최적 (+4.30\%p)
+    \item 1e-6/1e-5는 효과 미미
 \end{itemize}
 \end{column}
 
 \begin{column}{0.5\textwidth}
-\textbf{LoRA Rank (Minimal Effect)}
+\textbf{spatial\_context\_kernel (\textcolor{red}{Critical})}
 \begin{table}
 \scriptsize
 \begin{tabular}{ccc}
 \toprule
-Rank & Image AUC & Pixel AP \\
+Kernel & Img AUC & Pix AP \\
 \midrule
-32 & 0.9794 & 0.4737 \\
-64 & 0.9793 & 0.4735 \\
-128 & 0.9794 & 0.4736 \\
-256 & 0.9796 & 0.4741 \\
+0 (disabled) & 97.98 & 52.93 \\
+\textbf{3} & \textbf{97.92} & \textbf{56.18} \\
+5 & 96.12 & 51.38 \\
+7 & 90.90 & 44.33 \\
 \bottomrule
 \end{tabular}
 \end{table}
 \begin{itemize}
-    \item Rank 64로 충분
-    \item 파라미터 효율성 확인
+    \item \textbf{Kernel=3}이 최적
+    \item Kernel$\geq$5에서 \textcolor{red}{\textbf{급락}}
 \end{itemize}
 \end{column}
 \end{columns}
 
-\vspace{1em}
-\begin{alertblock}{Warning: Coupling Layers}
-\textbf{Coupling16}: 학습 불안정 발생 (Image AUC 0.73으로 급락). 8-12 권장.
+\vspace{0.5em}
+\begin{alertblock}{Warning: Spatial Context Kernel}
+\textbf{kernel=5}: Pix AP -4.80\%p, \textbf{kernel=7}: Pix AP \textcolor{red}{\textbf{-11.85\%p}} (학습 불안정)
 \end{alertblock}
 \end{frame}
 
 %-------------------------------------------------------------------------------
-% Frame: Optimal Configuration Recommendations
+% Frame: Optimal Configuration Recommendations - UPDATED 2026-01-08
 %-------------------------------------------------------------------------------
-\begin{frame}{Optimal Configuration Recommendations}
+\begin{frame}{Optimal Configuration (MoLE6+DIA2)}
 \begin{columns}
 \begin{column}{0.5\textwidth}
-\textbf{Balanced Setting (권장)}
+\textbf{Recommended Setting (최고 Pix AP)}
 \begin{itemize}
-    \item \texttt{tail\_weight = 0.55}
-    \item \texttt{topk = 5}
-    \item \texttt{logdet\_reg = 1e-4}
-    \item \texttt{scale\_context\_k = 5}
+    \item \texttt{num\_coupling\_layers = 6}
+    \item \texttt{dia\_n\_blocks = 2}
+    \item \texttt{tail\_weight = 1.0}
+    \item \texttt{tail\_top\_k\_ratio = 0.02}
+    \item \texttt{lambda\_logdet = 1e-4}
+    \item \texttt{scale\_context\_kernel = 5}
+    \item \texttt{spatial\_context\_kernel = 3}
+    \item \texttt{lora\_rank = 64}
     \item \texttt{lr = 3e-4}
     \item \texttt{epochs = 60}
 \end{itemize}
-\vspace{0.5em}
-$\rightarrow$ Image AUC $\approx$ \textbf{0.982}, Pixel AP $\approx$ \textbf{0.535}
 \end{column}
 
 \begin{column}{0.5\textwidth}
-\textbf{Max Image AUC Setting}
-\begin{itemize}
-    \item \texttt{tail\_weight = 0.55}
-    \item \texttt{lora\_rank = 128}
-    \item \texttt{dia\_n\_blocks = 5}
-    \item \texttt{coupling = 10}
-    \item \texttt{lr = 3e-4}
-    \item \texttt{epochs = 80}
-\end{itemize}
+\textbf{Expected Performance}
+\begin{table}
+\begin{tabular}{lc}
+\toprule
+\textbf{Metric} & \textbf{Value} \\
+\midrule
+Image AUC & 97.92\% \\
+Pixel AUC & 97.81\% \\
+Pixel AP & \textbf{56.18\%} \\
+Routing Acc. & 100\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \vspace{0.5em}
-$\rightarrow$ Image AUC $\approx$ \textbf{0.984}, Pixel AP $\approx$ \textbf{0.524}
+\textbf{주의사항}
+\begin{itemize}
+    \item spatial\_ctx\_k $\neq$ 3 금지
+    \item tail\_weight $>$ 1.0 비권장
+    \item MoLE $\geq$ 12 학습 불안정
+\end{itemize}
 \end{column}
 \end{columns}
 \end{frame}
@@ -1629,36 +1995,102 @@ $\rightarrow$ Image AUC $\approx$ \textbf{0.984}, Pixel AP $\approx$ \textbf{0.5
 \end{frame}
 
 %-------------------------------------------------------------------------------
-% Frame: Ablation Study Design (7 Components)
+% Frame: Ablation Study Design (7 Components) - UPDATED 2026-01-08
 %-------------------------------------------------------------------------------
-\begin{frame}{Ablation Study: 컴포넌트별 중요도 분석}
+\begin{frame}{Ablation Study: 컴포넌트별 중요도 분석 (MoLE6+DIA2 기준)}
 \begin{table}
 \centering
 \scriptsize
-\begin{tabular}{lcccl}
+\begin{tabular}{lccccl}
 \toprule
-\textbf{Removed Component} & \textbf{Image AUC} & \textbf{Pixel AP} & \textbf{$\Delta$ ImgAUC} & \textbf{Importance} \\
+\textbf{Configuration} & \textbf{Img AUC} & \textbf{Pix AUC} & \textbf{Pix AP} & \textbf{$\Delta$ Pix AP} & \textbf{Importance} \\
 \midrule
-\textbf{Full Model} & \textbf{0.9793} & \textbf{0.4735} & - & Baseline \\
+\textbf{MAIN (MoLE6+DIA2)} & \textbf{97.92} & \textbf{97.81} & \textbf{56.18} & - & Baseline \\
 \midrule
-\multicolumn{5}{l}{\textit{Core Adapters}} \\
-\quad w/o DIA & 0.9479 & 0.4586 & \textcolor{red}{\textbf{-3.14\%}} & \ding{72}\ding{72}\ding{72}\ding{72}\ding{72} \\
-\quad w/o Whitening & 0.9604 & 0.4461 & \textcolor{red}{-1.89\%} & \ding{72}\ding{72}\ding{72}\ding{72} \\
-\quad w/o LoRA & 0.9797 & 0.4753 & +0.04\% & \ding{72} \\
+\multicolumn{6}{l}{\textit{Loss Components (가장 중요)}} \\
+\quad w/o Tail Aware Loss & 94.97 & 97.21 & 48.61 & \textcolor{red}{\textbf{-7.57}} & \ding{72}\ding{72}\ding{72}\ding{72}\ding{72} \\
 \midrule
-\multicolumn{5}{l}{\textit{Context Modules}} \\
-\quad w/o Spatial Context & 0.9772 & 0.4659 & -0.21\% & \ding{72}\ding{72} \\
-\quad w/o Scale Context & 0.9775 & 0.4776 & -0.18\% & \ding{72}\ding{72} \\
-\quad w/o PosEmbed & 0.9767 & 0.4564 & -0.26\% & \ding{72}\ding{72} \\
+\multicolumn{6}{l}{\textit{Core Adapters}} \\
+\quad w/o Whitening Adapter & 97.90 & 97.69 & 48.84 & \textcolor{red}{\textbf{-7.34}} & \ding{72}\ding{72}\ding{72}\ding{72}\ding{72} \\
+\quad w/o LogDet Reg & 98.06 & 97.70 & 51.85 & \textcolor{red}{-4.33} & \ding{72}\ding{72}\ding{72}\ding{72} \\
+\quad w/o LoRA & 97.96 & 97.77 & 55.31 & -0.87 & \ding{72} \\
 \midrule
-\multicolumn{5}{l}{\textit{Loss Components}} \\
-\quad w/o LogdetReg & - & 0.4640 & PixAP \textcolor{red}{-4.15\%} & \ding{72}\ding{72}\ding{72}\ding{72}\ding{72} \\
+\multicolumn{6}{l}{\textit{Context Modules}} \\
+\quad w/o Spatial Context & 97.98 & 97.54 & 52.93 & \textcolor{red}{-3.25} & \ding{72}\ding{72}\ding{72} \\
+\quad w/o Pos Embedding & 97.40 & 97.47 & 53.99 & -2.19 & \ding{72}\ding{72} \\
+\quad w/o Scale Context & 97.90 & 97.74 & 54.52 & -1.66 & \ding{72}\ding{72} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \begin{alertblock}{Key Insight}
-\textbf{DIA}: Image AUC에 가장 중요 (-3.14\%) \quad \textbf{LogdetReg}: Pixel AP에 가장 중요 (+4.15\%)
+\textbf{Tail Aware Loss} (+7.57\%p)와 \textbf{Whitening Adapter} (+7.34\%p)가 Pix AP에 가장 중요
+\end{alertblock}
+\end{frame}
+
+%-------------------------------------------------------------------------------
+% Frame: Training Strategy Ablation - NEW
+%-------------------------------------------------------------------------------
+\begin{frame}{Training Strategy: Base Freezing의 중요성}
+\textbf{Base Weights Freeze vs Sequential Training}
+
+\begin{table}
+\centering
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Strategy} & \textbf{Img AUC} & \textbf{Pix AP} & \textbf{$\Delta$ Img AUC} & \textbf{$\Delta$ Pix AP} \\
+\midrule
+\textbf{MAIN (Base Frozen)} & \textbf{97.92\%} & \textbf{56.18\%} & - & - \\
+Sequential Training & 60.10\% & 12.29\% & \textcolor{red}{\textbf{-37.82\%}} & \textcolor{red}{\textbf{-43.89\%}} \\
+Complete Separated & 98.13\% & 52.49\% & +0.21\% & -3.69\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\vspace{0.5em}
+\textbf{분석:}
+\begin{itemize}
+    \item \textbf{Sequential Training}: Base freeze 없이 순차 학습 $\rightarrow$ \textcolor{red}{\textbf{Catastrophic Forgetting 발생}}
+    \item \textbf{Complete Separated}: 공유 weight 없이 완전 분리 $\rightarrow$ 공유 representation 학습 이점 상실
+    \item \textbf{Base Frozen (Ours)}: Parameter Isolation으로 Forgetting 방지 + 공유 학습 이점 유지
+\end{itemize}
+
+\begin{alertblock}{핵심 결론}
+Base Frozen 전략이 Continual Learning에 \textbf{필수}: Sequential 대비 Img AUC +37.82\%p
+\end{alertblock}
+\end{frame}
+
+%-------------------------------------------------------------------------------
+% Frame: MoLE vs DIA Architecture Comparison - NEW
+%-------------------------------------------------------------------------------
+\begin{frame}{Architecture Comparison: MoLE vs DIA}
+\begin{table}
+\centering
+\scriptsize
+\begin{tabular}{lcccccl}
+\toprule
+\textbf{Architecture} & \textbf{MoLE} & \textbf{DIA} & \textbf{Total} & \textbf{Img AUC} & \textbf{Pix AP} & \textbf{Note} \\
+\midrule
+\textbf{MoLE+DIA} & \textbf{6} & \textbf{2} & \textbf{8} & \textbf{97.92} & \textbf{56.18} & \textcolor{accentgreen}{\textbf{최적}} \\
+MoLE+DIA & 4 & 2 & 6 & 97.84 & 55.90 & \\
+MoLE+DIA & 8 & 2 & 10 & 97.99 & 54.92 & \\
+MoLE+DIA & 8 & 4 & 12 & 98.29 & 54.20 & Old MAIN \\
+\midrule
+DIA-Only & 0 & 4 & 4 & 98.13 & 53.28 & 안정적 \\
+DIA-Only & 0 & 8 & 8 & 98.19 & 50.74 & \\
+\midrule
+MoLE-Only & 8 & 0 & 8 & 92.74 & 50.06 & \textcolor{red}{불안정} \\
+MoLE-Only & 12 & 0 & 12 & 62.19 & 14.23 & \textcolor{red}{학습 실패} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{alertblock}{핵심 발견}
+\begin{itemize}
+    \item \textbf{MoLE-Only}: DIA 없이는 Img AUC 92.74\%로 \textbf{-5.18\%p 하락}, depth$\geq$12에서 학습 실패
+    \item \textbf{DIA-Only}: 안정적이나 Pix AP 53.28\%로 제한적 (-2.90\%p)
+    \item \textbf{MoLE+DIA}: DIA가 MoLE 학습 안정화 $\rightarrow$ 안정성 + 정밀도 모두 달성
+\end{itemize}
 \end{alertblock}
 \end{frame}
 
@@ -1727,65 +2159,85 @@ MPDD & 6 & 0.9019 & 0.2890 & 98.12\% \\
 %===============================================================================
 
 %-------------------------------------------------------------------------------
-% Frame: Summary
+% Frame: Summary - UPDATED 2026-01-08
 %-------------------------------------------------------------------------------
-\begin{frame}{Summary}
-\textbf{MoLE-Flow: 지속적 이상 탐지를 위한 프레임워크}
+\begin{frame}{Summary: Key Findings}
+\textbf{MoLE-Flow 최종 성능 (MVTec AD, 15 classes)}
 
-\vspace{1em}
+\begin{center}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Metric} & \textbf{Value} & \textbf{비고} \\
+\midrule
+Image AUC & 97.92\% & MoLE6+DIA2 \\
+Pixel AUC & 97.81\% & \\
+Pixel AP & \textbf{56.18\%} & \\
+Routing Accuracy & 100\% & \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{0.5em}
+\textbf{핵심 발견사항:}
 \begin{enumerate}
-    \item \textbf{Parameter Isolation}: Base 공유 + Task-specific 어댑터
-    \item \textbf{MoLE}: LoRA 기반 경량 작업 적응
-    \item \textbf{WhiteningAdapter}: 분포 정렬을 통한 안정적 학습
-    \item \textbf{DIA}: 비선형 매니폴드 적응
-    \item \textbf{Prototype Router}: One-stage 추론
-    \item \textbf{Tail-Aware Loss}: 경계 학습 강화
+    \item \textbf{가장 중요한 컴포넌트}: Tail Aware Loss (+7.57\%p), Whitening Adapter (+7.34\%p)
+    \item \textbf{가장 민감한 하이퍼파라미터}: spatial\_context\_kernel (kernel$\geq$5에서 급락)
+    \item \textbf{최적 아키텍처}: MoLE=6, DIA=2 (총 8 blocks)
+    \item \textbf{Parameter Isolation 효과}: Sequential Training 대비 +37.82\%p Img AUC
 \end{enumerate}
 
-\vspace{1em}
-\begin{block}{핵심 장점}
-\begin{itemize}
-    \item 파멸적 망각 방지 (Forgetting $\approx$ 0)
-    \item 파라미터 효율성 (작업당 $\sim$10.8\%)
-    \item Task ID 없이 추론 가능 (Routing 100\%)
-\end{itemize}
-\end{block}
+\begin{alertblock}{결론}
+Parameter Isolation (LoRA + DIA) + Tail-Aware Loss + Whitening Adapter가 \\
+Continual Anomaly Detection에서 최적 성능 달성
+\end{alertblock}
 \end{frame}
 
 %-------------------------------------------------------------------------------
-% Frame: Key Results
+% Frame: Key Results - UPDATED 2026-01-08
 %-------------------------------------------------------------------------------
-\begin{frame}{Key Results}
+\begin{frame}{Key Results (MoLE6+DIA2 Configuration)}
 \begin{columns}
 \begin{column}{0.5\textwidth}
-\textbf{MVTec AD (Best Performance)}
+\textbf{MVTec AD (15 classes, 1x1 CL)}
 \begin{itemize}
-    \item Image AUC: \textbf{0.9836}
-    \item Pixel AP: \textbf{0.5350}
+    \item Image AUC: \textbf{97.92\%}
+    \item Pixel AUC: \textbf{97.81\%}
+    \item Pixel AP: \textbf{56.18\%}
     \item Routing Acc.: \textbf{100\%}
 \end{itemize}
 
-\vspace{1em}
-\textbf{개선 효과}
-\begin{itemize}
-    \item Pixel AP: +15.3\% (Baseline 대비)
-    \item 78개 실험을 통한 최적화
-\end{itemize}
+\vspace{0.5em}
+\textbf{컴포넌트 기여도 (Pix AP 기준)}
+\begin{enumerate}
+    \item Tail Aware Loss: \textbf{+7.57\%p}
+    \item Whitening Adapter: \textbf{+7.34\%p}
+    \item LogDet Reg: +4.33\%p
+    \item Spatial Context: +3.25\%p
+\end{enumerate}
 \end{column}
 
 \begin{column}{0.5\textwidth}
-\textbf{Cross-Dataset}
-\begin{itemize}
-    \item VisA: Image AUC 0.8566
-    \item MPDD: Image AUC 0.9019
-\end{itemize}
-
-\vspace{1em}
 \textbf{핵심 하이퍼파라미터}
+\begin{table}
+\scriptsize
+\begin{tabular}{lcc}
+\toprule
+\textbf{Parameter} & \textbf{최적값} & \textbf{민감도} \\
+\midrule
+tail\_weight & 1.0 & \textcolor{red}{높음} \\
+lambda\_logdet & 1e-4 & \textcolor{red}{높음} \\
+spatial\_ctx\_k & 3 & \textcolor{red}{높음} \\
+scale\_ctx\_k & 5 & 중간 \\
+lora\_rank & 16-64 & 낮음 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\vspace{0.3em}
+\textbf{Warning}
 \begin{itemize}
-    \item LogdetReg 1e-4 (최대 효과)
-    \item TailW 0.55-0.75
-    \item ScaleCtxK 5
+    \item spatial\_ctx\_k $\geq$ 5: 성능 급락
+    \item tail\_weight $>$ 1.0: 역효과
 \end{itemize}
 \end{column}
 \end{columns}
