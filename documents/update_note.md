@@ -6416,3 +6416,72 @@ MAIN 실험 (MVTec-WRN50-TailW0.7-TopK3-TailTopK2-ScaleK5-lr3e-4-MAIN)을 기준
 ```
 
 ---
+
+## Tail-Aware Loss Mechanistic Analysis (2026-01-08)
+
+### 배경
+
+Tail-Aware Loss가 Pixel AP를 48.61% -> 56.18% (+7.57%p) 향상시키는 현상에 대한 심층 메커니즘 분석 설계.
+
+### 핵심 질문
+**왜 전체 패치의 2%만 집중 학습해도 +7.57%p의 Pixel AP 향상이 가능한가?**
+
+### 제안된 가설
+
+| 가설 | 내용 | 검증 방법 |
+|------|------|-----------|
+| H1 | Tail 패치는 경계/전이 영역에 해당 | 공간 분포 분석, image gradient 상관관계 |
+| H2 | Tail 패치가 decision boundary 형성 | Train tail과 Test anomaly feature 유사도 |
+| H3 | Mean-only 학습은 tail gradient 희석 | Gradient magnitude 비교 |
+| H4 | Train-Eval alignment가 핵심 | Top-K overlap 분석 |
+| H5 | Tail이 feature space에서 cluster 형성 | Tail feature clustering 분석 |
+| H6 | Tail 학습이 Jacobian 정밀도 향상 | Per-layer log-det 분석 |
+| H7 | Tail 학습이 latent calibration 개선 | QQ-plot, normality test |
+
+### 구현된 분석 모듈
+
+```
+moleflow/analysis/
+  __init__.py
+  tail_aware_analysis.py      # 메인 분석: 공간 분포, Train-Test 관계
+  gradient_analyzer.py        # Gradient dynamics 분석
+  latent_analyzer.py          # Latent space Gaussianity/calibration
+  score_analyzer.py           # Score distribution separation metrics
+```
+
+### 실행 방법
+
+```bash
+# 전체 분석 실행
+python scripts/run_tail_analysis.py \
+    --data_path /Data/MVTecAD \
+    --class_name leather \
+    --output_dir ./analysis_results \
+    --run_all
+
+# 개별 분석 실행
+python scripts/run_tail_analysis.py --run_spatial      # 공간 분포
+python scripts/run_tail_analysis.py --run_train_test   # Train-Test 관계
+python scripts/run_tail_analysis.py --run_latent       # Latent space
+python scripts/run_tail_analysis.py --run_score        # Score distribution
+```
+
+### 예상 결과 시나리오
+
+**시나리오 A: Gradient Focusing이 핵심**
+- Exp 3에서 명확한 gradient concentration 차이
+- 해석: Tail 학습은 어려운 패치에 gradient 집중 -> transformation 정밀도 향상
+
+**시나리오 B: Latent Calibration이 핵심**
+- Exp 4에서 명확한 Gaussianity 차이
+- 해석: Tail 학습은 z distribution의 tail calibration 개선
+
+**시나리오 C: 복합 효과**
+- 여러 실험에서 유의미한 차이
+- 해석: Gradient focusing + Calibration의 시너지
+
+### 상세 설계 문서
+
+`/Volume/MoLeFlow/documents/analysis_tail_aware_loss.md` 참조
+
+---
