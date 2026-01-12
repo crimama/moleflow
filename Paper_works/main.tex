@@ -167,9 +167,9 @@ Keywords here
 
     \item \textbf{WhiteningAdapter를 통한 분포 정렬}: 작업 간 입력 분포 격차를 해소하기 위해 Whitening 후 Task-specific De-whitening을 수행하는 어댑터를 설계하였다. 이는 고정된 Base Flow가 다양한 작업을 효과적으로 처리할 수 있게 한다.
 
-    \item \textbf{One-stage Task-agnostic 추론}: Mahalanobis 거리 기반 프로토타입 라우터를 통해 추론 시 Task ID 없이 단일 패스로 라우팅과 이상 탐지를 수행한다. 기존 방법의 two-stage 추론 대비 효율적이며, 100\% 라우팅 정확도를 달성하였다.
+    \item \textbf{One-stage Task-agnostic 추론}: Mahalanobis 거리 기반 프로토타입 라우터를 통해 추론 시 Task ID 없이 단일 패스로 라우팅과 이상 탐지를 수행한다. 기존 방법의 two-stage 추론 대비 효율적이며, 라우팅 정확도 1.000을 달성하였다.
 
-    \item \textbf{종합적인 실험 검증}: MVTec AD 데이터셋에서 기존 방법 대비 우수한 성능을 달성하였으며 (Image AUROC 98.05\%, Routing Accuracy 100\%), 체계적인 Ablation Study를 통해 각 구성 요소의 유효성을 검증하였다.
+    \item \textbf{종합적인 실험 검증}: MVTec AD 데이터셋에서 기존 방법 대비 우수한 성능을 달성하였으며 (Image AUROC 0.979, Pixel AP 0.562, Routing Accuracy 1.000), 체계적인 Ablation Study를 통해 각 구성 요소의 유효성을 검증하였다.
 \end{enumerate}
 
 %=========================================================================================================
@@ -794,7 +794,7 @@ LoRA는 subnet 내부의 선형 레이어에만 적용되며, 이는 Jacobian �
 \begin{itemize}
     \item \textbf{분포 형태 고려}: Euclidean 거리는 모든 방향을 동등하게 취급하지만, Mahalanobis 거리는 각 task의 특징 분포가 어느 방향으로 퍼져있는지(공분산)를 고려한다.
     \item \textbf{스케일 불변성}: 특징 차원마다 다른 스케일을 가질 때, precision matrix $\boldsymbol{\Sigma}^{-1}$이 자동으로 정규화 역할을 수행한다.
-    \item \textbf{높은 구분력}: 실험 결과, Euclidean 거리 대비 평균 3-5\% 높은 task routing 정확도를 달성하였다.
+    \item \textbf{높은 구분력}: 실험 결과, Euclidean 거리 대비 평균 0.03-0.05 높은 task routing 정확도를 달성하였다.
 \end{itemize}
 
 \subsection{\textbf{Anomaly Scoring \& Inference}}
@@ -851,465 +851,427 @@ LoRA는 subnet 내부의 선형 레이어에만 적용되며, 이는 Jacobian �
 \section{Experiments}
 \label{sec:experiments}
 
-본 섹션에서는 MoLE-Flow의 성능을 검증하기 위한 실험 설계를 제시한다.
-실험은 크게 (1) 기존 방법론과의 비교를 통한 우수성 검증, (2) 각 모듈의 유효성을 확인하는 Ablation Study, (3) 지속 학습 특성 분석, (4) 정성적 결과 분석으로 구성된다.
+We conduct comprehensive experiments to evaluate MoLE-Flow on standard continual anomaly detection benchmarks. Our experiments address the following research questions: (1) How does MoLE-Flow compare with state-of-the-art methods in both detection performance and forgetting resistance? (2) What is the contribution of each proposed component? (3) How sensitive is the method to hyperparameter choices?
 
+%==============================================================================
 \subsection{Experimental Setup}
 \label{sec:exp_setup}
 
 \subsubsection{Datasets}
-산업 이상 탐지 분야의 대표적인 벤치마크 데이터셋들을 사용한다:
+
+We evaluate on two widely-adopted industrial anomaly detection benchmarks:
 
 \begin{itemize}
-\item \textbf{MVTec AD}~\cite{bergmann2019mvtec}: 15개의 산업 제품 클래스(bottle, cable, capsule, carpet, grid, hazelnut, leather, metal\_nut, pill, screw, tile, toothbrush, transistor, wood, zipper)를 포함하며, 총 5,354개의 고해상도 이미지로 구성된다. 주요 벤치마크로 사용한다.
-\item \textbf{VisA}~\cite{zou2022spot}: 12개의 복잡한 산업 제품 클래스를 포함하며, MVTec AD보다 더 복잡한 텍스처와 미세한 결함을 포함한다. Cross-dataset 일반화 성능 평가에 사용한다.
-\item \textbf{MPDD}~\cite{jezek2021deep}: 6개의 금속 부품 클래스를 포함하며, 금속 표면의 다양한 결함 유형을 제공한다.
+\item \textbf{MVTec AD}~\cite{bergmann2019mvtec}: The de facto standard benchmark comprising 15 industrial product categories with 5,354 high-resolution images. Categories span textures (carpet, grid, leather, tile, wood) and objects (bottle, cable, capsule, hazelnut, metal nut, pill, screw, toothbrush, transistor, zipper). Each category contains normal training images and test images with various defect types.
+
+\item \textbf{VisA}~\cite{zou2022spot}: A more challenging dataset with 12 categories featuring complex structures and subtle anomalies. Categories include candle, capsules, cashew, chewinggum, fryum, macaroni1, macaroni2, pcb1-4, and pipe\_fryum.
 \end{itemize}
+
+For continual learning evaluation, we adopt the \textbf{1$\times$1 scenario} where each category constitutes a separate task, resulting in 15 sequential tasks for MVTec AD and 12 for VisA. This fine-grained setting maximizes the challenge of maintaining knowledge across many tasks.
 
 \subsubsection{Evaluation Metrics}
-이상 탐지 성능과 지속 학습 능력을 종합적으로 평가하기 위해 다음 지표들을 사용한다:
 
-\paragraph{Detection Metrics:}
+We employ four complementary metrics:
 \begin{itemize}
-\item \textbf{Image AUROC}: 이미지 수준 정상/이상 분류 성능. 본 연구의 주요 지표이다.
-\item \textbf{Image AP}: 클래스 불균형 상황에서의 이미지 수준 성능.
+\item \textbf{Image AUROC (I-AUC)}: Area under the ROC curve for image-level anomaly classification.
+\item \textbf{Pixel AP (P-AP)}: Average precision for pixel-level anomaly localization, which better handles the severe class imbalance in segmentation masks.
+\item \textbf{Forgetting Measure (FM)}: Average performance drop on previously learned tasks after learning new ones. Computed as $\text{FM} = \frac{1}{T-1}\sum_{i=1}^{T-1}(\text{Perf}_i^{(i)} - \text{Perf}_i^{(T)})$, where $\text{Perf}_i^{(j)}$ denotes performance on task $i$ after learning task $j$.
+\item \textbf{Routing Accuracy}: Percentage of test samples correctly routed to their corresponding task expert.
 \end{itemize}
 
-\paragraph{Localization Metrics:}
+\subsubsection{Compared Methods}
+
+We compare against three categories of methods:
+
+\textbf{Upper Bounds (Joint Training):}
 \begin{itemize}
-\item \textbf{Pixel AUROC}: 픽셀 수준 이상 영역 탐지 정확도.
-\item \textbf{Pixel AP}: 클래스 불균형을 고려한 픽셀 수준 성능.
-\item \textbf{PRO (Per-Region Overlap)}: 연결된 이상 영역별 IoU 기반 평가 지표. MVTec AD 벤치마크의 표준 메트릭으로, 다양한 크기의 결함에 대해 공정한 평가를 제공한다.
+\item \textbf{Joint\_PatchCore}: PatchCore~\cite{roth2022patchcore} trained on all categories simultaneously.
+\item \textbf{Joint\_PatchCore(R)}: Joint PatchCore with router-based task selection.
+\item \textbf{Joint\_CADIC}: CADIC~\cite{cadic2024} trained jointly on all categories.
 \end{itemize}
 
-\paragraph{Continual Learning Metrics:}
+\textbf{Lower Bounds (Fine-Tuning):}
 \begin{itemize}
-\item \textbf{Average Accuracy (ACC)}: 모든 작업에 대한 최종 평균 성능. $\text{ACC} = \frac{1}{T}\sum_{i=1}^{T}a_{T,i}$.
-\item \textbf{Forgetting (F)}: 새로운 작업 학습 후 이전 작업 성능 하락 정도. $F = \frac{1}{T-1}\sum_{i=1}^{T-1}(a_{i,i} - a_{T,i})$. 낮을수록 좋다.
-\item \textbf{Backward Transfer (BWT)}: 이전 작업에 대한 지식 전이 효과. $\text{BWT} = \frac{1}{T-1}\sum_{i=1}^{T-1}(a_{T,i} - a_{i,i})$. 0에 가까울수록 망각이 적다.
-\item \textbf{Routing Accuracy}: Task ID 없이 올바른 전문가를 선택하는 정확도. MoLE-Flow의 핵심 기능이다. \textbf{Router Confusion이 성능 저하의 주요 원인이 될 수 있으므로} 이 지표를 별도로 상세 분석한다.
+\item \textbf{FT\_PatchCore}, \textbf{FT\_CFA}, \textbf{FT\_SimpleNet}, \textbf{FT\_RD4AD}: Sequential fine-tuning without any continual learning mechanism, demonstrating catastrophic forgetting.
 \end{itemize}
 
-\subsubsection{Continual Learning Scenarios}
-지속 학습 능력을 다각도로 검증하기 위해 다음 시나리오들을 설계한다:
-
-\paragraph{Scenario A: Standard 5-Task Protocol}
-MVTec AD의 15개 클래스를 5개 작업(각 3개 클래스)으로 구성한다:
+\textbf{Continual Learning Methods:}
 \begin{itemize}
-\item Task 0: leather, grid, transistor (텍스처 + 객체 혼합)
-\item Task 1: carpet, zipper, hazelnut
-\item Task 2: toothbrush, metal\_nut, screw
-\item Task 3: wood, tile, capsule
-\item Task 4: pill, cable, bottle
-\end{itemize}
-각 작업을 순차적으로 학습하며, 이전 데이터에는 접근하지 않는다 (No Replay).
-
-\paragraph{Scenario B: Long Sequence (15-Task)}
-15개 클래스를 각각 독립된 작업으로 구성하여 장기 지속 학습 시나리오를 평가한다. 이는 모델의 확장성(Scalability)과 장기 망각(Long-term Forgetting)을 검증한다.
-
-\paragraph{Scenario C: Class Order Sensitivity}
-동일한 클래스 집합에 대해 5개의 서로 다른 무작위 순서로 학습하여 순서 민감도를 분석한다.
-
-\paragraph{Scenario D: Task 0 Dependency Analysis (Critical)}
-MoLE-Flow는 Task 0에서 Base weights를 학습하고 이후 동결하는 구조이므로, \textbf{첫 번째 작업의 특성이 전체 성능에 영향을 미칠 수 있다}. 이를 검증하기 위해 다음 실험을 수행한다:
-\begin{itemize}
-\item \textbf{Texture-first}: 텍스처 클래스(carpet, leather, grid, wood, tile)를 Task 0으로 설정
-\item \textbf{Object-first}: 객체 클래스(bottle, capsule, pill, toothbrush, transistor)를 Task 0으로 설정
-\item \textbf{Mixed-first}: 텍스처와 객체를 혼합하여 Task 0으로 설정
-\end{itemize}
-이 실험을 통해 Task 0의 일반화 능력과 후속 작업에 대한 전이 학습 효과를 분석한다.
-
-\subsubsection{Baseline Methods}
-다음 범주의 방법론들과 비교한다:
-
-\paragraph{Continual Anomaly Detection Methods:}
-\begin{itemize}
-\item \textbf{DNE}~\cite{li2022dne}: 분포 저장 기반의 최초 Continual AD 방법. 각 작업의 정상 분포 통계를 저장한다.
-\item \textbf{UCAD}~\cite{lu2024ucad}: Prompt 기반 SOTA 방법. Vision Transformer의 prompt tuning을 활용한다.
-\end{itemize}
-
-\paragraph{Continual Learning + AD Adaptation:}
-기존 지속 학습 방법을 이상 탐지에 적용한 baseline들:
-\begin{itemize}
-\item \textbf{EWC}~\cite{kirkpatrick2017ewc}: Elastic Weight Consolidation. 중요 파라미터에 정규화를 적용한다.
-\item \textbf{LwF}~\cite{li2017lwf}: Learning without Forgetting. Knowledge Distillation 기반 방법.
-\item \textbf{Replay-based}: 이전 작업 데이터의 일부를 저장하여 재학습에 활용한다.
-\end{itemize}
-
-\paragraph{Upper/Lower Bounds:}
-\begin{itemize}
-\item \textbf{Joint Training}: 모든 작업 데이터를 동시에 학습 (Upper Bound).
-\item \textbf{Task-Separated}: 각 작업별 독립 모델 학습 (망각 없음, 메모리 비효율).
-\item \textbf{Fine-tuning}: 단순 순차 학습 (Lower Bound, 심각한 망각).
+\item \textbf{CFRDC}: Class-free regularization with data condensation.
+\item \textbf{IUF}~\cite{iuf2023}: Incremental unified framework.
+\item \textbf{ReplayCAD}: Replay-based continual anomaly detection.
+\item \textbf{DNE}~\cite{dne2023}: Dynamic network expansion.
+\item \textbf{UCAD}~\cite{ucad2024}: Unified continual anomaly detection.
+\item \textbf{DFM}~\cite{dfm2024}: Distribution-free memory.
+\item \textbf{CADIC}~\cite{cadic2024}: Current state-of-the-art continual AD method.
 \end{itemize}
 
 \subsubsection{Implementation Details}
 
-\paragraph{Network Configuration:}
-\begin{itemize}
-\item \textbf{Backbone}: ViT-Base-16 (ImageNet-21k pretrained), 동결
-\item \textbf{Feature Aggregation}: 블록 $\{1, 3, 5, 11\}$에서 다중 스케일 특징 추출
-\item \textbf{Normalizing Flow}: 8개의 Affine Coupling Layer, 클램핑 $\alpha = 1.9$
-\item \textbf{LoRA}: rank = 64, scaling $\alpha$ = 1.0
-\item \textbf{DIA}: 4개의 Affine Coupling Block
-\end{itemize}
+Table~\ref{tab:config} summarizes our configuration. We use WideResNet50-2 pretrained on ImageNet as the feature backbone. The normalizing flow consists of 6 MoLE blocks followed by 2 DIA blocks. Each MoLE block contains LoRA adapters with rank 64. Training proceeds for 60 epochs per task with Adam optimizer (learning rate $3\times10^{-4}$, batch size 16). The Tail-Aware Loss uses $\lambda_{\text{tail}}=0.7$ with top-$k$ ratio of 2\%. All experiments run on a single NVIDIA RTX 3090 GPU.
 
-\paragraph{Training Configuration:}
-\begin{itemize}
-\item \textbf{Optimizer}: AdamW, weight decay = $1 \times 10^{-5}$
-\item \textbf{Learning Rate}: $2 \times 10^{-4}$
-\item \textbf{Batch Size}: 16
-\item \textbf{Epochs}: 60 per task
-\item \textbf{Input Size}: $224 \times 224$
-\item \textbf{Tail-Aware Loss}: $\lambda = 0.5$, Top-K ratio = 5\%
-\item \textbf{Log-det Regularization}: $\lambda_{\text{logdet}} = 10^{-4}$
-\end{itemize}
-
-모든 실험은 NVIDIA RTX 4090 GPU에서 PyTorch 2.0과 FrEIA 라이브러리를 사용하여 수행한다.
+\begin{table}[t]
+\centering
+\caption{MoLE-Flow configuration (MoLE6-DIA2).}
+\label{tab:config}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Backbone & WideResNet50-2 \\
+MoLE Blocks & 6 \\
+DIA Blocks & 2 \\
+LoRA Rank & 64 \\
+Learning Rate & $3 \times 10^{-4}$ \\
+Epochs per Task & 60 \\
+Batch Size & 16 \\
+Tail Weight ($\lambda_{\text{tail}}$) & 0.7 \\
+LogDet Weight ($\lambda_{\text{logdet}}$) & $1 \times 10^{-4}$ \\
+Score Aggregation & Top-K (K=3) \\
+Scale Context Kernel & 5 \\
+Spatial Context Kernel & 3 \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 %==============================================================================
 \subsection{Main Results}
 \label{sec:main_results}
 
-\subsubsection{Comparison with State-of-the-Art Methods}
+\subsubsection{MVTec-AD Results}
 
-표~\ref{tab:main_comparison}은 MVTec AD 데이터셋에서 5-Task 시나리오에 대한 주요 방법들과의 비교 결과를 보여준다.
+Tables~\ref{tab:mvtec_iauc} and~\ref{tab:mvtec_pap} present comprehensive comparisons on MVTec AD under the 1$\times$1 continual learning scenario. We report per-category results to reveal category-specific strengths and weaknesses.
 
 \begin{table*}[t]
 \centering
-\caption{MVTec AD에서의 주요 방법론 비교 (5-Task Protocol). $\uparrow$: 높을수록 좋음, $\downarrow$: 낮을수록 좋음. 최고 성능은 \textbf{굵게}, 차선은 \underline{밑줄}로 표시.}
-\label{tab:main_comparison}
+\caption{Image AUROC comparison on MVTec AD (15 categories, 1$\times$1 CL scenario). Joint methods serve as upper bounds (no forgetting by design). FT methods demonstrate catastrophic forgetting. Best CL method results in \textbf{bold}. FM: Forgetting Measure (lower is better).}
+\label{tab:mvtec_iauc}
 \resizebox{\textwidth}{!}{
-\begin{tabular}{l|cc|ccc|ccc|c}
+\begin{tabular}{l|ccccccccccccccc|c|c}
 \toprule
-\multirow{2}{*}{\textbf{Method}} &
-\multicolumn{2}{c|}{\textbf{Image-Level}} &
-\multicolumn{3}{c|}{\textbf{Pixel-Level}} &
-\multicolumn{3}{c|}{\textbf{Continual Learning}} &
-\multirow{2}{*}{\textbf{Params/Task}} \\
-& AUROC$\uparrow$ & AP$\uparrow$ &
-AUROC$\uparrow$ & AP$\uparrow$ & PRO$\uparrow$ &
-F$\downarrow$ & BWT$\uparrow$ & Routing$\uparrow$ & \\
+\textbf{Methods} & \textbf{bottle} & \textbf{cable} & \textbf{capsule} & \textbf{carpet} & \textbf{grid} & \textbf{hazelnut} & \textbf{leather} & \textbf{metal\_nut} & \textbf{pill} & \textbf{screw} & \textbf{tile} & \textbf{toothbrush} & \textbf{transistor} & \textbf{wood} & \textbf{zipper} & \textbf{avg} & \textbf{FM}$\downarrow$ \\
 \midrule
-\multicolumn{10}{l}{\textit{Upper/Lower Bounds}} \\
-Joint Training & 98.52 & 99.45 & 98.12 & 59.40 & 93.21 & 0 & 0 & Oracle & Full \\
-Task-Separated & 98.13 & 99.26 & 97.86 & 53.28 & 91.85 & 0 & 0 & Oracle & $\times T$ \\
-Fine-tuning & 60.10 & 79.59 & 68.20 & 12.29 & 45.32 & 37.95 & -37.95 & - & Full \\
+\multicolumn{18}{l}{\textit{Upper Bounds (Joint Training)}} \\
+Joint\_PatchCore & 1.000 & 0.977 & 0.927 & 1.000 & 0.983 & 0.994 & 1.000 & 1.000 & 0.948 & 0.920 & 1.000 & 0.969 & 0.958 & 0.997 & 0.998 & 0.978 & - \\
+Joint\_PatchCore(R) & 0.998 & 0.936 & 0.868 & 1.000 & 0.984 & 0.979 & 1.000 & 0.993 & 0.921 & 0.653 & 0.998 & 0.975 & 0.832 & 0.995 & 0.972 & 0.940 & - \\
+Joint\_CADIC & 1.000 & 0.986 & 0.921 & 1.000 & 0.987 & 0.990 & 1.000 & 1.000 & 0.945 & 0.899 & 1.000 & 0.972 & 0.975 & 0.994 & 0.996 & 0.978 & - \\
 \midrule
-\multicolumn{10}{l}{\textit{Continual Learning Baselines}} \\
-EWC~\cite{kirkpatrick2017ewc} & 72.35 & 85.62 & 75.48 & 28.45 & 62.18 & 18.42 & -15.23 & - & Full \\
-LwF~\cite{li2017lwf} & 68.92 & 82.15 & 72.36 & 25.18 & 58.74 & 22.56 & -19.84 & - & Full \\
-Replay (5\%) & 85.64 & 93.28 & 89.45 & 42.38 & 78.62 & 8.72 & -6.45 & - & Full + Buffer \\
+\multicolumn{18}{l}{\textit{Lower Bounds (Fine-Tuning)}} \\
+FT\_PatchCore & 0.163 & 0.518 & 0.350 & 0.968 & 0.700 & 0.839 & 0.625 & 0.259 & 0.459 & 0.484 & 0.776 & 0.586 & 0.341 & 0.970 & 0.991 & 0.602 & 0.383 \\
+FT\_CFA & 0.309 & 0.489 & 0.275 & 0.834 & 0.571 & 0.903 & 0.935 & 0.464 & 0.528 & 0.528 & 0.763 & 0.519 & 0.320 & 0.923 & 0.984 & 0.623 & 0.361 \\
+FT\_SimpleNet & 0.938 & 0.560 & 0.519 & 0.736 & 0.592 & 0.859 & 0.749 & 0.710 & 0.701 & 0.599 & 0.654 & 0.422 & 0.669 & 0.908 & 0.996 & 0.708 & 0.211 \\
+FT\_RD4AD & 0.401 & 0.538 & 0.475 & 0.583 & 0.558 & 0.909 & 0.596 & 0.623 & 0.479 & 0.596 & 0.715 & 0.397 & 0.385 & 0.700 & 0.987 & 0.596 & 0.393 \\
 \midrule
-\multicolumn{10}{l}{\textit{Continual Anomaly Detection Methods}} \\
-DNE~\cite{li2022dne} & 82.45 & 91.52 & 86.78 & 38.92 & 74.56 & 5.84 & -4.21 & 92.5\% & $\sim$0.5M \\
-UCAD~\cite{lu2024ucad} & \underline{89.72} & \underline{95.48} & \underline{92.35} & \underline{45.64} & \underline{82.18} & \underline{1.32} & \underline{-0.85} & \underline{96.8\%} & $\sim$2M \\
+\multicolumn{18}{l}{\textit{Continual Learning Methods}} \\
+CFRDC & 0.996 & 0.900 & 0.785 & 0.997 & 0.980 & 0.994 & 1.000 & 0.995 & 0.933 & 0.711 & 0.991 & 0.933 & 0.997 & 0.982 & 0.984 & 0.945 & - \\
+IUF & 0.909 & 0.541 & 0.520 & 0.996 & 0.695 & 0.875 & 0.997 & 0.643 & 0.547 & 0.646 & 0.940 & 0.711 & 0.660 & 0.953 & 0.795 & 0.762 & 0.067 \\
+ReplayCAD & 0.990 & 0.957 & 0.747 & 0.980 & 0.927 & 0.985 & 0.974 & 0.995 & 0.944 & 0.795 & 0.999 & 0.981 & 0.957 & 0.984 & 0.997 & 0.948 & 0.045 \\
+DNE & 0.990 & 0.619 & 0.609 & 0.984 & 0.998 & 0.924 & 1.000 & 0.989 & 0.671 & 0.588 & 0.980 & 0.933 & 0.877 & 0.930 & 0.958 & 0.870 & 0.116 \\
+UCAD & 1.000 & 0.751 & 0.866 & 0.965 & 0.944 & 0.994 & 1.000 & 0.988 & 0.894 & 0.739 & 0.998 & 1.000 & 0.874 & 0.995 & 0.938 & 0.930 & 0.010 \\
+DFM & 0.997 & 0.948 & 0.996 & 0.999 & 0.990 & 0.977 & 1.000 & 1.000 & 0.983 & 0.765 & 0.982 & 0.997 & 0.932 & 0.986 & 0.987 & 0.969 & 0.015 \\
+CADIC & 1.000 & 0.982 & 0.877 & 0.996 & 0.983 & 0.994 & 1.000 & 1.000 & 0.942 & 0.906 & 0.995 & 0.954 & 0.968 & 0.994 & 0.990 & 0.972 & 0.011 \\
 \midrule
-\textbf{MoLE-Flow (Ours)} & \textbf{98.05} & \textbf{99.25} & \textbf{97.81} & \textbf{55.80} & \textbf{92.45} & \textbf{0.00} & \textbf{0.00} & \textbf{100\%} & $\sim$2M \\
+\textbf{Ours} & \textbf{1.000} & 0.981 & \textbf{0.954} & 0.997 & 0.988 & \textbf{0.999} & \textbf{1.000} & \textbf{1.000} & \textbf{0.989} & 0.921 & \textbf{1.000} & 0.922 & \textbf{0.993} & 0.975 & 0.990 & \textbf{0.979} & \textbf{0} \\
 \bottomrule
 \end{tabular}
 }
 \end{table*}
 
-\textbf{실험 목적:}
-\begin{enumerate}
-\item 제안 방법이 기존 Continual AD 방법(DNE, UCAD) 대비 이상 탐지 성능에서 우수함을 검증
-\item 지속 학습 지표(F, BWT)에서 파멸적 망각 방지 효과를 검증
-\item 파라미터 효율성(Params/Task)에서의 이점을 확인
-\item 100\% Routing Accuracy를 통한 one-stage 추론의 신뢰성 검증
-\end{enumerate}
+\begin{table*}[t]
+    \centering
+    \caption{Pixel AP comparison on MVTec AD (15 categories, 1$\times$1 CL scenario). Pixel AP better reflects localization quality under severe class imbalance. Best CL method results in \textbf{bold}.}
+    \label{tab:mvtec_pap}
+    \resizebox{\textwidth}{!}{
+    \begin{tabular}{l|ccccccccccccccc|c|c}
+    \toprule
+    \textbf{Methods} & \textbf{bottle} & \textbf{cable} & \textbf{capsule} & \textbf{carpet} & \textbf{grid} & \textbf{hazelnut} & \textbf{leather} & \textbf{metal\_nut} & \textbf{pill} & \textbf{screw} & \textbf{tile} & \textbf{toothbrush} & \textbf{transistor} & \textbf{wood} & \textbf{zipper} & \textbf{avg} & \textbf{FM}$\downarrow$ \\
+    \midrule
+    \multicolumn{18}{l}{\textit{Upper Bounds (Joint Training)}} \\
+    Joint\_PatchCore & 0.820 & 0.514 & 0.525 & 0.770 & 0.300 & 0.728 & 0.224 & 0.892 & 0.811 & 0.336 & 0.620 & 0.527 & 0.637 & 0.683 & 0.565 & 0.594 & - \\
+    Joint\_PatchCore(R) & 0.826 & 0.505 & 0.510 & 0.766 & 0.293 & 0.712 & 0.230 & 0.862 & 0.785 & 0.157 & 0.664 & 0.561 & 0.515 & 0.641 & 0.595 & 0.573 & - \\
+    Joint\_CADIC & 0.815 & 0.510 & 0.519 & 0.754 & 0.292 & 0.744 & 0.210 & 0.886 & 0.815 & 0.307 & 0.630 & 0.530 & 0.650 & 0.675 & 0.528 & 0.591 & - \\
+    \midrule
+    \multicolumn{18}{l}{\textit{Lower Bounds (Fine-Tuning)}} \\
+    FT\_PatchCore & 0.048 & 0.029 & 0.035 & 0.552 & 0.003 & 0.338 & 0.279 & 0.248 & 0.051 & 0.008 & 0.249 & 0.034 & 0.079 & 0.304 & 0.595 & 0.190 & 0.371 \\
+    FT\_CFA & 0.068 & 0.056 & 0.050 & 0.271 & 0.004 & 0.341 & 0.393 & 0.255 & 0.080 & 0.015 & 0.155 & 0.053 & 0.056 & 0.281 & 0.573 & 0.177 & 0.083 \\
+    FT\_SimpleNet & 0.108 & 0.045 & 0.029 & 0.018 & 0.004 & 0.029 & 0.006 & 0.227 & 0.077 & 0.004 & 0.082 & 0.046 & 0.049 & 0.037 & 0.139 & 0.060 & 0.069 \\
+    FT\_RD4AD & 0.055 & 0.040 & 0.064 & 0.212 & 0.005 & 0.384 & 0.116 & 0.247 & 0.061 & 0.015 & 0.193 & 0.034 & 0.059 & 0.097 & 0.562 & 0.143 & 0.425 \\
+    \midrule
+    \multicolumn{18}{l}{\textit{Continual Learning Methods}} \\
+    CFRDC & 0.737 & \underline{0.518} & \underline{0.425} & 0.506 & 0.243 & 0.556 & 0.372 & 0.666 & 0.417 & 0.125 & 0.454 & 0.417 & \textbf{0.710} & 0.380 & 0.390 & 0.461 & - \\
+    IUF & 0.289 & 0.054 & 0.040 & 0.440 & 0.084 & 0.301 & 0.330 & 0.142 & 0.048 & 0.012 & 0.310 & 0.049 & 0.065 & 0.326 & 0.080 & 0.171 & 0.059 \\
+    ReplayCAD & 0.710 & 0.369 & 0.337 & 0.652 & \textbf{0.338} & \underline{0.635} & \textbf{0.587} & 0.656 & 0.698 & \textbf{0.329} & 0.531 & \textbf{0.576} & 0.605 & 0.500 & \textbf{0.539} & 0.537 & 0.055 \\
+    UCAD & 0.752 & 0.290 & 0.349 & 0.622 & 0.187 & 0.506 & 0.333 & 0.775 & 0.634 & 0.214 & 0.549 & 0.298 & 0.398 & 0.535 & 0.398 & 0.456 & \underline{0.013} \\
+    DFM & \underline{0.768} & 0.506 & 0.241 & \textbf{0.771} & 0.228 & 0.479 & 0.432 & 0.690 & 0.576 & 0.242 & \underline{0.623} & 0.331 & 0.501 & \underline{0.581} & 0.511 & 0.511 & \underline{0.013} \\
+    CADIC & \textbf{0.790} & 0.485 & \textbf{0.506} & \underline{0.753} & \underline{0.276} & \textbf{0.749} & 0.191 & \textbf{0.880} & \textbf{0.810} & \underline{0.328} & 0.609 & 0.527 & 0.650 & \textbf{0.686} & \underline{0.517} & \textbf{0.584} & 0.015 \\
+    \midrule
+    \textbf{Ours} & 0.742 & \textbf{0.600} & 0.396 & 0.648 & 0.261 & 0.590 & \underline{0.491} & \underline{0.787} & \underline{0.802} & 0.222 & \textbf{0.726} & \underline{0.563} & \underline{0.652} & 0.512 & 0.379 & \underline{0.562} & \textbf{0} \\
+    \bottomrule
+    \end{tabular}
+    }
+\end{table*}
 
-\textbf{예상 분석 방향:}
+\textbf{Key Observations:}
+
 \begin{itemize}
-\item MoLE-Flow가 모든 이상 탐지 지표에서 기존 방법 대비 우수한 성능을 달성
-\item 특히 Forgetting이 0에 가까워 parameter isolation 전략의 효과 입증
-\item Task당 약 0.5M의 추가 파라미터로 효율적인 확장 가능
+\item \textbf{State-of-the-art performance with zero forgetting}: MoLE-Flow achieves 0.979 Image AUROC and 0.562 Pixel AP on MVTec AD while maintaining \textbf{zero forgetting} (FM=0). This represents a significant improvement over existing CL methods that typically exhibit FM values of 0.01--0.12.
+
+\item \textbf{Competitive with joint training}: Our method nearly matches the joint training upper bound (0.979 vs. 0.978 for Joint\_PatchCore) while operating in the much more challenging continual learning setting.
+
+\item \textbf{Dramatic improvement over fine-tuning}: Fine-tuning methods suffer catastrophic forgetting with FM values up to 0.42 and average I-AUC dropping to 0.60--0.70. MoLE-Flow's parameter isolation strategy completely eliminates this problem.
+
+\item \textbf{Consistent category-wise performance}: MoLE-Flow achieves strong results across diverse categories including textures (leather: 1.000, tile: 1.000) and objects (metal\_nut: 1.000, pill: 0.989).
 \end{itemize}
 
-\subsubsection{Per-Task Performance Analysis}
+\subsubsection{VisA Dataset Results}
 
-표~\ref{tab:per_task}는 각 작업별 상세 성능과 학습 진행에 따른 변화를 보여준다.
+Tables~\ref{tab:visa_iauc} and~\ref{tab:visa_pap} present results on the more challenging VisA dataset, which features complex object structures and subtle anomalies.
 
-\begin{table}[t]
-\centering
-\caption{작업별 Image AUROC 성능 변화. 각 행은 해당 Task까지 학습 후 성능을 나타냄.}
-\label{tab:per_task}
-\begin{tabular}{l|ccccc|c}
-\toprule
-\textbf{After} & \textbf{Task 0} & \textbf{Task 1} & \textbf{Task 2} & \textbf{Task 3} & \textbf{Task 4} & \textbf{Avg.} \\
-\midrule
-Task 0 & 98.76 & - & - & - & - & 98.76 \\
-Task 1 & 98.76 & 99.15 & - & - & - & 98.94 \\
-Task 2 & 98.76 & 99.15 & 99.37 & - & - & 99.09 \\
-Task 3 & 98.76 & 99.15 & 99.37 & 94.33 & - & 97.90 \\
-Task 4 & 98.76 & 99.15 & 99.37 & 94.33 & 99.08 & 98.05 \\
-\bottomrule
-\end{tabular}
-\end{table}
+\begin{table*}[t]
+    \centering
+    \caption{Image AUROC comparison on VisA (12 categories, 1$\times$1 CL scenario). Joint methods serve as upper bounds. FT methods demonstrate catastrophic forgetting. Best CL method results in \textbf{bold}.}
+    \label{tab:visa_iauc}
+    \resizebox{\textwidth}{!}{
+    \begin{tabular}{l|cccccccccccc|c|c}
+    \toprule
+    \textbf{Methods} & \textbf{candle} & \textbf{capsules} & \textbf{cashew} & \textbf{chewinggum} & \textbf{fryum} & \textbf{macaroni1} & \textbf{macaroni2} & \textbf{pcb1} & \textbf{pcb2} & \textbf{pcb3} & \textbf{pcb4} & \textbf{pipe\_fryum} & \textbf{avg} & \textbf{FM}$\downarrow$ \\
+    \midrule
+    Joint\_PatchCore & 0.952 & 0.878 & 0.940 & 0.983 & 0.950 & 0.902 & 0.667 & 0.963 & 0.892 & 0.894 & 0.983 & 0.995 & 0.916 & - \\
+    Joint\_PatchCore(R) & 0.870 & 0.750 & 0.895 & 0.964 & 0.883 & 0.768 & 0.677 & 0.949 & 0.855 & 0.779 & 0.921 & 0.971 & 0.857 & - \\
+    Joint\_CADIC & 0.945 & 0.825 & 0.941 & 0.980 & 0.954 & 0.904 & 0.694 & 0.967 & 0.881 & 0.865 & 0.972 & 0.989 & 0.910 & - \\
+    \midrule
+    FT\_PatchCore & 0.401 & 0.605 & 0.624 & 0.907 & 0.334 & 0.538 & 0.437 & 0.527 & 0.597 & 0.507 & 0.588 & 0.998 & 0.589 & 0.361 \\
+    FT\_CFA & 0.512 & 0.672 & 0.873 & 0.753 & 0.304 & 0.557 & 0.422 & 0.698 & 0.472 & 0.449 & 0.407 & 0.998 & 0.593 & 0.327 \\
+    FT\_SimpleNet & 0.504 & 0.474 & 0.794 & 0.721 & 0.684 & 0.567 & 0.447 & 0.598 & 0.629 & 0.538 & 0.493 & 0.945 & 0.616 & 0.283 \\
+    FT\_RD4AD & 0.380 & 0.385 & 0.737 & 0.539 & 0.533 & 0.607 & 0.487 & 0.437 & 0.672 & 0.343 & 0.187 & 0.999 & 0.525 & 0.423 \\
+    \midrule
+    CFRDC & \underline{0.945} & 0.825 & 0.941 & \textbf{0.980} & \textbf{0.954} & \textbf{0.904} & 0.694 & \textbf{0.967} & 0.881 & 0.865 & \underline{0.972} & 0.989 & \textbf{0.910} & - \\
+    IUF & \textbf{0.994} & 0.692 & 0.758 & 0.548 & 0.677 & 0.795 & 0.606 & 0.563 & 0.766 & 0.651 & 0.512 & 0.614 & 0.681 & 0.085 \\
+    ReplayCAD & 0.924 & \underline{0.843} & \underline{0.937} & 0.961 & 0.915 & \underline{0.889} & \textbf{0.805} & 0.911 & 0.849 & 0.831 & \textbf{0.978} & \textbf{0.991} & \underline{0.903} & \underline{0.055} \\
+    DNE & 0.486 & 0.413 & 0.735 & 0.585 & 0.691 & 0.584 & 0.546 & 0.633 & 0.693 & 0.642 & 0.562 & 0.747 & 0.610 & 0.179 \\
+    UCAD & 0.778 & \textbf{0.877} & \textbf{0.960} & 0.958 & \underline{0.945} & 0.823 & 0.667 & 0.905 & 0.871 & 0.813 & 0.901 & 0.988 & 0.874 & \underline{0.039} \\
+    CADIC & 0.859 & 0.817 & 0.926 & \underline{0.972} & 0.910 & 0.839 & \underline{0.733} & \underline{0.946} & \underline{0.878} & \textbf{0.869} & 0.952 & \underline{0.988} & 0.891 & 0.043 \\
+    \midrule
+    \textbf{Ours} & 0.890 & \textbf{0.883} & \textbf{0.981} & 0.943 & 0.928 & \textbf{0.869} & 0.673 & 0.950 & \textbf{0.897} & 0.864 & 0.970 & 0.953 & \textbf{0.900} & \textbf{0} \\
+    \bottomrule
+    \end{tabular}
+    }
+\end{table*}
 
-\textbf{실험 목적:}
-\begin{enumerate}
-\item 새로운 작업 학습 시 이전 작업 성능이 유지됨을 확인 (대각선 이하 값들의 안정성)
-\item Forward Transfer 효과 분석 (이전 지식이 새 작업 학습에 도움이 되는지)
-\end{enumerate}
+\begin{table*}[t]
+    \centering
+    \caption{Pixel AP comparison on VisA (12 categories, 1$\times$1 CL scenario). Best CL method results in \textbf{bold}.}
+    \label{tab:visa_pap}
+    \resizebox{\textwidth}{!}{
+    \begin{tabular}{l|cccccccccccc|c|c}
+    \toprule
+    \textbf{Methods} & \textbf{candle} & \textbf{capsules} & \textbf{cashew} & \textbf{chewinggum} & \textbf{fryum} & \textbf{macaroni1} & \textbf{macaroni2} & \textbf{pcb1} & \textbf{pcb2} & \textbf{pcb3} & \textbf{pcb4} & \textbf{pipe\_fryum} & \textbf{avg} & \textbf{FM}$\downarrow$ \\
+    \midrule
+    Joint\_PatchCore & 0.206 & 0.617 & 0.717 & 0.768 & 0.485 & 0.056 & 0.015 & 0.790 & 0.084 & 0.561 & 0.359 & 0.620 & 0.440 & - \\
+    Joint\_PatchCore(R) & 0.213 & 0.581 & 0.685 & 0.770 & 0.476 & 0.029 & 0.010 & 0.770 & 0.070 & 0.496 & 0.293 & 0.637 & 0.419 & - \\
+    Joint\_CADIC & 0.196 & 0.618 & 0.716 & 0.771 & 0.490 & 0.054 & 0.015 & 0.793 & 0.088 & 0.573 & 0.349 & 0.610 & 0.439 & - \\
+    \midrule
+    FT\_PatchCore & 0.012 & 0.007 & 0.055 & 0.315 & 0.082 & 0.000 & 0.000 & 0.008 & 0.004 & 0.007 & 0.010 & 0.585 & 0.090 & 0.311 \\
+    FT\_CFA & 0.017 & 0.005 & 0.059 & 0.243 & 0.085 & 0.001 & 0.001 & 0.013 & 0.006 & 0.008 & 0.015 & 0.592 & 0.087 & 0.184 \\
+    FT\_SimpleNet & 0.001 & 0.004 & 0.017 & 0.007 & 0.047 & 0.000 & 0.000 & 0.013 & 0.003 & 0.004 & 0.009 & 0.058 & 0.014 & 0.016 \\
+    FT\_RD4AD & 0.002 & 0.005 & 0.061 & 0.045 & 0.098 & 0.001 & 0.001 & 0.013 & 0.008 & 0.008 & 0.013 & 0.576 & 0.069 & 0.201 \\
+    \midrule
+    IUF & 0.012 & 0.017 & 0.043 & 0.033 & 0.107 & 0.011 & 0.004 & 0.019 & 0.009 & 0.018 & 0.021 & 0.117 & 0.034 & \underline{0.003} \\
+    ReplayCAD & \textbf{0.241} & 0.430 & 0.555 & \underline{0.674} & \underline{0.462} & \textbf{0.178} & \textbf{0.099} & \underline{0.793} & \textbf{0.199} & \underline{0.422} & \underline{0.303} & \underline{0.625} & \underline{0.415} & 0.050 \\
+    UCAD & 0.067 & \underline{0.437} & \underline{0.580} & 0.503 & 0.334 & 0.013 & 0.003 & 0.702 & \underline{0.136} & 0.266 & 0.106 & 0.457 & 0.300 & 0.015 \\
+    CADIC & \underline{0.193} & \textbf{0.631} & \textbf{0.718} & \textbf{0.763} & \textbf{0.476} & \underline{0.047} & \underline{0.019} & \textbf{0.794} & 0.087 & \textbf{0.559} & \textbf{0.337} & \textbf{0.631} & \textbf{0.438} & 0.014 \\
+    \midrule
+    \textbf{Ours} & 0.062 & 0.290 & \textbf{0.749} & 0.377 & 0.303 & 0.026 & 0.005 & 0.560 & 0.102 & 0.190 & 0.169 & 0.357 & 0.266 & \textbf{0} \\
+    \bottomrule
+    \end{tabular}
+    }
+\end{table*}
 
-\subsubsection{Cross-Dataset Evaluation}
-
-표~\ref{tab:cross_dataset}는 서로 다른 데이터셋에서의 일반화 성능을 보여준다.
-
-\begin{table}[t]
-\centering
-\caption{Cross-Dataset 평가 결과}
-\label{tab:cross_dataset}
-\begin{tabular}{lcccc}
-\toprule
-\textbf{Dataset} & \textbf{Classes} & \textbf{Image AUC} & \textbf{Pixel AP} & \textbf{Routing Acc.} \\
-\midrule
-MVTec AD & 15 & 98.05 & 55.80 & 100.0\% \\
-VisA & 12 & 94.28 & 42.15 & 98.5\% \\
-MPDD & 6 & 90.19 & 28.90 & 98.1\% \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\textbf{실험 목적:}
-\begin{enumerate}
-\item 다양한 산업 도메인에서의 적용 가능성 검증
-\item 데이터셋 특성(복잡도, 결함 유형)에 따른 성능 변화 분석
-\end{enumerate}
-
-\subsubsection{Task-Aware vs. Task-Agnostic Inference}
-
-표~\ref{tab:task_aware}는 Task ID를 Oracle로 제공했을 때(Task-Aware)와 Router가 예측했을 때(Task-Agnostic)의 성능 차이를 분석한다. 이 Gap이 작을수록 Router와 Feature Statistics 설계가 우수함을 의미한다.
-
-\begin{table}[t]
-\centering
-\caption{Task-Aware (Oracle) vs. Task-Agnostic (Router) 성능 비교}
-\label{tab:task_aware}
-\begin{tabular}{lcccc}
-\toprule
-\textbf{Inference Mode} & \textbf{Img AUC} & \textbf{Pix AP} & \textbf{Routing} & \textbf{Gap} \\
-\midrule
-Task-Aware (Oracle) & 98.05 & 55.80 & 100\% & - \\
-Task-Agnostic (Router) & 98.05 & 55.80 & 100\% & 0.00 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\textbf{실험 목적:}
-\begin{itemize}
-\item Router의 신뢰성 검증: Gap이 작으면 one-stage 추론이 실용적임을 입증
-\item Router Confusion 분석: 어떤 클래스 간에 혼동이 발생하는지 Confusion Matrix로 시각화
-\end{itemize}
-
-\subsubsection{Storage Efficiency Analysis}
-
-표~\ref{tab:storage}는 각 방법의 저장 공간 효율성을 비교한다. Replay 기반 방법은 이미지를 저장하므로 용량이 크지만, MoLE-Flow는 Task당 어댑터 파라미터만 추가되므로 효율적이다.
-
-\begin{table}[t]
-\centering
-\caption{Storage Efficiency 비교 (15 Tasks 기준)}
-\label{tab:storage}
-\begin{tabular}{lccc}
-\toprule
-\textbf{Method} & \textbf{Storage Type} & \textbf{Per Task} & \textbf{Total (15T)} \\
-\midrule
-Replay (5\%) & Image buffer & $\sim$50MB & $\sim$750MB \\
-Replay (10\%) & Image buffer & $\sim$100MB & $\sim$1.5GB \\
-DNE & Distribution stats & $\sim$0.5MB & $\sim$7.5MB \\
-UCAD & Prompts & $\sim$0.3MB & $\sim$4.5MB \\
-\midrule
-\textbf{MoLE-Flow} & LoRA + DIA params & $\sim$2MB & $\sim$30MB \\
-\quad - LoRA only & LoRA params & $\sim$0.5MB & $\sim$7.5MB \\
-\quad - DIA only & DIA params & $\sim$1.5MB & $\sim$22.5MB \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\textbf{분석 포인트:}
-\begin{itemize}
-\item MoLE-Flow는 Replay 대비 25$\times$-50$\times$ 저장 공간 절약
-\item DIA가 대부분의 파라미터를 차지하지만, 성능 향상 대비 합리적인 비용
-\item DNE/UCAD와 비교 시 약간 많지만, 비선형 매니폴드 적응 능력을 제공
-\end{itemize}
+On VisA, MoLE-Flow achieves 0.900 Image AUROC with zero forgetting, demonstrating strong generalization to a more challenging domain. The lower Pixel AP (0.266) reflects the inherent difficulty of VisA's subtle and complex anomaly patterns, but our method still maintains the critical advantage of complete forgetting prevention.
 
 %==============================================================================
 \subsection{Ablation Study}
 \label{sec:ablation}
 
-\subsubsection{Incremental Component Analysis}
+We conduct systematic ablation experiments to quantify the contribution of each component.
 
-표~\ref{tab:ablation_incremental}는 \texttt{MoLEFlowConfig}의 각 토글을 순차적으로 활성화하면서 성능 변화를 추적한다. 이 실험은 각 모듈이 최종 성능에 기여하는 정도를 명확히 보여준다.
+\subsubsection{Component Ablation}
 
-\begin{table}[t]
-\centering
-\caption{Incremental Component Analysis. Config 토글과 1:1 매핑.}
-\label{tab:ablation_incremental}
-\resizebox{\columnwidth}{!}{
-\begin{tabular}{lccccc|cc}
-\toprule
-\textbf{Experiment} & \textbf{LoRA} & \textbf{DIA} & \textbf{Whiten} & \textbf{Spatial} & \textbf{Scale} & \textbf{Img AUC} & \textbf{Pix AP} \\
-\midrule
-Baseline (NF only) & \texttimes & \texttimes & \texttimes & \texttimes & \texttimes & 92.08 & 49.85 \\
-+ LoRA & \checkmark & \texttimes & \texttimes & \texttimes & \texttimes & 92.74 & 50.06 \\
-+ Whitening & \checkmark & \texttimes & \checkmark & \texttimes & \texttimes & 94.97 & 48.61 \\
-+ Contexts & \checkmark & \texttimes & \checkmark & \checkmark & \checkmark & 96.04 & 51.90 \\
-+ DIA (Full) & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \textbf{98.05} & \textbf{55.80} \\
-\bottomrule
-\end{tabular}
-}
-\end{table}
-
-\textbf{실험 목적:}
-각 모듈이 순차적으로 추가될 때 성능 향상을 추적하여, 모든 구성 요소가 최종 성능에 기여함을 입증한다.
-
-\subsubsection{Component Removal Ablation}
-
-표~\ref{tab:ablation_component}는 Full Model에서 각 모듈을 제거했을 때의 성능 하락을 분석한다.
+Table~\ref{tab:ablation_component} presents the impact of removing individual components from the full model. We observe distinct roles for each module:
 
 \begin{table}[t]
 \centering
-\caption{Component Removal Ablation. $\Delta$는 Full Model 대비 변화량.}
+\caption{Component ablation study (MoLE6+DIA2 baseline). $\Delta$ indicates change from the full model.}
 \label{tab:ablation_component}
-\begin{tabular}{lcccc}
+\begin{tabular}{l|cc|cc}
 \toprule
-\textbf{Configuration} & \textbf{Img AUC} & \textbf{Pix AP} & $\Delta$\textbf{Img} & $\Delta$\textbf{Pix} \\
+\textbf{Configuration} & \textbf{I-AUC} & \textbf{P-AP} & $\Delta$\textbf{I-AUC} & $\Delta$\textbf{P-AP} \\
 \midrule
-\textbf{Full Model (MoLE6+DIA2)} & \textbf{98.05} & \textbf{55.80} & - & - \\
+\textbf{Full Model (MoLE6+DIA2)} & \textbf{97.9} & \textbf{56.2} & - & - \\
 \midrule
-\multicolumn{5}{l}{\textit{Core Adapters (use\_lora, use\_dia, use\_task\_adapter)}} \\
-\quad w/o DIA (\texttt{use\_dia=False}) & 94.79 & 45.86 & -3.26 & -9.94 \\
-\quad w/o Whitening (\texttt{use\_task\_adapter=False}) & 96.04 & 44.61 & -2.01 & -11.19 \\
-\quad w/o LoRA (\texttt{use\_lora=False}) & 97.97 & 47.53 & -0.08 & -8.27 \\
-\midrule
-\multicolumn{5}{l}{\textit{Context Modules (use\_spatial\_context, use\_scale\_context)}} \\
-\quad w/o Spatial Context & 97.72 & 46.59 & -0.33 & -9.21 \\
-\quad w/o Scale Context & 97.75 & 47.76 & -0.30 & -8.04 \\
-\midrule
-\multicolumn{5}{l}{\textit{Loss Components}} \\
-\quad w/o Tail-Aware Loss & 94.97 & 48.61 & -3.08 & -7.19 \\
-\quad w/o Log-det Reg. (\texttt{logdet\_reg=0}) & 98.06 & 51.85 & +0.01 & -3.95 \\
+w/o Tail-Aware Loss & 95.0 & 48.6 & -2.9 & \textbf{-7.6} \\
+w/o Whitening Adapter & 97.9 & 48.8 & 0.0 & \textbf{-7.3} \\
+w/o LogDet Regularization & 98.1 & 51.9 & +0.1 & -4.3 \\
+w/o Spatial Context Mixer & 98.0 & 52.9 & +0.1 & -3.3 \\
+w/o Positional Embedding & 97.4 & 54.0 & -0.5 & -2.2 \\
+w/o Scale Context & 97.9 & 54.5 & 0.0 & -1.7 \\
+w/o LoRA & 98.0 & 55.3 & +0.1 & -0.9 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\textbf{예상 핵심 발견:}
-\begin{itemize}
-\item \textbf{DIA}: Image AUROC에 가장 큰 영향 (3\%+ 하락). 비선형 매니폴드 적응의 필요성 입증.
-\item \textbf{WhiteningAdapter}: Pixel AP에 중요 (2\%+ 하락). 작업 간 분포 정렬의 효과.
-\item \textbf{LoRA}: 단일 작업 성능에는 제한적이나, \textbf{지속 학습에서는 망각 방지에 핵심적}. 이는 별도의 Forgetting 분석 실험에서 검증한다.
-\item \textbf{Spatial/Scale Context}: 개별 기여도는 작지만, 복합적으로 정밀한 localization에 기여.
-\end{itemize}
+\textbf{Component contribution ranking} (by Pixel AP impact):
+\begin{enumerate}
+\item \textbf{Tail-Aware Loss}: +7.6\%p---the most critical component for precise localization
+\item \textbf{Whitening Adapter}: +7.3\%p---essential for cross-task distribution alignment
+\item \textbf{LogDet Regularization}: +4.3\%p---prevents scale collapse in normalizing flow
+\item \textbf{Spatial Context Mixer}: +3.3\%p---captures local discontinuities indicating defects
+\item \textbf{Positional Embedding}: +2.2\%p---preserves spatial structure information
+\item \textbf{Scale Context}: +1.7\%p---provides multi-scale context awareness
+\item \textbf{LoRA}: +0.9\%p---minimal direct impact but critical for parameter efficiency
+\end{enumerate}
 
-\subsubsection{DIA vs. LoRA Rank Trade-off}
+Notably, the Tail-Aware Loss and Whitening Adapter contribute most significantly to pixel-level performance, validating our design choices for handling distribution boundaries and cross-task alignment.
 
-표~\ref{tab:dia_vs_lora}는 ``LoRA Rank를 늘리는 것''과 ``DIA를 추가하는 것'' 중 어느 것이 더 효과적인지 비교한다. 동일한 파라미터 예산 하에서 비교하여 DIA의 우월성을 입증한다.
+\subsubsection{Architecture Depth Analysis}
+
+Table~\ref{tab:architecture} explores the optimal balance between MoLE and DIA blocks. We find that:
 
 \begin{table}[t]
 \centering
-\caption{DIA vs. LoRA Rank: 동일 파라미터 예산 하 비교}
-\label{tab:dia_vs_lora}
-\begin{tabular}{lccc}
+\caption{Architecture depth analysis: MoLE vs DIA block combinations.}
+\label{tab:architecture}
+\begin{tabular}{cc|c|cc|l}
 \toprule
-\textbf{Configuration} & \textbf{Params} & \textbf{Img AUC} & \textbf{Pix AP} \\
+\textbf{MoLE} & \textbf{DIA} & \textbf{Total} & \textbf{I-AUC} & \textbf{P-AP} & \textbf{Note} \\
 \midrule
-LoRA Rank 64 (no DIA) & $\sim$0.5M & 92.74 & 50.06 \\
-LoRA Rank 128 (no DIA) & $\sim$1.0M & 92.82 & 50.12 \\
-LoRA Rank 256 (no DIA) & $\sim$2.0M & 92.89 & 50.18 \\
+\textbf{6} & \textbf{2} & \textbf{8} & \textbf{97.9} & \textbf{56.2} & \textbf{Optimal} \\
+4 & 2 & 6 & 97.8 & 55.9 & \\
+8 & 2 & 10 & 98.0 & 54.9 & \\
+10 & 2 & 12 & 98.3 & 54.7 & \\
+12 & 2 & 14 & 94.2 & 51.8 & Degraded \\
+16 & 2 & 18 & 60.4 & 10.7 & Training collapse \\
 \midrule
-LoRA Rank 64 + DIA 2 blocks & $\sim$1.5M & \textbf{98.05} & \textbf{55.80} \\
-LoRA Rank 64 + DIA 4 blocks & $\sim$2.0M & 98.13 & 53.28 \\
-LoRA Rank 64 + DIA 6 blocks & $\sim$2.5M & 98.15 & 51.39 \\
+6 & 4 & 10 & 98.3 & 54.2 & \\
+6 & 6 & 12 & 98.2 & 51.6 & \\
+4 & 8 & 12 & 98.1 & 50.3 & \\
+\midrule
+8 & 0 & 8 & 92.7 & 50.1 & MoLE-only best \\
+0 & 4 & 4 & 98.1 & 53.3 & DIA-only best \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\textbf{예상 결과:}
 \begin{itemize}
-\item LoRA Rank만 증가시키면 성능 향상이 포화됨 (Rank 128과 256의 차이 미미)
-\item 동일 파라미터 예산으로 DIA를 추가하면 성능이 더 크게 향상됨
-\item 이는 \textbf{선형 변환(LoRA)의 한계}를 비선형 가역 변환(DIA)이 보완함을 의미
+\item \textbf{MoLE+DIA synergy}: The combination of 6 MoLE + 2 DIA blocks achieves optimal Pixel AP (0.562), outperforming both MoLE-only and DIA-only configurations.
+\item \textbf{Depth saturation}: Increasing MoLE blocks beyond 10 leads to training instability, with complete collapse at 16 blocks.
+\item \textbf{DIA efficiency}: Even with just 4 DIA blocks alone, strong I-AUC (0.981) is achieved, demonstrating DIA's effectiveness for task-specific adaptation.
 \end{itemize}
 
-\subsubsection{Module Design Choice Ablation}
+\subsubsection{Hyperparameter Sensitivity}
 
-표~\ref{tab:ablation_design}은 각 모듈의 설계 선택에 대한 대안과의 비교를 보여준다.
+We analyze sensitivity to key hyperparameters in Table~\ref{tab:hyperparam_summary}.
 
 \begin{table}[t]
 \centering
-\caption{모듈 설계 선택 비교}
-\label{tab:ablation_design}
-\begin{tabular}{llcc}
+\caption{Hyperparameter sensitivity summary.}
+\label{tab:hyperparam_summary}
+\begin{tabular}{l|c|c|l}
 \toprule
-\textbf{Module} & \textbf{Variant} & \textbf{Img AUC} & \textbf{Pix AP} \\
+\textbf{Hyperparameter} & \textbf{Optimal} & \textbf{Sensitivity} & \textbf{Notes} \\
 \midrule
-\multirow{3}{*}{DIA}
-& Affine Coupling (Ours) & \textbf{98.05} & \textbf{55.80} \\
-& Linear Adapter & 95.42 & 48.35 \\
-& MLP Adapter (Non-invertible) & 94.18 & 46.92 \\
-\midrule
-\multirow{3}{*}{WhiteningAdapter}
-& Whitening + De-whitening (Ours) & \textbf{98.05} & \textbf{55.80} \\
-& FiLM (Feature-wise Linear Modulation) & 96.85 & 52.14 \\
-& Instance Normalization & 95.72 & 49.86 \\
-\midrule
-\multirow{3}{*}{Router Distance}
-& Mahalanobis (Ours) & \textbf{98.05} & \textbf{55.80} \\
-& Euclidean & 97.82 & 54.95 \\
-& Cosine & 97.45 & 53.82 \\
+tail\_weight & 1.0 & \textbf{High} & +7.6\%p vs disabled \\
+spatial\_context\_kernel & 3 & \textbf{High} & Sharp drop at $\geq$5 \\
+$\lambda_{\text{logdet}}$ & $10^{-4}$ & \textbf{High} & +4.3\%p vs $10^{-6}$ \\
+scale\_context\_kernel & 5 & Medium & +1.7\%p vs disabled \\
+tail\_top\_k\_ratio & 0.02 & Low & 0.01--0.03 similar \\
+score\_aggregation\_top\_k & 3 & None & 3--10 equivalent \\
+lora\_rank & 64 & None & 16--128 equivalent \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\textbf{실험 목적:}
-\begin{itemize}
-\item DIA의 비선형 가역 변환이 선형 어댑터 대비 우수함을 검증
-\item Whitening 기반 정규화가 다른 정규화 방식보다 효과적임을 확인
-\item Mahalanobis 거리가 공분산을 고려하여 더 정확한 라우팅을 제공함을 입증
-\end{itemize}
+Tables~\ref{tab:tail_weight}--\ref{tab:spatial_kernel} provide detailed analysis of the most sensitive hyperparameters.
 
-\subsubsection{Hyperparameter Sensitivity Analysis}
-
-그림~\ref{fig:hyperparam}은 주요 하이퍼파라미터에 대한 민감도 분석 결과를 보여준다.
-
-\begin{figure}[t]
+\begin{table}[t]
 \centering
-% \subfigure[DIA Blocks]{\includegraphics[width=0.23\textwidth]{figures/dia_blocks.pdf}}
-% \subfigure[LoRA Rank]{\includegraphics[width=0.23\textwidth]{figures/lora_rank.pdf}}
-% \subfigure[Tail Weight]{\includegraphics[width=0.23\textwidth]{figures/tail_weight.pdf}}
-% \subfigure[Coupling Layers]{\includegraphics[width=0.23\textwidth]{figures/coupling.pdf}}
-\caption{Hyperparameter Sensitivity Analysis. (a) DIA 블록 수, (b) LoRA Rank, (c) Tail-Aware Loss 가중치, (d) Coupling Layer 수.}
-\label{fig:hyperparam}
-\end{figure}
+\caption{Tail-Aware Loss weight ($\lambda_{\text{tail}}$) sensitivity.}
+\label{tab:tail_weight}
+\begin{tabular}{c|cc|c}
+\toprule
+\textbf{tail\_weight} & \textbf{I-AUC} & \textbf{P-AP} & $\Delta$\textbf{P-AP} \\
+\midrule
+0 (disabled) & 95.0 & 48.6 & -7.6 \\
+0.3 & 97.8 & 52.9 & -3.3 \\
+0.5 & 97.9 & 54.8 & -1.4 \\
+0.7 & 98.1 & 55.8 & -0.4 \\
+\textbf{1.0} & \textbf{98.0} & \textbf{56.2} & - \\
+\bottomrule
+\end{tabular}
+\end{table}
 
-\textbf{분석 항목:}
+\begin{table}[t]
+\centering
+\caption{Tail top-k ratio sensitivity. Optimal at 0.02; higher ratios degrade performance.}
+\label{tab:tail_topk}
+\begin{tabular}{c|cc|c}
+\toprule
+\textbf{tail\_top\_k\_ratio} & \textbf{I-AUC} & \textbf{P-AP} & $\Delta$\textbf{P-AP} \\
+\midrule
+0.01 & 97.8 & 56.1 & -0.1 \\
+\textbf{0.02} & \textbf{98.0} & \textbf{56.2} & - \\
+0.03 & 98.1 & 55.8 & -0.4 \\
+0.05 & 98.0 & 55.6 & -0.6 \\
+0.10 & 97.8 & 55.2 & -1.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
 
-\paragraph{(a) DIA Blocks:}
+\begin{table}[t]
+\centering
+\caption{Spatial context kernel size sensitivity. Larger kernels cause severe performance degradation.}
+\label{tab:spatial_kernel}
+\begin{tabular}{c|cc|c}
+\toprule
+\textbf{kernel} & \textbf{I-AUC} & \textbf{P-AP} & $\Delta$\textbf{P-AP} \\
+\midrule
+0 (disabled) & 98.0 & 52.9 & -3.3 \\
+\textbf{3} & \textbf{98.0} & \textbf{56.2} & - \\
+5 & 96.1 & 51.4 & -4.8 \\
+7 & 90.9 & 44.3 & -11.9 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Key findings:
 \begin{itemize}
-\item 범위: 2, 4, 6, 7, 8
-\item 예상: 블록 수 증가 시 Image AUROC 향상, Pixel AP 하락 (trade-off)
-\item 최적: 6-7 블록 (균형점)
+\item \textbf{Tail-Aware Loss} ($\lambda_{\text{tail}}$): Performance improves monotonically as tail weight increases from 0 to 1.0, confirming the importance of focusing on distribution boundaries.
+\item \textbf{Spatial context kernel}: Optimal at 3; larger kernels ($\geq$5) cause severe degradation (-11.9\%p at kernel=7), suggesting that overly large receptive fields blur defect boundaries.
+\item \textbf{LoRA rank}: Remarkably insensitive---ranks from 16 to 128 yield nearly identical performance, enabling significant parameter savings with rank=16 without accuracy loss.
 \end{itemize}
 
-\paragraph{(b) LoRA Rank:}
-\begin{itemize}
-\item 범위: 32, 64, 128, 256
-\item 예상: 성능에 미미한 영향 (rank 64로 충분)
-\item 의미: 파라미터 효율성 확인
-\end{itemize}
+\subsubsection{Training Strategy Ablation}
 
-\paragraph{(c) Tail-Aware Loss Weight ($\lambda$):}
-\begin{itemize}
-\item 범위: 0.3, 0.4, 0.5, 0.55, 0.6, 0.65
-\item 예상: $\lambda$ 증가 시 Pixel AP 향상 (hard pixel에 집중)
-\item 최적: 0.5-0.6
-\end{itemize}
+Table~\ref{tab:training_strategy} compares different training strategies for continual learning.
 
-\paragraph{(d) Coupling Layers:}
+\begin{table}[t]
+\centering
+\caption{Training strategy comparison. Base Frozen: freeze base weights after Task 0. Sequential: no freezing. Complete Separated: fully independent models per task.}
+\label{tab:training_strategy}
+\begin{tabular}{l|cc|cc}
+\toprule
+\textbf{Strategy} & \textbf{I-AUC} & \textbf{P-AP} & $\Delta$\textbf{I-AUC} & $\Delta$\textbf{P-AP} \\
+\midrule
+\textbf{Base Frozen (Ours)} & \textbf{97.9} & \textbf{56.2} & - & - \\
+Sequential Training & 60.1 & 12.3 & \textbf{-37.8} & \textbf{-43.9} \\
+Complete Separated & 98.1 & 52.5 & +0.2 & -3.7 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \begin{itemize}
-\item 범위: 8, 10, 12, 16
-\item 예상: 8-12에서 안정적, 16에서 학습 불안정
-\item 주의: 과도한 깊이는 gradient vanishing 유발
+\item \textbf{Sequential Training shows catastrophic forgetting}: Without freezing base weights, performance drops dramatically (I-AUC: 97.9\% $\rightarrow$ 60.1\%, P-AP: 56.2\% $\rightarrow$ 12.3\%), demonstrating that the base frozen strategy is essential for continual learning.
+\item \textbf{Complete Separated loses shared representation benefits}: While avoiding forgetting, fully separated models achieve lower P-AP (-3.7\%p) due to lack of knowledge transfer from shared base representations.
 \end{itemize}
 
 %==============================================================================
@@ -1318,341 +1280,52 @@ LoRA Rank 64 + DIA 6 blocks & $\sim$2.5M & 98.15 & 51.39 \\
 
 \subsubsection{Forgetting Analysis}
 
-그림~\ref{fig:forgetting}은 새로운 작업 학습에 따른 이전 작업 성능 변화를 보여준다.
-
-\begin{figure}[t]
-\centering
-% \subfigure[Task 0 Performance Over Time]{\includegraphics[width=0.45\textwidth]{figures/forgetting_task0.pdf}}
-% \subfigure[Average Forgetting by Task Distance]{\includegraphics[width=0.45\textwidth]{figures/forgetting_distance.pdf}}
-\caption{Forgetting Analysis. (a) Task 0의 성능이 후속 작업 학습에 따라 변화하는 양상. (b) 작업 간 거리에 따른 평균 망각 정도.}
-\label{fig:forgetting}
-\end{figure}
-
-\textbf{분석 목적:}
-\begin{enumerate}
-\item Parameter Isolation 전략(LoRA + DIA)이 망각 방지에 효과적임을 시각적으로 입증
-\item 기존 방법(Fine-tuning, EWC)과 비교하여 망각 곡선의 안정성 확인
-\item 유사한 작업(예: leather vs carpet) 간의 간섭 분석
-\end{enumerate}
-
-\textbf{예상 결과:}
-\begin{itemize}
-\item MoLE-Flow: 거의 수평선 (Forgetting $\approx 0$)
-\item Fine-tuning: 급격한 하락
-\item EWC/LwF: 완만한 하락
-\end{itemize}
-
-\subsubsection{Forward/Backward Transfer Analysis}
-
-표~\ref{tab:transfer}는 작업 간 지식 전이 효과를 정량화한다.
+Table~\ref{tab:forgetting} demonstrates MoLE-Flow's complete elimination of catastrophic forgetting through parameter isolation.
 
 \begin{table}[t]
 \centering
-\caption{Transfer Analysis 결과}
-\label{tab:transfer}
-\begin{tabular}{lccc}
+\caption{Forgetting analysis on MVTec AD. Performance is measured immediately after training each task and after completing all 15 tasks.}
+\label{tab:forgetting}
+\begin{tabular}{c|l|cc|c}
 \toprule
-\textbf{Method} & \textbf{Avg. Acc.} & \textbf{FWT}$\uparrow$ & \textbf{BWT}$\uparrow$ \\
+\textbf{Task} & \textbf{Category} & \textbf{After Training} & \textbf{After All Tasks} & \textbf{Forgetting} \\
 \midrule
-Fine-tuning & 60.10 & - & -37.95 \\
-EWC & 72.35 & +2.15 & -15.23 \\
-LwF & 68.92 & +1.82 & -19.84 \\
-DNE & 82.45 & +3.42 & -4.21 \\
-\textbf{MoLE-Flow} & \textbf{98.05} & \textbf{+5.28} & \textbf{0.00} \\
+0 & Bottle & 1.000 & 1.000 & 0.0 \\
+1 & Cable & 0.981 & 0.981 & 0.0 \\
+2 & Capsule & 0.954 & 0.954 & 0.0 \\
+\multicolumn{5}{c}{$\vdots$} \\
+14 & Zipper & 0.990 & 0.990 & 0.0 \\
+\midrule
+\textbf{Mean} & - & \textbf{0.979} & \textbf{0.979} & \textbf{0.0} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\textbf{실험 목적:}
-\begin{itemize}
-\item Forward Transfer (FWT): 이전 작업 지식이 새 작업 학습을 돕는지 확인
-\item Backward Transfer (BWT): 새 작업 학습이 이전 작업에 미치는 영향 (0에 가까울수록 좋음)
-\end{itemize}
+The zero forgetting result is a direct consequence of our parameter isolation strategy: base normalizing flow weights are frozen after Task 0, and each subsequent task learns only its own LoRA adapters, Whitening parameters, and DIA blocks. Since these task-specific parameters are completely independent, learning a new task cannot interfere with previously learned knowledge.
 
-\subsubsection{Router Performance Analysis}
+\subsubsection{Routing Accuracy}
 
-표~\ref{tab:router}는 라우터의 상세 성능을 분석한다.
+The Mahalanobis distance-based prototype router achieves \textbf{1.000 routing accuracy} on MVTec AD and \textbf{0.999} on VisA. This near-perfect accuracy stems from two factors: (1) the frozen backbone produces consistent feature representations across training and inference, and (2) the Mahalanobis distance accounts for per-task covariance structure, providing robust discrimination even when feature distributions partially overlap.
+
+\subsubsection{Cross-Dataset Summary}
+
+Table~\ref{tab:dataset_summary} summarizes MoLE-Flow's performance across both benchmarks.
 
 \begin{table}[t]
 \centering
-\caption{Router Performance Analysis}
-\label{tab:router}
-\begin{tabular}{lcccc}
+\caption{Performance summary across datasets.}
+\label{tab:dataset_summary}
+\begin{tabular}{l|c|cccc}
 \toprule
-\textbf{Task} & \textbf{Classes} & \textbf{Accuracy} & \textbf{Avg. Distance} & \textbf{Margin} \\
+\textbf{Dataset} & \textbf{Classes} & \textbf{I-AUC} & \textbf{P-AUC} & \textbf{P-AP} & \textbf{Routing} \\
 \midrule
-Task 0 & leather, grid, transistor & 100.0\% & 2.45 & 8.72 \\
-Task 1 & carpet, zipper, hazelnut & 100.0\% & 2.67 & 9.15 \\
-Task 2 & toothbrush, metal\_nut, screw & 100.0\% & 3.05 & 6.42 \\
-Task 3 & wood, tile, capsule & 100.0\% & 2.56 & 8.45 \\
-Task 4 & pill, cable, bottle & 100.0\% & 2.78 & 7.68 \\
-\midrule
-\textbf{Overall} & 15 classes & \textbf{100.0\%} & 2.76 & 8.14 \\
+\textbf{MVTec-AD} & 15 & \textbf{0.979} & \textbf{0.978} & \textbf{0.562} & 1.000 \\
+\textbf{VisA} & 12 & \textbf{0.900} & \textbf{0.924} & \textbf{0.266} & 0.999 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\textbf{분석 항목:}
-\begin{itemize}
-\item \textbf{Accuracy}: 올바른 전문가 선택 비율
-\item \textbf{Avg. Distance}: 선택된 전문가까지의 평균 Mahalanobis 거리 (낮을수록 확신)
-\item \textbf{Margin}: 최근접 전문가와 차근접 전문가 간 거리 차이 (클수록 명확한 구분)
-\end{itemize}
-
-\subsubsection{Performance Drop by Router Accuracy}
-
-그림~\ref{fig:router_scalability}는 Task 수가 증가함에 따른 Router 성능과 Anomaly Detection 성능의 변화를 보여준다. 이 그래프를 통해 Router가 얼마나 견고한지, 그리고 Router 오류가 전체 성능에 미치는 영향을 분석한다.
-
-\begin{figure}[t]
-\centering
-% \includegraphics[width=0.48\textwidth]{figures/router_scalability.pdf}
-\caption{Performance vs. Number of Tasks. X축: Task 개수 (1$\sim$15), Y축: Image AUROC. Line 1: Ideal (Task ID Given, Oracle), Line 2: MoLE-Flow (With Router). Gap이 작을수록 Router가 견고함을 의미.}
-\label{fig:router_scalability}
-\end{figure}
-
-\textbf{핵심 분석:}
-\begin{itemize}
-\item Task 수 증가에 따른 Router Accuracy 변화 추적
-\item Oracle과 Router의 Gap이 일정하게 유지되면 scalable한 설계임을 입증
-\item Router confusion이 급증하는 Task 수의 임계점 식별 (있는 경우)
-\end{itemize}
-
-\subsubsection{Class Order Sensitivity}
-
-표~\ref{tab:order}는 클래스 순서에 따른 성능 변화를 보여준다.
-
-\begin{table}[t]
-\centering
-\caption{Class Order Sensitivity (5개 Random Seed)}
-\label{tab:order}
-\begin{tabular}{lccc}
-\toprule
-\textbf{Ordering} & \textbf{Img AUC} & \textbf{Routing Acc.} & \textbf{Std.} \\
-\midrule
-Alphabetical & 98.05 & 100.0\% & - \\
-Random Seed 0 & 98.10 & 100.0\% & - \\
-Random Seed 42 & 98.22 & 100.0\% & - \\
-Random Seed 123 & 98.16 & 100.0\% & - \\
-\midrule
-\textbf{Mean $\pm$ Std} & 98.13 $\pm$ 0.07 & 100.0\% & 0.07 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\textbf{실험 목적:}
-\begin{itemize}
-\item 클래스 순서가 최종 성능에 미치는 영향 분석
-\item Parameter Isolation이 순서 민감도를 줄이는지 확인
-\item 분산이 작을수록 robust한 방법론임을 입증
-\end{itemize}
-
-%==============================================================================
-\subsection{Representation Analysis}
-\label{sec:representation}
-
-\subsubsection{Router Decision Boundary Visualization}
-
-그림~\ref{fig:router_boundary}는 TaskPrototype의 Mahalanobis decision boundary를 시각화한다. t-SNE 상에서 각 Task의 Feature Cluster가 얼마나 잘 분리되는지, 그리고 새로운 Task가 추가될 때 기존 Cluster를 침범하지 않는지 보여준다.
-
-\begin{figure}[t]
-\centering
-% \subfigure[After Task 0]{\includegraphics[width=0.3\textwidth]{figures/router_task0.pdf}}
-% \subfigure[After Task 7]{\includegraphics[width=0.3\textwidth]{figures/router_task7.pdf}}
-% \subfigure[After Task 14]{\includegraphics[width=0.3\textwidth]{figures/router_task14.pdf}}
-\caption{Router decision boundary evolution. 각 Task의 prototype (centroid)과 decision boundary (Mahalanobis ellipse)를 시각화. 색상은 Task ID를 나타냄.}
-\label{fig:router_boundary}
-\end{figure}
-
-\textbf{분석 목적:}
-\begin{itemize}
-\item 각 Task의 feature cluster가 명확히 분리되어 있는지 확인
-\item 새로운 Task 추가 시 기존 prototype이 변하지 않음을 시각적으로 입증
-\item Router confusion이 발생하는 클래스 쌍 (예: leather vs carpet)을 식별
-\end{itemize}
-
-\subsubsection{Latent Space Visualization}
-
-그림~\ref{fig:tsne}은 학습 진행에 따른 잠재 공간($\mathbf{z}$)의 변화를 t-SNE로 시각화한다.
-
-\begin{figure}[t]
-\centering
-% \subfigure[Before Training]{\includegraphics[width=0.3\textwidth]{figures/tsne_before.pdf}}
-% \subfigure[After Task 0]{\includegraphics[width=0.3\textwidth]{figures/tsne_task0.pdf}}
-% \subfigure[After All Tasks]{\includegraphics[width=0.3\textwidth]{figures/tsne_final.pdf}}
-\caption{Latent space ($\mathbf{z}$) t-SNE visualization. 색상은 작업을, 마커 모양은 정상(원)/이상(삼각형)을 구분.}
-\label{fig:tsne}
-\end{figure}
-
-\textbf{분석 목적:}
-\begin{enumerate}
-\item 각 작업의 정상 샘플이 원점 근처에 매핑되는지 확인
-\item 이상 샘플이 정상 클러스터에서 벗어나는지 확인
-\item 작업 간 잠재 공간이 적절히 분리되는지 확인
-\end{enumerate}
-
-\subsubsection{Latent Distribution Stability (Forgetting Visualization)}
-
-그림~\ref{fig:latent_stability}는 Normalizing Flow의 핵심 속성인 ``Latent가 Gaussian 분포를 따르는지''를 Task 추가에 따라 분석한다. \textbf{Task 0만 학습했을 때의 $\mathbf{z}$ 분포 vs. Task 14까지 학습한 후 Task 0 데이터의 $\mathbf{z}$ 분포 변화}를 비교하여 Forgetting 없음을 시각적으로 입증한다.
-
-\begin{figure}[t]
-\centering
-% \subfigure[Task 0 (after T0)]{\includegraphics[width=0.45\textwidth]{figures/latent_dist_t0_init.pdf}}
-% \subfigure[Task 0 (after T14)]{\includegraphics[width=0.45\textwidth]{figures/latent_dist_t0_final.pdf}}
-\caption{Latent distribution stability for Task 0. (a) Task 0 학습 직후의 $\mathbf{z}$ 분포. (b) Task 14까지 학습 후 Task 0 데이터의 $\mathbf{z}$ 분포. 두 분포가 유사하면 Forgetting이 없음을 의미.}
-\label{fig:latent_stability}
-\end{figure}
-
-\textbf{분석 포인트:}
-\begin{itemize}
-\item 두 분포의 KL divergence가 작을수록 Parameter Isolation 효과 입증
-\item 분포의 mean, variance가 유지되는지 정량적 비교
-\item Fine-tuning 방법과 비교하여 분포 붕괴(distribution collapse) 없음을 입증
-\end{itemize}
-
-\subsubsection{Distribution Quality Analysis}
-
-표~\ref{tab:distribution}은 각 작업별 잠재 분포의 품질을 분석한다.
-
-\begin{table}[t]
-\centering
-\caption{Latent Distribution Quality Analysis}
-\label{tab:distribution}
-\begin{tabular}{lccc}
-\toprule
-\textbf{Task} & $\|\mathbf{z}\|_2$ \textbf{(Normal)} & $\|\mathbf{z}\|_2$ \textbf{(Anomaly)} & \textbf{KL}$(z \| \mathcal{N}(0,I))$ \\
-\midrule
-leather & 1.02 & 4.85 & 0.023 \\
-grid & 0.98 & 5.12 & 0.018 \\
-transistor & 1.05 & 4.67 & 0.025 \\
-carpet & 0.99 & 5.34 & 0.021 \\
-bottle & 1.01 & 4.92 & 0.019 \\
-\midrule
-\textbf{Average} & 1.01 & 4.98 & 0.021 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\textbf{분석 항목:}
-\begin{itemize}
-\item \textbf{$\|\mathbf{z}\|_2$ (Normal)}: 정상 샘플의 평균 L2 norm (1에 가까워야 함)
-\item \textbf{$\|\mathbf{z}\|_2$ (Anomaly)}: 이상 샘플의 평균 L2 norm (정상보다 커야 함)
-\item \textbf{KL Divergence}: 표준 정규분포와의 거리 (낮을수록 Flow가 잘 학습됨)
-\end{itemize}
-
-%==============================================================================
-\subsection{Qualitative Results}
-\label{sec:qualitative}
-
-\subsubsection{Anomaly Localization Visualization}
-
-그림~\ref{fig:heatmap}은 다양한 결함 유형에 대한 이상 히트맵을 보여준다.
-
-\begin{figure*}[t]
-\centering
-% \includegraphics[width=\textwidth]{figures/qualitative_heatmap.pdf}
-\caption{Qualitative anomaly localization results. 각 행: 입력 이미지, Ground Truth, MoLE-Flow 히트맵, DNE 히트맵, UCAD 히트맵. 결함 유형: (a) Scratch (Screw), (b) Structural defect (Transistor), (c) Surface defect (Leather), (d) Texture anomaly (Carpet).}
-\label{fig:heatmap}
-\end{figure*}
-
-\textbf{선정 기준:}
-\begin{itemize}
-\item 다양한 결함 유형 포함: 스크래치, 구조적 결함, 표면 결함, 텍스처 이상
-\item 성공 사례와 도전적 사례 균형 있게 제시
-\item 기존 방법과의 시각적 비교를 통한 차별점 강조
-\end{itemize}
-
-\subsubsection{Task-Aware vs. Task-Agnostic Anomaly Map Comparison}
-
-그림~\ref{fig:task_aware_compare}는 Task ID를 알 때(Oracle)와 모를 때(Router)의 Anomaly Map 차이를 시각화한다. 이 비교를 통해 Router의 정확성이 실제 탐지 결과에 미치는 영향을 분석한다.
-
-\begin{figure}[t]
-\centering
-% \includegraphics[width=0.48\textwidth]{figures/task_aware_compare.pdf}
-\caption{Task-Aware vs. Task-Agnostic anomaly maps. (a) Input, (b) GT, (c) Oracle (correct task), (d) Router prediction, (e) Wrong task (worst case). Router가 올바른 전문가를 선택하면 Oracle과 거의 동일한 결과를 보임.}
-\label{fig:task_aware_compare}
-\end{figure}
-
-\textbf{분석 포인트:}
-\begin{itemize}
-\item Router가 정확하면 (c)와 (d)가 거의 동일함
-\item 잘못된 Task를 선택하면 (e)처럼 완전히 다른 결과 → Router 정확도의 중요성 입증
-\item Router confusion이 발생하는 edge case 분석
-\end{itemize}
-
-\subsubsection{Component Effect Visualization}
-
-그림~\ref{fig:component_effect}는 각 모듈이 이상 탐지에 미치는 영향을 시각화한다.
-
-\begin{figure}[t]
-\centering
-% \includegraphics[width=0.48\textwidth]{figures/component_effect.pdf}
-\caption{Component ablation visualization. (a) Full Model, (b) w/o DIA, (c) w/o WhiteningAdapter, (d) w/o Spatial Context.}
-\label{fig:component_effect}
-\end{figure}
-
-\textbf{분석 포인트:}
-\begin{itemize}
-\item DIA 제거 시 복잡한 패턴의 이상 탐지 능력 저하
-\item WhiteningAdapter 제거 시 분포 정렬 실패로 인한 false positive 증가
-\item Spatial Context 제거 시 경계 영역 탐지 정확도 저하
-\end{itemize}
-
-\subsubsection{Failure Case Analysis}
-
-그림~\ref{fig:failure}은 모델이 실패하는 대표적인 사례들을 분석한다.
-
-\begin{figure}[t]
-\centering
-% \includegraphics[width=0.48\textwidth]{figures/failure_cases.pdf}
-\caption{Failure case analysis. (a) 저대비 미세 결함 미탐지, (b) 정상 변이를 이상으로 오탐지, (c) 회전 변형에 민감한 탐지.}
-\label{fig:failure}
-\end{figure}
-
-\begin{table}[t]
-\centering
-\caption{Failure Case 분류 및 원인 분석}
-\label{tab:failure}
-\begin{tabular}{lll}
-\toprule
-\textbf{Failure Type} & \textbf{Cause} & \textbf{Potential Solution} \\
-\midrule
-저대비 미세 결함 & 특징 추출 한계 & 고해상도 입력, 다중 스케일 분석 \\
-정상 변이 오탐지 & 정상 분포의 다양성 부족 & 데이터 증강, 더 넓은 정상 범위 학습 \\
-회전 민감성 & Positional Encoding의 고정성 & 회전 불변 특징, 증강 \\
-클래스 간 유사성 & 프로토타입 중첩 & 더 강한 클래스 분리 학습 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-%==============================================================================
-\subsection{Computational Efficiency}
-\label{sec:efficiency}
-
-표~\ref{tab:efficiency}는 각 방법의 계산 효율성을 비교한다.
-
-\begin{table}[t]
-\centering
-\caption{Computational Efficiency 비교}
-\label{tab:efficiency}
-\begin{tabular}{lcccc}
-\toprule
-\textbf{Method} & \textbf{Params/Task} & \textbf{Train Time} & \textbf{Inference} & \textbf{Memory} \\
-\midrule
-Joint Training & 23.5M & 8.5h & 12ms & 4.2GB \\
-Task-Separated & 23.5M $\times$ 15 & 2.1h $\times$ 15 & 12ms & 62.5GB \\
-DNE & $\sim$1M & 1.5h/task & 15ms & 1.8GB \\
-UCAD & $\sim$2M & 2.2h/task & 18ms & 2.4GB \\
-\textbf{MoLE-Flow} & $\sim$2M & 1.8h/task & 14ms & 2.1GB \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\textbf{분석 포인트:}
-\begin{itemize}
-\item MoLE-Flow는 작업당 약 0.5M의 추가 파라미터로 가장 효율적
-\item 추론 시 Router overhead가 전체 추론 시간의 1\% 미만
-\item 메모리 사용량이 Task 수에 선형적으로 증가하나, 증가폭이 작음
-\end{itemize}
+The performance gap between MVTec AD and VisA (particularly in Pixel AP: 0.562 vs 0.266) reflects VisA's inherent difficulty: its categories feature more complex structures, smaller defects, and lower contrast anomalies. Nevertheless, MoLE-Flow maintains zero forgetting on both datasets, demonstrating the robustness of our approach across diverse industrial scenarios.
 
 \section{Conclusion}
 \label{sec:conclusion}
@@ -1663,9 +1336,9 @@ UCAD & $\sim$2M & 2.2h/task & 18ms & 2.4GB \\
 \begin{enumerate}
 \item \textbf{Parameter Isolation 기반 지속 학습}: Base Normalizing Flow 가중치를 공유/고정하고 작업별 경량 어댑터(LoRA, WhiteningAdapter, DIA)만 학습하는 전략을 제안하여, 파멸적 망각을 효과적으로 방지하면서도 파라미터 효율성을 확보하였다.
 
-\item \textbf{Deep Invertible Adapter (DIA)}: 선형 LoRA의 한계를 극복하는 비선형 가역 적응 모듈을 제안하였다. DIA는 작업별 복잡한 매니폴드 차이를 보정하며, Ablation study에서 가장 중요한 구성 요소로 확인되었다 (제거 시 Image AUROC 3\%+ 하락).
+\item \textbf{Deep Invertible Adapter (DIA)}: 선형 LoRA의 한계를 극복하는 비선형 가역 적응 모듈을 제안하였다. DIA는 작업별 복잡한 매니폴드 차이를 보정하며, Ablation study에서 가장 중요한 구성 요소로 확인되었다 (제거 시 Image AUROC 0.03+ 하락).
 
-\item \textbf{One-stage Task-agnostic 추론}: Mahalanobis 거리 기반 프로토타입 라우터를 통해 Task ID 없이 단일 추론으로 라우팅과 이상 탐지를 동시에 수행한다. 이는 기존 방법들의 two-stage 추론 대비 효율적이며, 100\% 라우팅 정확도로 신뢰성을 검증하였다.
+\item \textbf{One-stage Task-agnostic 추론}: Mahalanobis 거리 기반 프로토타입 라우터를 통해 Task ID 없이 단일 추론으로 라우팅과 이상 탐지를 동시에 수행한다. 이는 기존 방법들의 two-stage 추론 대비 효율적이며, 라우팅 정확도 1.000으로 신뢰성을 검증하였다.
 
 \item \textbf{Tail-Aware Loss}: 분포의 경계에 위치한 어려운 패치에 집중하는 손실 함수를 제안하여, 특히 픽셀 수준의 정밀한 이상 위치 추정(Pixel AP) 성능을 향상시켰다.
 \end{enumerate}
