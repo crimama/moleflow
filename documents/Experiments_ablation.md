@@ -1,4 +1,21 @@
 # MoLE-Flow Ablation Study
+## Table of Contents
+
+1. [Baseline Configuration (MAIN)](#baseline-configuration-main)
+2. [Architecture Modular Analysis](#architecture-modular-analysis)
+   - [Core Component Ablation](#1-core-component-ablation-mole6dia2-기준)
+3. [Hyperparameter Sensitivity Analysis](#hyperparameter-sensitivity-analysis)
+   - [Lambda Logdet (Log-determinant Regularization)](#lambda-logdet-log-determinant-regularization)
+   - [Scale Context Kernel Size](#scale-context-kernel-size-scale_context_kernel)
+   - [Spatial Context Kernel Size](#spatial-context-kernel-size-spatial_context_kernel)
+   - [LoRA Rank](#lora-rank)
+   - [Tail Aware Loss (tail_weight, tail_top_k_ratio)](#tail-aware-loss-tail_weight-tail_top_k_ratio)
+   - [Image Anomaly Score Aggregation K](#image-anomaly-score-aggregation-k-score_aggregation_top_k)
+4. [Hyperparameter Analysis Summary](#hyperparameter-analysis-summary)
+   - [최적 하이퍼파라미터](#최적-하이퍼파라미터-2026-01-08-종합)
+   - [주요 발견사항](#주요-발견사항)
+
+---
 
 ## Baseline Configuration (MAIN)
 
@@ -314,7 +331,7 @@
 | 0.5         | 97.93   | 97.68   | 99.21  | 54.78  | -1.40    | ✅ 완료 |
 | 0.7         | 98.05   | 97.81   | 99.25  | 55.80  | -0.38    | ✅ 완료 |
 | 0.8         | 98.01   | 97.82   | 99.22  | 56.00  | -0.18    | ✅ 약간 향상 |
-| **1.0**     | **97.92** | **97.81** | **99.16** | **56.18** | - | **✅ MoLE6+DIA2 기준** |
+| **1.0**     | **98.00** | **97.81** | **99.16** | **56.18** | - | **✅ MoLE6+DIA2 기준** |
 | **1.2**     | 97.89 | 97.79 | 99.12 | 56.03 | -0.15 | ✅ |
 
 ### 분석 (2026-01-08 업데이트)
@@ -441,10 +458,3 @@
    - 1e-4에서 최적 성능, Log-determinant regularization 필수
 
 ---
-
-# Deep Analysis 
-
-## Tail-Aware-Loss 
-- Tail로써 사용하는 likelihood는 전체의 0.02로 매우 작은 수준. 그럼에도 이 0.02에 weight를 주었을 때 꽤 큰 성능 향상을 보임. 이러한 이유에 대한 더 구체적인 분석 실험 필요. 
-
-## Task-Router (T-SNE) 활용 

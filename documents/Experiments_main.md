@@ -1,455 +1,95 @@
-# MoLE-Flow Main Experiments
+# MoLE-Flow Experiment Results
 
-## Baseline Configuration
-
-**Experiment**: `MVTec-WRN50-TailW0.7-TopK3-TailTopK2-ScaleK5-lr3e-4-MAIN`
-
-| Parameter | Value |
-|-----------|-------|
-| Backbone | WideResNet50 |
-| LoRA Rank | 64 |
-| Coupling Layers | 8 |
-| DIA Blocks | 4 |
-| Epochs | 60 |
-| Learning Rate | 3e-4 |
-| Adapter Mode | Whitening |
-| Tail Weight | 0.7 |
-| Score Aggregation | top_k (k=3) |
-| Scale Context Kernel | 5 |
-| Lambda Logdet | 1e-4 |
+> For Paper Submission
+> Last Updated: 2026-01-10
 
 ---
 
-## 1. Main Performance Table - MVTecAD
-
-### Overall Results
-
-| Method | Image AUC | Pixel AUC | Image AP | Pixel AP | Routing Acc |
-|--------|-----------|-----------|----------|----------|-------------|
-| **MoLE-Flow (Ours)** | **98.29** | **97.82** | **99.28** | **54.20** | **100.0** |
-
-### Comparison with Baselines (Pixel AP)
-
-| Method | bottle | cable | capsule | carpet | grid | hazelnut | leather | metal_nut | pill | screw | tile | toothbrush | transistor | wood | zipper | **Avg** | FM |
-|--------|--------|-------|---------|--------|------|----------|---------|-----------|------|-------|------|------------|------------|------|--------|---------|-----|
-| **MoLE-Flow (Ours)** | 0.721 | **0.616** | 0.388 | 0.632 | 0.266 | 0.579 | 0.453 | 0.758 | **0.814** | 0.228 | **0.668** | **0.540** | 0.646 | 0.467 | 0.356 | **0.542** | **0.00** |
-| Joint_PatchCore | **0.820** | 0.514 | **0.525** | **0.770** | **0.300** | 0.728 | 0.224 | **0.892** | 0.811 | **0.336** | 0.620 | 0.527 | 0.637 | **0.683** | 0.531 | 0.594 | - |
-| Joint_PatchCore(R) | 0.826 | 0.505 | 0.510 | 0.766 | 0.293 | 0.712 | 0.230 | 0.862 | 0.785 | 0.157 | 0.664 | 0.561 | 0.515 | 0.641 | **0.565** | 0.573 | - |
-| Joint_CADIC | 0.815 | 0.510 | 0.519 | 0.754 | 0.292 | **0.744** | 0.210 | 0.886 | 0.815 | 0.307 | 0.630 | 0.530 | **0.650** | 0.675 | 0.528 | 0.591 | - |
-| CADIC | 0.790 | 0.485 | 0.506 | 0.753 | 0.276 | 0.749 | 0.191 | 0.880 | 0.810 | 0.328 | 0.609 | 0.527 | 0.650 | 0.686 | 0.517 | 0.584 | 0.015 |
-| ReplayCAD [24] | 0.710 | 0.369 | 0.337 | 0.652 | 0.338 | 0.635 | **0.587** | 0.656 | 0.698 | 0.329 | 0.531 | 0.576 | 0.605 | 0.500 | 0.539 | 0.537 | 0.055 |
-| DFM [8] | 0.768 | 0.506 | 0.241 | 0.771 | 0.228 | 0.479 | 0.432 | 0.690 | 0.576 | 0.242 | 0.623 | 0.331 | 0.501 | 0.581 | 0.511 | 0.511 | 0.013 |
-| CFRDC [27] | 0.737 | 0.518 | 0.425 | 0.506 | 0.243 | 0.556 | 0.372 | 0.666 | 0.417 | 0.125 | 0.454 | 0.417 | 0.710 | 0.380 | 0.390 | 0.461 | - |
-| UCAD [7] | 0.752 | 0.290 | 0.349 | 0.622 | 0.187 | 0.506 | 0.333 | 0.775 | 0.634 | 0.214 | 0.549 | 0.298 | 0.398 | 0.535 | 0.398 | 0.456 | 0.013 |
-| FT_PatchCore | 0.048 | 0.029 | 0.035 | 0.552 | 0.003 | 0.338 | 0.279 | 0.248 | 0.051 | 0.008 | 0.249 | 0.034 | 0.079 | 0.304 | 0.595 | 0.190 | 0.371 |
-| FT_CFA | 0.068 | 0.056 | 0.050 | 0.271 | 0.004 | 0.341 | 0.393 | 0.255 | 0.080 | 0.015 | 0.155 | 0.053 | 0.056 | 0.281 | 0.573 | 0.177 | 0.083 |
-| IUF [25] | 0.289 | 0.054 | 0.040 | 0.440 | 0.084 | 0.301 | 0.330 | 0.142 | 0.048 | 0.012 | 0.310 | 0.049 | 0.065 | 0.326 | 0.080 | 0.171 | 0.059 |
-| FT_RD4AD | 0.055 | 0.040 | 0.064 | 0.212 | 0.005 | 0.384 | 0.116 | 0.247 | 0.061 | 0.015 | 0.193 | 0.034 | 0.059 | 0.097 | 0.562 | 0.143 | 0.425 |
-| FT_SimpleNet | 0.108 | 0.045 | 0.029 | 0.018 | 0.004 | 0.029 | 0.006 | 0.227 | 0.077 | 0.004 | 0.082 | 0.046 | 0.049 | 0.037 | 0.139 | 0.060 | 0.069 |
-
-*Note: Joint methods are upper bounds (trained on all data simultaneously). FT methods show catastrophic forgetting (fine-tuning baseline). FM = Forgetting Measure (lower is better).*
-
-### Per-Category Results (MVTecAD)
-
-| Category | Image AUC | Pixel AUC | Image AP | Pixel AP | Routing Acc |
-|----------|-----------|-----------|----------|----------|-------------|
-| Bottle | 100.00 | 98.27 | 100.00 | 72.06 | 100.0% |
-| Cable | 99.03 | 97.61 | 99.51 | 61.63 | 100.0% |
-| Capsule | 97.25 | 98.65 | 99.41 | 38.84 | 100.0% |
-| Carpet | 99.48 | 98.96 | 99.85 | 63.16 | 100.0% |
-| Grid | 99.25 | 97.69 | 99.74 | 26.56 | 100.0% |
-| Hazelnut | 99.93 | 98.69 | 99.96 | 57.86 | 100.0% |
-| Leather | 100.00 | 99.33 | 100.00 | 45.27 | 100.0% |
-| Metal Nut | 100.00 | 97.15 | 100.00 | 75.75 | 100.0% |
-| Pill | 99.10 | 98.99 | 99.85 | 81.39 | 100.0% |
-| Screw | 92.17 | 98.24 | 96.90 | 22.81 | 100.0% |
-| Tile | 100.00 | 96.71 | 100.00 | 66.80 | 100.0% |
-| Toothbrush | 90.83 | 98.47 | 95.96 | 53.98 | 100.0% |
-| Transistor | 99.17 | 96.94 | 98.60 | 64.61 | 100.0% |
-| Wood | 98.86 | 94.14 | 99.64 | 46.65 | 100.0% |
-| Zipper | 99.24 | 97.52 | 99.81 | 35.57 | 100.0% |
-| **Average** | **98.29** | **97.82** | **99.28** | **54.20** | **100.0%** |
-
----
-
-## 2. Main Performance Table - ViSA
-
-### Overall Results
-
-| Method | Image AUC | Pixel AUC | Image AP | Pixel AP | Parameters |
-|--------|-----------|-----------|----------|----------|------------|
-| **MoLE-Flow (Ours)** | TBD | TBD | TBD | TBD | TBD |
-| FastFlow | TBD | TBD | TBD | TBD | TBD |
-| CFLOW-AD | TBD | TBD | TBD | TBD | TBD |
-| CS-Flow | TBD | TBD | TBD | TBD | TBD |
-| DiffNet | TBD | TBD | TBD | TBD | TBD |
-| PatchCore | TBD | TBD | TBD | TBD | TBD |
-
-### Per-Category Results (ViSA)
-
-| Category | Image AUC | Pixel AUC | Image AP | Pixel AP |
-|----------|-----------|-----------|----------|----------|
-| Candle | TBD | TBD | TBD | TBD |
-| Capsules | TBD | TBD | TBD | TBD |
-| Cashew | TBD | TBD | TBD | TBD |
-| Chewinggum | TBD | TBD | TBD | TBD |
-| Fryum | TBD | TBD | TBD | TBD |
-| Macaroni1 | TBD | TBD | TBD | TBD |
-| Macaroni2 | TBD | TBD | TBD | TBD |
-| PCB1 | TBD | TBD | TBD | TBD |
-| PCB2 | TBD | TBD | TBD | TBD |
-| PCB3 | TBD | TBD | TBD | TBD |
-| PCB4 | TBD | TBD | TBD | TBD |
-| Pipe Fryum | TBD | TBD | TBD | TBD |
-| **Average** | TBD | TBD | TBD | TBD |
-
----
-
-## 3. Performance Graph - MVTecAD
-
-### 3.1 Learning Curves
-
-**실험 목적**: 학습 과정에서 각 task별 성능 변화 추이 분석
-
-| Task ID | Category | Final Image AUC | Final Pixel AUC | Final Pixel AP |
-|---------|----------|-----------------|-----------------|----------------|
-| 0 | Bottle | 100.00 | 98.27 | 72.06 |
-| 1 | Cable | 99.03 | 97.61 | 61.63 |
-| 2 | Capsule | 97.25 | 98.65 | 38.84 |
-| 3 | Carpet | 99.48 | 98.96 | 63.16 |
-| 4 | Grid | 99.25 | 97.69 | 26.56 |
-| 5 | Hazelnut | 99.93 | 98.69 | 57.86 |
-| 6 | Leather | 100.00 | 99.33 | 45.27 |
-| 7 | Metal Nut | 100.00 | 97.15 | 75.75 |
-| 8 | Pill | 99.10 | 98.99 | 81.39 |
-| 9 | Screw | 92.17 | 98.24 | 22.81 |
-| 10 | Tile | 100.00 | 96.71 | 66.80 |
-| 11 | Toothbrush | 90.83 | 98.47 | 53.98 |
-| 12 | Transistor | 99.17 | 96.94 | 64.61 |
-| 13 | Wood | 98.86 | 94.14 | 46.65 |
-| 14 | Zipper | 99.24 | 97.52 | 35.57 |
-
-### 3.2 Task-wise Performance Progression
-
-**실험 목적**: 각 task 학습 후 전체 task들에 대한 성능 변화 추적
-
-| After Task | Category | Avg Image AUC | Avg Pixel AUC | Routing Acc | Notes |
-|------------|----------|---------------|---------------|-------------|-------|
-| Task 0 | Bottle | 100.00 | 98.27 | 100.0% | Initial task |
-| Task 1 | Cable | 99.51 | 97.94 | 100.0% | |
-| Task 2 | Capsule | 98.76 | 98.18 | 100.0% | |
-| Task 3 | Carpet | 98.94 | 98.37 | 100.0% | |
-| Task 4 | Grid | 99.00 | 98.23 | 100.0% | |
-| Task 5 | Hazelnut | 99.15 | 98.31 | 100.0% | |
-| Task 6 | Leather | 99.28 | 98.46 | 100.0% | |
-| Task 7 | Metal Nut | 99.37 | 98.29 | 100.0% | |
-| Task 8 | Pill | 99.34 | 98.37 | 100.0% | |
-| Task 9 | Screw | 98.62 | 98.36 | 100.0% | |
-| Task 10 | Tile | 98.75 | 98.21 | 100.0% | |
-| Task 11 | Toothbrush | 98.09 | 98.23 | 100.0% | |
-| Task 12 | Transistor | 98.17 | 98.13 | 100.0% | |
-| Task 13 | Wood | 98.22 | 97.84 | 100.0% | |
-| Task 14 | Zipper | **98.29** | **97.82** | **100.0%** | Final performance |
-
-*Note: All previous tasks maintain their original performance after each new task training (no forgetting).*
-
----
-
-## 4. Forgetting Analysis
-
-### 4.1 Catastrophic Forgetting
-
-**실험 목적**: 새로운 task 학습 시 이전 task 성능 유지 능력 평가
-
-**Forgetting Metric**:
-\[ F_i = \max_{j \in \{1, ..., T-1\}} (A_{i,j} - A_{i,T}) \]
-
-where \( A_{i,j} \) is the accuracy on task \( i \) after learning task \( j \).
-
-| Task ID | Category | Initial AUC | Final AUC | Forgetting | Status |
-|---------|----------|-------------|-----------|------------|--------|
-| 0 | Bottle | 100.00 | 100.00 | 0.00 | ✓ No Forgetting |
-| 1 | Cable | 99.03 | 99.03 | 0.00 | ✓ No Forgetting |
-| 2 | Capsule | 97.25 | 97.25 | 0.00 | ✓ No Forgetting |
-| 3 | Carpet | 99.48 | 99.48 | 0.00 | ✓ No Forgetting |
-| 4 | Grid | 99.25 | 99.25 | 0.00 | ✓ No Forgetting |
-| 5 | Hazelnut | 99.93 | 99.93 | 0.00 | ✓ No Forgetting |
-| 6 | Leather | 100.00 | 100.00 | 0.00 | ✓ No Forgetting |
-| 7 | Metal Nut | 100.00 | 100.00 | 0.00 | ✓ No Forgetting |
-| 8 | Pill | 99.10 | 99.10 | 0.00 | ✓ No Forgetting |
-| 9 | Screw | 92.17 | 92.17 | 0.00 | ✓ No Forgetting |
-| 10 | Tile | 100.00 | 100.00 | 0.00 | ✓ No Forgetting |
-| 11 | Toothbrush | 90.83 | 90.83 | 0.00 | ✓ No Forgetting |
-| 12 | Transistor | 99.17 | 99.17 | 0.00 | ✓ No Forgetting |
-| 13 | Wood | 98.86 | 98.86 | 0.00 | ✓ No Forgetting |
-| **Average Forgetting** | - | - | - | **0.00** | ✓ Perfect |
-
-*Note: MoLE-Flow achieves zero forgetting due to task-specific LoRA adapters combined with perfect routing (100% accuracy).*
-
-### 4.2 Forward Transfer
-
-**실험 목적**: 이전 task 학습이 새로운 task 학습에 미치는 긍정적 영향 측정
-
-**Forward Transfer Metric**:
-\[ FT_i = A_{i,i} - A_{i,0} \]
-
-where \( A_{i,i} \) is the accuracy on task \( i \) after learning it, and \( A_{i,0} \) is the accuracy on task \( i \) before any learning (random initialization).
-
-| Task ID | Category | Baseline (Random) | After Training | Forward Transfer | Improvement |
-|---------|----------|-------------------|----------------|------------------|-------------|
-| 0 | Bottle | TBD | TBD | TBD | - |
-| 1 | Cable | TBD | TBD | TBD | TBD |
-| 2 | Capsule | TBD | TBD | TBD | TBD |
-| 3 | Carpet | TBD | TBD | TBD | TBD |
-| 4 | Grid | TBD | TBD | TBD | TBD |
-| 5 | Hazelnut | TBD | TBD | TBD | TBD |
-| 6 | Leather | TBD | TBD | TBD | TBD |
-| 7 | Metal Nut | TBD | TBD | TBD | TBD |
-| 8 | Pill | TBD | TBD | TBD | TBD |
-| 9 | Screw | TBD | TBD | TBD | TBD |
-| 10 | Tile | TBD | TBD | TBD | TBD |
-| 11 | Toothbrush | TBD | TBD | TBD | TBD |
-| 12 | Transistor | TBD | TBD | TBD | TBD |
-| 13 | Wood | TBD | TBD | TBD | TBD |
-| 14 | Zipper | TBD | TBD | TBD | TBD |
-| **Average FT** | - | - | - | **TBD** | - |
-
-### 4.3 Backward Transfer
-
-**실험 목적**: 새로운 task 학습이 이전 task 성능에 미치는 영향 측정
-
-**Backward Transfer Metric**:
-\[ BT_i = A_{i,T} - A_{i,i} \]
-
-where \( A_{i,T} \) is the accuracy on task \( i \) after learning all \( T \) tasks.
-
-| Task ID | Category | After Own Training | After All Tasks | Backward Transfer | Change |
-|---------|----------|-------------------|-----------------|-------------------|--------|
-| 0 | Bottle | 100.00 | 100.00 | 0.00 | Stable |
-| 1 | Cable | 99.03 | 99.03 | 0.00 | Stable |
-| 2 | Capsule | 97.25 | 97.25 | 0.00 | Stable |
-| 3 | Carpet | 99.48 | 99.48 | 0.00 | Stable |
-| 4 | Grid | 99.25 | 99.25 | 0.00 | Stable |
-| 5 | Hazelnut | 99.93 | 99.93 | 0.00 | Stable |
-| 6 | Leather | 100.00 | 100.00 | 0.00 | Stable |
-| 7 | Metal Nut | 100.00 | 100.00 | 0.00 | Stable |
-| 8 | Pill | 99.10 | 99.10 | 0.00 | Stable |
-| 9 | Screw | 92.17 | 92.17 | 0.00 | Stable |
-| 10 | Tile | 100.00 | 100.00 | 0.00 | Stable |
-| 11 | Toothbrush | 90.83 | 90.83 | 0.00 | Stable |
-| 12 | Transistor | 99.17 | 99.17 | 0.00 | Stable |
-| 13 | Wood | 98.86 | 98.86 | 0.00 | Stable |
-| **Average BT** | - | - | - | **0.00** | Stable |
-
-*Note: Due to task-specific LoRA adapters with frozen base weights, there is no backward transfer (positive or negative).*
-
-### 4.4 Overall Continual Learning Metrics
-
-| Metric | Formula | Value | Interpretation |
-|--------|---------|-------|----------------|
-| **Average Accuracy (Image AUC)** | \( \bar{A} = \frac{1}{T} \sum_{i=1}^{T} A_{i,T} \) | **98.29%** | Final performance across all tasks |
-| **Average Accuracy (Pixel AUC)** | \( \bar{A} = \frac{1}{T} \sum_{i=1}^{T} A_{i,T} \) | **97.82%** | Final performance across all tasks |
-| **Average Accuracy (Pixel AP)** | \( \bar{A} = \frac{1}{T} \sum_{i=1}^{T} A_{i,T} \) | **54.20%** | Final performance across all tasks |
-| **Average Forgetting** | \( \bar{F} = \frac{1}{T-1} \sum_{i=1}^{T-1} F_i \) | **0.00%** | Perfect: No forgetting |
-| **Average Forward Transfer** | \( \bar{FT} = \frac{1}{T-1} \sum_{i=2}^{T} FT_i \) | N/A | Not applicable (task-specific experts) |
-| **Average Backward Transfer** | \( \bar{BT} = \frac{1}{T-1} \sum_{i=1}^{T-1} BT_i \) | **0.00%** | Stable: No performance change |
-| **Routing Accuracy** | - | **100.0%** | Perfect task identification |
-
----
-
-## 5. Efficiency Analysis
-
-### 5.1 Number of Parameters
-
-**실험 목적**: 모델 크기 및 파라미터 효율성 비교
-
-| Component | Parameters | Trainable | Percentage | Notes |
-|-----------|------------|-----------|------------|-------|
-| Backbone (WRN50) | TBD | No | - | Frozen after Task 0 |
-| LoRA Adapters (per task) | TBD | Yes | - | Rank=64 |
-| MoLE SubNet (per task) | TBD | Yes | - | 8 blocks |
-| DIA Blocks (shared) | TBD | Yes | - | 4 blocks |
-| SpatialContextMixer | TBD | Yes | - | Shared across tasks |
-| WhiteningAdapter | TBD | Yes | - | Per task |
-| **Total (1 task)** | **TBD** | **TBD** | **100%** | - |
-| **Total (15 tasks)** | **TBD** | **TBD** | - | Full MVTecAD |
-
-**Comparison with Baselines**:
-
-| Method | Total Parameters | Trainable Parameters | Memory (MB) | Relative Size |
-|--------|------------------|---------------------|-------------|---------------|
-| **MoLE-Flow (Ours)** | TBD | TBD | TBD | 1.0x |
-| FastFlow | TBD | TBD | TBD | TBD |
-| CFLOW-AD | TBD | TBD | TBD | TBD |
-| CS-Flow | TBD | TBD | TBD | TBD |
-| DiffNet | TBD | TBD | TBD | TBD |
-| PatchCore | TBD | TBD | TBD | TBD |
-
-### 5.2 Inference Speed
-
-**실험 목적**: 실시간 추론 성능 평가
-
-**Test Configuration**:
-- Hardware: TBD (e.g., NVIDIA RTX 3090)
-- Batch Size: 1, 8, 32
-- Image Resolution: 256×256
-- Measurement: Average over 1000 iterations
-
-| Method | Batch=1 (ms) | Batch=8 (ms) | Batch=32 (ms) | FPS (Batch=1) | Throughput (img/s) |
-|--------|--------------|--------------|---------------|---------------|-------------------|
-| **MoLE-Flow (Ours)** | TBD | TBD | TBD | TBD | TBD |
-| FastFlow | TBD | TBD | TBD | TBD | TBD |
-| CFLOW-AD | TBD | TBD | TBD | TBD | TBD |
-| CS-Flow | TBD | TBD | TBD | TBD | TBD |
-| DiffNet | TBD | TBD | TBD | TBD | TBD |
-| PatchCore | TBD | TBD | TBD | TBD | TBD |
-
-**Inference Time Breakdown (MoLE-Flow)**:
-
-| Component | Time (ms) | Percentage | Notes |
-|-----------|-----------|------------|-------|
-| Feature Extraction | TBD | TBD% | Backbone forward pass |
-| Whitening Adapter | TBD | TBD% | Input normalization |
-| MoLE SubNet | TBD | TBD% | 8 coupling blocks |
-| DIA Blocks | TBD | TBD% | 4 blocks |
-| Score Aggregation | TBD | TBD% | Top-k selection |
-| **Total** | **TBD** | **100%** | - |
-
-### 5.3 Training Speed
-
-**실험 목적**: 학습 효율성 및 수렴 속도 평가
-
-**Training Configuration**:
-- Hardware: TBD (e.g., NVIDIA RTX 3090)
-- Batch Size: 16
-- Epochs: 60
-- Dataset: MVTecAD (single category)
-
-| Method | Time per Epoch (s) | Total Training Time (min) | GPU Memory (GB) | Convergence Epoch |
-|--------|-------------------|---------------------------|-----------------|-------------------|
-| **MoLE-Flow (Ours)** | TBD | TBD | TBD | TBD |
-| FastFlow | TBD | TBD | TBD | TBD |
-| CFLOW-AD | TBD | TBD | TBD | TBD |
-| CS-Flow | TBD | TBD | TBD | TBD |
-| DiffNet | TBD | TBD | TBD | TBD |
-| PatchCore | TBD | TBD | TBD | TBD |
-
-**Training Time for Full MVTecAD (15 tasks)**:
-
-| Setting | Total Time (hours) | Avg per Task (min) | Notes |
-|---------|-------------------|-------------------|-------|
-| Sequential Training | TBD | TBD | MoLE-Flow continual learning |
-| Independent Training | TBD | TBD | Train each task separately |
-| Joint Training | TBD | TBD | Train all tasks together (baseline) |
-
----
-
-## 6. Continual Learning Protocol
-
-### 6.1 Task Sequence
-
-**MVTecAD Task Order** (15 categories):
-1. Bottle
-2. Cable
-3. Capsule
-4. Carpet
-5. Grid
-6. Hazelnut
-7. Leather
-8. Metal Nut
-9. Pill
-10. Screw
-11. Tile
-12. Toothbrush
-13. Transistor
-14. Wood
-15. Zipper
-
-**ViSA Task Order** (12 categories):
-1. Candle
-2. Capsules
-3. Cashew
-4. Chewinggum
-5. Fryum
-6. Macaroni1
-7. Macaroni2
-8. PCB1
-9. PCB2
-10. PCB3
-11. PCB4
-12. Pipe Fryum
-
-### 6.2 Training Protocol
-
-| Phase | Description | Parameters Updated | Epochs |
-|-------|-------------|-------------------|--------|
-| **Task 0** | Initial task training | Backbone + All modules | 60 |
-| **Task 1-14** | Continual learning | LoRA + Flow modules (Backbone frozen) | 60 per task |
-
-**Key Settings**:
-- **Backbone**: Frozen after Task 0
-- **LoRA Adapters**: Task-specific, trained from scratch for each task
-- **Flow Modules**: Continually updated with new task data
-- **Evaluation**: Test on all seen tasks after each new task training
-
-### 6.3 Evaluation Protocol
-
-**Metrics Computed**:
-- Image-level AUC, AP
-- Pixel-level AUC, AP
-- Routing Accuracy (task identification)
-- Forgetting, Forward Transfer, Backward Transfer
-
-**Evaluation Frequency**:
-- After each task training
-- On all previously seen tasks
-- Using full test set for each category
-
-### 6.4 Comparison Settings
-
-| Setting | Description | Purpose |
-|---------|-------------|---------|
-| **Continual (Ours)** | Sequential task learning with frozen backbone | Main approach |
-| **Joint Training** | Train on all tasks simultaneously | Upper bound |
-| **Fine-tuning** | Sequential training without continual learning mechanisms | Lower bound (catastrophic forgetting) |
-| **Multi-task** | Separate model per task | Upper bound (no forgetting) |
-
----
-
-## 7. Visualization and Qualitative Results
-
-### 7.1 Anomaly Localization Examples
-
-**실험 목적**: 각 category별 이상 탐지 및 위치 추정 정성적 평가
-
-| Category | Sample Images | Anomaly Maps | Ground Truth | Notes |
-|----------|---------------|--------------|--------------|-------|
-| Bottle | TBD | TBD | TBD | TBD |
-| Cable | TBD | TBD | TBD | TBD |
-| Capsule | TBD | TBD | TBD | TBD |
-| ... | ... | ... | ... | ... |
-
-### 7.2 Feature Space Analysis
-
-**실험 목적**: Task별 feature distribution 및 분리도 시각화
-
-- t-SNE visualization of learned features
-- Task embedding space
-- Routing decision boundaries
-
-### 7.3 Attention Map Visualization
-
-**실험 목적**: SpatialContextMixer의 attention pattern 분석
-
-- Spatial attention maps
-- Scale context attention
-- Task-specific attention patterns
-
----
-
-## Notes
-
-- All experiments use the baseline configuration unless otherwise specified
-- TBD entries will be filled as experiments are completed
-- Routing Accuracy measures the model's ability to correctly identify which task an input belongs to
-- All metrics are averaged over 3 random seeds unless otherwise noted
+## 1. MVTec-AD Results (15 Classes, 1×1 CL Scenario)
+
+### Table 1: Comparison with State-of-the-Art Methods on MVTec-AD
+
+Image AUC 
+| Methods | bottle | cable | capsule | carpet | grid | hazelnut | leather | metal_nut | pill | screw | tile | toothbrush | transistor | wood | zipper | average | FM |
+|---------|--------|-------|---------|--------|------|----------|---------|-----------|------|-------|------|------------|------------|------|--------|---------|-----|
+| Joint_PatchCore | 1 | 0.977 | 0.927 | 1 | 0.983 | 0.994 | 1 | 1 | 0.948 | 0.92 | 1 | 0.969 | 0.958 | 0.997 | 0.998 | 0.978 | - |
+| Joint_PatchCore(R) | 0.998 | 0.936 | 0.868 | 1 | 0.984 | 0.979 | 1 | 0.993 | 0.921 | 0.653 | 0.998 | 0.975 | 0.832 | 0.995 | 0.972 | 0.94 | - |
+| Joint_CADIC | 1 | 0.986 | 0.921 | 1 | 0.987 | 0.99 | 1 | 1 | 0.945 | 0.899 | 1 | 0.972 | 0.975 | 0.994 | 0.996 | 0.978 | - |
+| FT_PatchCore | 0.163 | 0.518 | 0.35 | 0.968 | 0.7 | 0.839 | 0.625 | 0.259 | 0.459 | 0.484 | 0.776 | 0.586 | 0.341 | 0.97 | 0.991 | 0.602 | 0.383 |
+| FT_CFA | 0.309 | 0.489 | 0.275 | 0.834 | 0.571 | 0.903 | 0.935 | 0.464 | 0.528 | 0.528 | 0.763 | 0.519 | 0.32 | 0.923 | 0.984 | 0.623 | 0.361 |
+| FT_SimpleNet | 0.938 | 0.56 | 0.519 | 0.736 | 0.592 | 0.859 | 0.749 | 0.71 | 0.701 | 0.599 | 0.654 | 0.422 | 0.669 | 0.908 | 0.996 | 0.708 | 0.211 |
+| FT_RD4AD | 0.401 | 0.538 | 0.475 | 0.583 | 0.558 | 0.909 | 0.596 | 0.623 | 0.479 | 0.596 | 0.715 | 0.397 | 0.385 | 0.7 | 0.987 | 0.596 | 0.393 |
+| CFRDC | 0.996 | 0.9 | 0.785 | 0.997 | 0.98 | 0.994 | 1 | 0.995 | 0.933 | 0.711 | 0.991 | 0.933 | 0.997 | 0.982 | 0.984 | 0.945 | - |
+| IUF | 0.909 | 0.541 | 0.52 | 0.996 | 0.695 | 0.875 | 0.997 | 0.643 | 0.547 | 0.646 | 0.94 | 0.711 | 0.66 | 0.953 | 0.795 | 0.762 | 0.067 |
+| ReplayCAD | 0.99 | 0.957 | 0.747 | 0.98 | 0.927 | 0.985 | 0.974 | 0.995 | 0.944 | 0.795 | 0.999 | 0.981 | 0.957 | 0.984 | 0.997 | 0.948 | 0.045 |
+| DNE | 0.99 | 0.619 | 0.609 | 0.984 | 0.998 | 0.924 | 1 | 0.989 | 0.671 | 0.588 | 0.98 | 0.933 | 0.877 | 0.93 | 0.958 | 0.87 | 0.116 |
+| UCAD | 1 | 0.751 | 0.866 | 0.965 | 0.944 | 0.994 | 1 | 0.988 | 0.894 | 0.739 | 0.998 | 1 | 0.874 | 0.995 | 0.938 | 0.93 | 0.01 |
+| DFM | 0.997 | 0.948 | 0.996 | 0.999 | 0.99 | 0.977 | 1 | 1 | 0.983 | 0.765 | 0.982 | 0.997 | 0.932 | 0.986 | 0.987 | 0.969 | 0.015 |
+| CADIC | 1 | 0.982 | 0.877 | 0.996 | 0.983 | 0.994 | 1 | 1 | 0.942 | 0.906 | 0.995 | 0.954 | 0.968 | 0.994 | 0.99 | 0.972 | 0.011 |
+| Ours | 1 | 0.981 | 0.954 | 0.997 | 0.988 | 0.999 | 1 | 1 | 0.989 | 0.921 | 1.000 | 0.922 | 0.993 | 0.975 | 0.990 | 0.981 | 0 |
+
+Pixel AP 
+| Methods | bottle | cable | capsule | carpet | grid | hazelnut | leather | metal_nut | pill | screw | tile | toothbrush | transistor | wood | zipper | average | FM |
+|---------|--------|-------|---------|--------|------|----------|---------|-----------|------|-------|------|------------|------------|------|--------|---------|-----|
+| Joint_PatchCore | 0.82 | 0.514 | 0.525 | 0.77 | 0.3 | 0.728 | 0.224 | 0.892 | 0.811 | 0.336 | 0.62 | 0.527 | 0.637 | 0.683 | 0.531 | 0.594 | - |
+| Joint_PatchCore(R) | 0.826 | 0.505 | 0.51 | 0.766 | 0.293 | 0.712 | 0.23 | 0.862 | 0.785 | 0.157 | 0.664 | 0.561 | 0.515 | 0.641 | 0.565 | 0.573 | - |
+| Joint_CADIC | 0.815 | 0.51 | 0.519 | 0.754 | 0.292 | 0.744 | 0.21 | 0.886 | 0.815 | 0.307 | 0.63 | 0.53 | 0.65 | 0.675 | 0.528 | 0.591 | - |
+| FT_PatchCore | 0.048 | 0.029 | 0.035 | 0.552 | 0.003 | 0.338 | 0.279 | 0.248 | 0.051 | 0.008 | 0.249 | 0.034 | 0.079 | 0.304 | 0.595 | 0.19 | 0.371 |
+| FT_CFA | 0.068 | 0.056 | 0.05 | 0.271 | 0.004 | 0.341 | 0.393 | 0.255 | 0.08 | 0.015 | 0.155 | 0.053 | 0.056 | 0.281 | 0.573 | 0.177 | 0.083 |
+| FT_SimpleNet | 0.108 | 0.045 | 0.029 | 0.018 | 0.004 | 0.029 | 0.006 | 0.227 | 0.077 | 0.004 | 0.082 | 0.046 | 0.049 | 0.037 | 0.139 | 0.06 | 0.069 |
+| FT_RD4AD | 0.055 | 0.04 | 0.064 | 0.212 | 0.005 | 0.384 | 0.116 | 0.247 | 0.061 | 0.015 | 0.193 | 0.034 | 0.059 | 0.097 | 0.562 | 0.143 | 0.425 |
+| CFRDC | 0.737 | 0.518 | 0.425 | 0.506 | 0.243 | 0.556 | 0.372 | 0.666 | 0.417 | 0.125 | 0.454 | 0.417 | 0.71 | 0.38 | 0.39 | 0.461 | - |
+| IUF | 0.289 | 0.054 | 0.04 | 0.44 | 0.084 | 0.301 | 0.33 | 0.142 | 0.048 | 0.012 | 0.31 | 0.049 | 0.065 | 0.326 | 0.08 | 0.171 | 0.059 |
+| ReplayCAD | 0.71 | 0.369 | 0.337 | 0.652 | 0.338 | 0.635 | 0.587 | 0.656 | 0.698 | 0.329 | 0.531 | 0.576 | 0.605 | 0.5 | 0.539 | 0.537 | 0.055 |
+| UCAD | 0.752 | 0.29 | 0.349 | 0.622 | 0.187 | 0.506 | 0.333 | 0.775 | 0.634 | 0.214 | 0.549 | 0.298 | 0.398 | 0.535 | 0.398 | 0.456 | 0.013 |
+| DFM | 0.768 | 0.506 | 0.241 | 0.771 | 0.228 | 0.479 | 0.432 | 0.69 | 0.576 | 0.242 | 0.623 | 0.331 | 0.501 | 0.581 | 0.511 | 0.511 | 0.013 |
+| CADIC | 0.79 | 0.485 | 0.506 | 0.753 | 0.276 | 0.749 | 0.191 | 0.88 | 0.81 | 0.328 | 0.609 | 0.527 | 0.65 | 0.686 | 0.517 | 0.584 | 0.015 |
+| Ours | 0.742 | 0.6 | 0.3957 | 0.6478 | 0.2606 | 0.5903 | 0.4906 | 0.7874 | 0.8015 | 0.222 | 0.7262 | 0.5632 | 0.6515 | 0.512 | 0.3792 | 0.558 | 0 |
+
+
+*I-AUC: Image-level AUROC (%), P-AUC: Pixel-level AUROC (%), P-AP: Pixel-level Average Precision (%), FM: Forgetting Measure. Joint methods serve as upper bounds. FT methods show catastrophic forgetting.*
+
+
+
+## 2. ViSA Dataset 
+
+### Table 2: Comparison with State-of-the-Art Methods on ViSA Dataset
+
+Image AUC
+| Methods | candle | capsules | cashew | chewinggum | fryum | macaroni1 | macaroni2 | pcb1 | pcb2 | pcb3 | pcb4 | pipe_fryum | average | FM |
+|---------|--------|----------|--------|------------|-------|-----------|-----------|------|------|------|------|------------|---------|-----|
+| Joint_PatchCore | 0.952 | 0.878 | 0.940 | 0.983 | 0.950 | 0.902 | 0.667 | 0.963 | 0.892 | 0.894 | 0.983 | 0.995 | 0.916 | - |
+| Joint_PatchCore(R) | 0.870 | 0.750 | 0.895 | 0.964 | 0.883 | 0.768 | 0.677 | 0.949 | 0.855 | 0.779 | 0.921 | 0.971 | 0.857 | - |
+| Joint_CADIC | 0.945 | 0.825 | 0.941 | 0.980 | 0.954 | 0.904 | 0.694 | 0.967 | 0.881 | 0.865 | 0.972 | 0.989 | 0.910 | - |
+| FT_PatchCore | 0.401 | 0.605 | 0.624 | 0.907 | 0.334 | 0.538 | 0.437 | 0.527 | 0.597 | 0.507 | 0.588 | 0.998 | 0.589 | 0.361 |
+| FT_CFA | 0.512 | 0.672 | 0.873 | 0.753 | 0.304 | 0.557 | 0.422 | 0.698 | 0.472 | 0.449 | 0.407 | 0.998 | 0.593 | 0.327 |
+| FT_SimpleNet | 0.504 | 0.474 | 0.794 | 0.721 | 0.684 | 0.567 | 0.447 | 0.598 | 0.629 | 0.538 | 0.493 | 0.945 | 0.616 | 0.283 |
+| FT_RD4AD | 0.380 | 0.385 | 0.737 | 0.539 | 0.533 | 0.607 | 0.487 | 0.437 | 0.672 | 0.343 | 0.187 | 0.999 | 0.525 | 0.423 |
+| CFRDC | 0.945 | 0.825 | 0.941 | 0.980 | 0.954 | 0.904 | 0.694 | 0.967 | 0.881 | 0.865 | 0.972 | 0.989 | 0.910 | - |
+| IUF | 0.994 | 0.692 | 0.758 | 0.548 | 0.677 | 0.795 | 0.606 | 0.563 | 0.766 | 0.651 | 0.512 | 0.614 | 0.681 | 0.085 |
+| ReplayCAD | 0.924 | 0.843 | 0.937 | 0.961 | 0.915 | 0.889 | 0.805 | 0.911 | 0.849 | 0.831 | 0.978 | 0.991 | 0.903 | 0.055 |
+| DNE | 0.486 | 0.413 | 0.735 | 0.585 | 0.691 | 0.584 | 0.546 | 0.633 | 0.693 | 0.642 | 0.562 | 0.747 | 0.610 | 0.179 |
+| UCAD | 0.778 | 0.877 | 0.960 | 0.958 | 0.945 | 0.823 | 0.667 | 0.905 | 0.871 | 0.813 | 0.901 | 0.988 | 0.874 | 0.039 |
+| CADIC | 0.859 | 0.817 | 0.926 | 0.972 | 0.910 | 0.839 | 0.733 | 0.946 | 0.878 | 0.869 | 0.952 | 0.993 | 0.891 | 0.043 |
+| Ours | 0.890 | 0.883 | 0.981 | 0.943 | 0.928 | 0.869 | 0.673 | 0.950 | 0.897 | 0.864 | 0.970 | 0.953 | **0.900** | **0** |
+
+*I-AUC: Image-level AUROC (%), FM: Forgetting Measure. Joint methods serve as upper bounds. FT methods show catastrophic forgetting.*
+
+
+Pixel AP
+| Methods | candle | capsules | cashew | chewinggum | fryum | macaroni1 | macaroni2 | pcb1 | pcb2 | pcb3 | pcb4 | pipe_fryum | average | FM |
+|---------|--------|----------|--------|------------|-------|-----------|-----------|------|------|------|------|------------|---------|-----|
+| Joint_PatchCore | 0.206 | 0.617 | 0.717 | 0.768 | 0.485 | 0.056 | 0.015 | 0.790 | 0.084 | 0.561 | 0.359 | 0.620 | 0.440 | - |
+| Joint_PatchCore(R) | 0.213 | 0.581 | 0.685 | 0.770 | 0.476 | 0.029 | 0.010 | 0.770 | 0.070 | 0.496 | 0.293 | 0.637 | 0.419 | - |
+| Joint_CADIC | 0.196 | 0.618 | 0.716 | 0.771 | 0.490 | 0.054 | 0.015 | 0.793 | 0.088 | 0.573 | 0.349 | 0.610 | 0.439 | - |
+| FT_PatchCore | 0.012 | 0.007 | 0.055 | 0.315 | 0.082 | 0.000 | 0.000 | 0.008 | 0.004 | 0.007 | 0.010 | 0.585 | 0.090 | 0.311 |
+| FT_CFA | 0.017 | 0.005 | 0.059 | 0.243 | 0.085 | 0.001 | 0.001 | 0.013 | 0.006 | 0.008 | 0.015 | 0.592 | 0.087 | 0.184 |
+| FT_SimpleNet | 0.001 | 0.004 | 0.017 | 0.007 | 0.047 | 0.000 | 0.000 | 0.013 | 0.003 | 0.004 | 0.009 | 0.058 | 0.014 | 0.016 |
+| FT_RD4AD | 0.002 | 0.005 | 0.061 | 0.045 | 0.098 | 0.001 | 0.001 | 0.013 | 0.008 | 0.008 | 0.013 | 0.576 | 0.069 | 0.201 |
+| IUF | 0.012 | 0.017 | 0.043 | 0.033 | 0.107 | 0.011 | 0.004 | 0.019 | 0.009 | 0.018 | 0.021 | 0.117 | 0.034 | 0.003 |
+| ReplayCAD | 0.241 | 0.430 | 0.555 | 0.674 | 0.462 | 0.178 | 0.099 | 0.793 | 0.199 | 0.422 | 0.303 | 0.625 | 0.415 | 0.050 |
+| UCAD | 0.067 | 0.437 | 0.580 | 0.503 | 0.334 | 0.013 | 0.003 | 0.702 | 0.136 | 0.266 | 0.106 | 0.457 | 0.300 | 0.015 |
+| CADIC | 0.193 | 0.631 | 0.718 | 0.763 | 0.476 | 0.047 | 0.019 | 0.794 | 0.087 | 0.559 | 0.337 | 0.631 | 0.438 | 0.014 |
+| Ours | 0.062 | 0.290 | 0.749 | 0.377 | 0.303 | 0.026 | 0.005 | 0.560 | 0.102 | 0.190 | 0.169 | 0.357 | **0.266** | **0** |
+
+*P-AP: Pixel-level Average Precision, FM: Forgetting Measure. Joint methods serve as upper bounds. FT methods show catastrophic forgetting.*
