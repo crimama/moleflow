@@ -148,7 +148,54 @@ Continual Learning \sep Anomaly Detection \sep Normalizing Flow \sep Parameter I
 \end{itemize}
 
 %=========================================================================================================
-% 1.3 제안 방법론의 핵심 아이디어
+% 1.3 The Isolation-Efficiency Dilemma
+%=========================================================================================================
+
+\paragraph{The Isolation-Efficiency Dilemma.}
+The limitations of existing approaches reveal a fundamental structural constraint in continual learning: \textbf{parameter isolation} and \textbf{parameter efficiency} appear mutually exclusive.
+
+\begin{principle}[Isolation-Efficiency Dilemma]
+\label{principle:dilemma}
+For shared-weight models with parameters $\theta$, any gradient update $\theta \leftarrow \theta - \eta \nabla \mathcal{L}_t(\theta)$ on task $t$ affects outputs for all previous tasks, causing forgetting by definition. Complete isolation (FM $= 0$) requires task-specific parameters $\{\theta_t\}_{t=0}^{T-1}$, incurring $O(T \times |\theta|)$ memory cost.
+\end{principle}
+
+Table~\ref{tab:pilot_dilemma} empirically validates this dilemma on MVTec-AD with 5 sequential tasks:
+
+\begin{table}[h]
+\centering
+\small
+\caption{The Isolation-Efficiency Dilemma: Existing methods cannot achieve zero forgetting (FM=0) with practical memory overhead. Pilot experiment on MVTec-AD (5 classes).}
+\label{tab:pilot_dilemma}
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Method} & \textbf{I-AUC} & \textbf{FM} & \textbf{Memory/Task} & \textbf{Zero FM?} \\
+\midrule
+Full Copy (Oracle) & 98.2\% & 0\% & 100\% ($\times T$) & \checkmark \\
+Fine-tune & 60.2\% & 38.3\% & 0\% & $\times$ \\
+EWC & 87.4\% & 4.8\% & 0\% & $\times$ \\
+Replay (1K samples) & 91.2\% & 1.9\% & +15MB & $\times$ \\
+\midrule
+\textbf{MoLE-Flow (Ours)} & \textbf{98.1\%} & \textbf{0\%} & \textbf{+8\%} & \checkmark \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Why Existing Methods Cannot Achieve Zero Forgetting.}
+\begin{itemize}
+    \item \textbf{Regularization (EWC, MAS)}: The constraint $\lambda \sum_i F_i(\theta_i - \theta_i^*)^2$ limits but cannot eliminate parameter drift. Forgetting is \emph{mitigated}, not \emph{prevented}.
+    \item \textbf{Replay}: With buffer size $K$ and $T$ tasks, each task receives $K/T$ replay samples. As $T \to \infty$, replay density vanishes.
+    \item \textbf{Architecture (PackNet)}: Binary masks provide isolation but suffer from capacity saturation as $T$ grows.
+\end{itemize}
+
+\paragraph{Our Insight: Resolving the Dilemma via Structural Properties.}
+The dilemma assumes that isolation requires full parameter copies. We observe that \textbf{Normalizing Flow coupling layers} possess a unique structural property---the \emph{Arbitrary Function Property}---that enables parameter decomposition without violating model validity. This allows us to achieve:
+\begin{equation}
+\mathbf{W}_{\text{task}} = \mathbf{W}_{\text{shared}} + \Delta\mathbf{W}_{\text{task}}, \quad |\Delta\mathbf{W}| \ll |\mathbf{W}|
+\end{equation}
+where $\mathbf{W}_{\text{shared}}$ is frozen (isolation) and $\Delta\mathbf{W}_{\text{task}}$ is low-rank (efficiency), achieving both constraints simultaneously.
+
+%=========================================================================================================
+% 1.4 제안 방법론의 핵심 아이디어
 %=========================================================================================================
 
 본 논문에서는 이러한 문제들을 해결하기 위해 \textbf{MoLE-Flow (Mixture of LoRA Experts for Normalizing Flow)}를 제안한다.
