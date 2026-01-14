@@ -385,95 +385,19 @@ Mixture of Experts~\cite{jacobs1991adaptive}는 다수의 전문가 네트워크
 \end{figure}
 
 %=========================================================================================================
-% 3.1 Key Insight: Why Parameter Decomposition Works for NF
-%=========================================================================================================
-
-\subsection{Key Insight: Parameter Decomposition for Continual Learning}
-\label{sec:key_insight}
-
-Before presenting our architecture, we establish the structural insight that motivates our approach. The isolation-efficiency dilemma admits only one logical resolution: \textbf{parameter decomposition} into shared and task-specific components.
-
-\paragraph{The Only Solution: Parameter Decomposition.}
-To achieve both parameter isolation (no inter-task interference) and parameter efficiency (no full model copies), we must decompose parameters as:
-\begin{equation}
-    \mathbf{W}_{\text{task}} = \mathbf{W}_{\text{shared}} + \Delta\mathbf{W}_{\text{task}},
-\end{equation}
-where $\mathbf{W}_{\text{shared}}$ is frozen after initial training and $\Delta\mathbf{W}_{\text{task}}$ is task-specific with $|\Delta\mathbf{W}| \ll |\mathbf{W}|$. This is the only strategy satisfying both constraints:
-
-\begin{table}[h]
-\centering
-\small
-\begin{tabular}{lccc}
-\toprule
-\textbf{Strategy} & \textbf{Isolation} & \textbf{Efficiency} & \textbf{Assessment} \\
-\midrule
-Full Model Copy & \checkmark & $\times$ ($O(N \cdot P)$) & Impractical \\
-Shared Weights & $\times$ (interference) & \checkmark ($O(P)$) & Forgetting \\
-\textbf{Decomposition} & \checkmark (delta only) & \checkmark ($O(P + N \cdot \delta)$) & \textbf{Both satisfied} \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\paragraph{Why Normalizing Flows Are Uniquely Suited.}
-The critical question is: \emph{in which models can parameter decomposition be applied safely?} Not all generative models permit arbitrary internal reparameterization:
-
-\begin{itemize}
-    \item \textbf{VAE}: Encoder $q(z|x)$ and decoder $p(x|z)$ are jointly optimized via ELBO. Inserting adapters in only one component breaks latent space alignment, invalidating likelihood computation.
-
-    \item \textbf{Diffusion Models}: The denoiser must maintain consistent behavior across all timesteps. Adapter effects accumulate unpredictably along sampling trajectories.
-
-    \item \textbf{Normalizing Flows}: Coupling layers guarantee invertibility through their \emph{structure}, not their subnet implementation. The subnets $s(\cdot)$ and $t(\cdot)$ can be \emph{arbitrary functions}~\cite{dinh2017realnvp}---including decomposed functions---without affecting flow validity.
-\end{itemize}
-
-\begin{table}[h]
-\centering
-\small
-\begin{tabular}{lcc}
-\toprule
-\textbf{Model} & \textbf{Effect of Decomposition} & \textbf{Theoretical Guarantees} \\
-\midrule
-VAE & Encoder-decoder misalignment & $\times$ Broken \\
-Diffusion & Sampling trajectory distortion & $\times$ Broken \\
-\textbf{NF Coupling} & \textbf{Subnet structure agnostic} & \checkmark \textbf{Preserved} \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-This structural property---which we term the \emph{Arbitrary Function Property}---is the foundation of MoLE-Flow.
-
-%=========================================================================================================
-% 3.2 Design Principle 1
-%=========================================================================================================
-
-\subsection{Design Principle: Invertibility-Independence Decomposition}
-\label{sec:design_principle}
-
-\begin{principle}[Invertibility-Independence Decomposition]
-In affine coupling layers, the invertibility guarantee depends solely on the coupling structure---the input splitting and affine transformation form---not on how the subnet functions $s(\cdot)$ and $t(\cdot)$ are internally parameterized. For:
-\begin{equation}
-    \mathbf{y}_1 = \mathbf{x}_1, \quad \mathbf{y}_2 = \mathbf{x}_2 \odot \exp(s(\mathbf{x}_1)) + t(\mathbf{x}_1),
-\end{equation}
-invertibility holds for any differentiable $s$ and $t$, with log-determinant $\log|\det J| = \sum_i s_i(\mathbf{x}_1)$ depending only on output values, not internal structure.
-\end{principle}
-
-\paragraph{Practical Consequence.} This principle enables decomposing subnets as:
-\begin{equation}
-    \text{MoLESubnet}(\mathbf{x}) = \text{MLPBase}(\mathbf{x}; \Theta_{\text{base}}) + \frac{\alpha}{r}\mathbf{B}_t(\mathbf{A}_t \mathbf{x}),
-\end{equation}
-where $\Theta_{\text{base}}$ is frozen after Task 0 and $\{\mathbf{A}_t, \mathbf{B}_t\}$ are task-specific low-rank adapters. This achieves $O(N \times \text{rank})$ scaling rather than $O(N \times \text{params})$, with complete parameter isolation by design.
-
-\paragraph{Distinction from Prior Work.} This principle is not a claim that LoRA works universally---LoRA is well-established~\cite{hu2021lora}. Rather, it identifies a \emph{structural property of normalizing flows} that makes parameter isolation feasible by design, a property unavailable in VAEs or diffusion models where component modifications propagate unpredictably.
-
-%=========================================================================================================
-% 3.3 MoLE-Flow Architecture Overview
+% 3.1 MoLE-Flow Architecture Overview
 %=========================================================================================================
 
 \subsection{MoLE-Flow Architecture}
 \label{sec:architecture}
 
-MoLE-Flow (Mixture of LoRA Experts for Normalizing Flow) instantiates the above design principle for continual anomaly detection. The framework comprises a feature extractor, MoLE-based normalizing flow, task-specific adapters, and a prototype-based router.
+Building on Principle~\ref{principle:dilemma}, MoLE-Flow (Mixture of LoRA Experts for Normalizing Flow) instantiates parameter decomposition for continual anomaly detection. The framework comprises a feature extractor, MoLE-based normalizing flow, task-specific adapters, and a prototype-based router.
 
-The core strategy for continual learning is \textbf{Parameter Isolation}: the backbone and base normalizing flow parameters are shared and frozen after Task 0, while task-specific adaptations are confined to lightweight adapters (LoRA, WhiteningAdapter, DIA). This achieves both memory efficiency and complete inter-task interference prevention.
+As established in Section~\ref{sec:introduction}, the Arbitrary Function Property of NF coupling layers enables decomposing subnets as:
+\begin{equation}
+    \text{MoLESubnet}(\mathbf{x}) = \text{MLPBase}(\mathbf{x}; \Theta_{\text{base}}) + \frac{\alpha}{r}\mathbf{B}_t(\mathbf{A}_t \mathbf{x}),
+\end{equation}
+where $\Theta_{\text{base}}$ is frozen after Task 0 and $\{\mathbf{A}_t, \mathbf{B}_t\}$ are task-specific low-rank adapters. This achieves complete \textbf{parameter isolation} with only $O(N \times \text{rank})$ memory scaling.
 
 The complete pipeline is:
 \begin{enumerate}
@@ -524,10 +448,16 @@ During Task 0, both the base normalizing flow and task-specific components (LoRA
 \end{itemize}
 
 %=========================================================================================================
-\subsection{Whitening Adapter}
+\subsection{Integral Components: Compensating for Frozen-Base Rigidity}
+\label{sec:integral_components}
 %=========================================================================================================
 
+The frozen-base design achieves zero forgetting but introduces structural rigidity. We identify three \textbf{integral components}---Whitening Adapter (WA), Tail-Aware Loss (TAL), and Deep Invertible Adapter (DIA)---that are not generic performance boosters but \emph{necessary compensations} for specific consequences of the frozen-base paradigm. Section~\ref{sec:interaction_effect} validates this distinction through Interaction Effect Analysis.
+
+\subsubsection{Whitening Adapter (Distribution Alignment)}
 \label{sec:adapters}
+
+\paragraph{Problem: Input Interface Mismatch.}
 \begin{itemize}
 \item MoLE-Flow는 첫 번째 작업 학습 이후 Base Flow의 파라미터를 동결(Freeze)
 \item 이는 모델이 초기 학습 데이터의 분포 통계량에 피팅됨을 의미
@@ -537,13 +467,15 @@ During Task 0, both the base normalizing flow and task-specific components (LoRA
     \item 제한된 용량(Low-Rank)을 가진 LoRA가 전역적인 분포 차이까지 보정해야 하는 과도한 부담
     \item 학습 초기 수렴 지연 및 최적화 난이도 증가
     \end{itemize}
-\item Whitening Adapter 도입을 통해 이를 해결하고자 함:
-    \begin{itemize}
+\end{itemize}
+
+\paragraph{Solution: Distribution Alignment.}
+Whitening Adapter aligns input distributions to the frozen base's expected input range:
+\begin{itemize}
     \item 입력 데이터를 강제로 표준 정규 분포로 정렬(Alignment)
     \item 고정된 Base Flow가 항상 일관된 스케일의 입력을 처리하도록 보장
     \item LoRA가 분포 보정이 아닌 작업 고유의 미세 특징 학습에만 집중 가능
     \item 파라미터 분리 구조 하에서 학습 효율성과 안정성 극대화
-    \end{itemize}
 \end{itemize}
 
 \textbf{Whitening Adapter는 Whitening과 De-whitening의 두 단계로 구성됨.}
@@ -782,8 +714,13 @@ LoRA는 subnet 내부의 선형 레이어에만 적용되며, 이는 Jacobian �
 \end{itemize}
 
 
-\subsubsection{Deep Invertible Adapter (DIA)}
+\subsubsection{Deep Invertible Adapter (Nonlinear Manifold Correction)}
 \label{sec:dia}
+
+\paragraph{Problem: Global Transformation Rigidity.}
+The frozen base provides a fixed global transformation structure. While LoRA adds task-specific linear corrections, complex manifold differences between tasks require nonlinear adaptation.
+
+\paragraph{Solution: Task-Specific Invertible Correction.}
 \begin{itemize}
     \item DIA는 Normalizing Flow 출력단에 위치하며, MoLEContextSubnet이 처리하지 못한 작업 특화 비선형 매니폴드를 정밀 보정한다.
     \item Affine Coupling Block으로 구성되며, 각 작업별로 독립적인 파라미터가 분리되어 있다.
@@ -878,8 +815,13 @@ LoRA는 subnet 내부의 선형 레이어에만 적용되며, 이는 Jacobian �
     \end{equation}
 \end{itemize}
 
-\subsubsection{\textbf{Tail-Aware Loss}}
+\subsubsection{Tail-Aware Loss (Gradient Redistribution)}
+\label{sec:tal}
 
+\paragraph{Problem: Gradient Concentration at Bulk.}
+When the base is frozen, LoRA provides only ``slight corrections'' to the base transformation. Standard NLL training causes gradients to concentrate on bulk (easy) patches, leaving tail (hard) patches under-optimized---precisely where anomaly detection decisions are most critical.
+
+\paragraph{Solution: Tail-Focused Training.}
 \begin{itemize}
     \item 일반적인 NF의 학습 방식을 따르는 경우 이미지 내 모든 패치의 우도 평균을 최대화하게 된다.
     \item 이는 모델이 대다수의 학습하기 ``쉬운'' 정상 패치에만 집중하게 되고, 분포의 꼬리(Tail)에 위치한 ``어려운'' 패치나 이상 징후를 간과하게 만드는 원인이 된다.
