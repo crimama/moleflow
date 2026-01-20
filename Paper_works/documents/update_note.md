@@ -7213,3 +7213,299 @@ Section 14의 Interaction Effect 실험 결과로 사용:
 - 실험 스크립트: `scripts/run_interaction_effect.sh`
 - 분석 스크립트: `scripts/analyze_interaction_effect.py`
 - 로그 디렉토리: `logs/InteractionEffect/`
+
+---
+
+## 15-class Interaction Effect 실험 (2026-01-13)
+
+### 목적
+5-class subset 결과를 full 15-class MVTec에서 검증
+
+### 실험 설정
+- 15개 클래스: bottle, cable, capsule, carpet, grid, hazelnut, leather, metal_nut, pill, screw, tile, toothbrush, transistor, wood, zipper
+- 60 epochs, lr=3e-4, batch_size=16
+- GPU 0: Trainable 실험 4개 (순차)
+- GPU 1: Frozen 실험 4개 (순차)
+
+### 결과
+
+| Setting | Module | I-AUC | P-AP | Δ I-AUC | Δ P-AP |
+|---------|--------|-------|------|---------|--------|
+| **Trainable** | Baseline | 68.13% | 9.27% | - | - |
+| Trainable | +WA | 51.79% | 3.31% | -16.34%p | -5.96%p |
+| Trainable | +TAL | 66.91% | 17.32% | -1.22%p | +8.05%p |
+| Trainable | +DIA | 75.06% | 14.56% | +6.93%p | +5.29%p |
+| **Frozen+LoRA** | Baseline | 84.12% | 41.64% | - | - |
+| Frozen+LoRA | +WA | 82.93% | 38.07% | -1.19%p | -3.57%p |
+| Frozen+LoRA | +TAL | 97.16% | 48.73% | +13.04%p | +7.09%p |
+| Frozen+LoRA | +DIA | 95.64% | 46.34% | +11.52%p | +4.70%p |
+
+### 5-class vs 15-class 비교
+
+| Module | 5-class Trainable | 5-class Frozen | 15-class Trainable | 15-class Frozen |
+|--------|-------------------|----------------|--------------------|-----------------|
+| WA | -0.41%p | -4.37%p | -5.96%p | -3.57%p |
+| TAL | +5.10%p | +7.52%p | +8.05%p | +7.09%p |
+| DIA | **-3.78%p** | **+4.14%p** | +5.29%p | +4.70%p |
+
+### 분석
+
+#### 1. 핵심 발견: Base Freeze + LoRA의 근본적 우월성
+```
+Trainable Baseline: 68.13% I-AUC
+Frozen Baseline:    84.12% I-AUC
+                    ────────────
+차이:               +16%p I-AUC
+
+→ 파라미터 분리(Base Freeze + LoRA)가 단순히 forgetting 방지만이 아니라
+  성능 자체를 향상시킴
+```
+
+#### 2. DIA 결과 변화 (5-class vs 15-class)
+```
+5-class:  Trainable -3.78%p, Frozen +4.14%p  → 명확한 비대칭 (Integral Component)
+15-class: Trainable +5.29%p, Frozen +4.70%p  → 둘 다 긍정적 (Generic Booster처럼 보임)
+
+→ 5-class subset에서의 비대칭성이 15-class에서는 재현되지 않음
+→ 논문 narrative 수정 필요
+```
+
+#### 3. WA의 일관된 부정적 효과
+```
+5-class Frozen:  -4.37%p
+15-class Frozen: -3.57%p
+기존 ablation:   +7.34%p (Full configuration)
+
+→ WA 단독 효과는 부정적
+→ 다른 모듈들과 함께일 때만 긍정적 효과 (상호작용)
+```
+
+#### 4. TAL의 Critical Role
+```
+Frozen + TAL: 97.16% I-AUC (+13.04%p from baseline)
+→ Frozen 설정에서 가장 큰 성능 향상 제공
+→ Tail-Aware Loss가 핵심 component
+```
+
+### 논문 Narrative 수정 방향
+
+**기존 (5-class 기반)**:
+> "DIA는 Trainable에서 해롭고 Frozen에서만 도움 → Integral Component"
+
+**수정 (15-class 기반)**:
+> "Base Freeze + LoRA 자체가 +16%p 성능 향상 제공. TAL은 Frozen 설정에서 +13%p 추가 향상.
+> 이는 전체 시스템 설계의 시너지이며, 개별 모듈의 비대칭성보다 종합적 아키텍처가 핵심."
+
+### 파일 위치
+- 실험 스크립트: `scripts/run_interaction_effect_15class_sequential.sh`
+- 분석: `python scripts/analyze_interaction_effect.py --log_dir logs/InteractionEffect_15class`
+- 로그: `logs/InteractionEffect_15class/`
+
+---
+
+## Multi-Seed 통계 (2026-01-13)
+
+### 목적
+논문 통계적 검증을 위해 5개 seed로 실험 수행
+
+### Seeds
+- Seed 0 (999): 기존 MAIN 실험
+- Seed 42: 추가
+- Seed 123: 추가
+- Seed 456: 신규
+- Seed 789: 신규
+
+### 개별 결과
+
+| Seed | Image AUC | Pixel AUC | Image AP | Pixel AP | Routing |
+|------|-----------|-----------|----------|----------|---------|
+| 0 (999) | 98.10% | 97.79% | 99.21% | 53.01% | 100% |
+| 42 | 98.22% | 97.81% | 99.25% | 53.31% | 100% |
+| 123 | 98.16% | 97.86% | 99.23% | 53.61% | 100% |
+| 456 | 97.87% | 97.78% | 99.13% | 54.11% | 100% |
+| 789 | 97.78% | 97.81% | 99.13% | 54.86% | 100% |
+
+### 5-Seed 통계 (Mean ± Std)
+
+| Metric | Mean ± Std |
+|--------|------------|
+| **Image AUC** | **98.03% ± 0.19%** |
+| **Pixel AUC** | **97.81% ± 0.03%** |
+| **Image AP** | **99.19% ± 0.06%** |
+| **Pixel AP** | **53.78% ± 0.73%** |
+| **Routing Acc** | **100.00% ± 0.00%** |
+
+### LaTeX Format
+
+```latex
+Image AUC: $98.03 \pm 0.19$\%
+Pixel AUC: $97.81 \pm 0.03$\%
+Pixel AP:  $53.78 \pm 0.73$\%
+Routing:   $100.0$\%
+```
+
+### 분석
+
+1. **높은 안정성**: 모든 metric에서 표준편차가 작음 (특히 Pixel AUC ± 0.03%)
+2. **100% Routing Accuracy**: 5개 seed 모두 완벽한 routing
+3. **Pixel AP 변동**: 가장 큰 std (± 0.73%)이지만 여전히 안정적
+4. **Image AUC 일관성**: 97.78% ~ 98.22% 범위로 안정적
+
+### 파일 위치
+- Seed 0: `logs/Final/MVTec-WRN50-CL-1x1-Seed0/`
+- Seed 42: `logs/Final/MVTec-WRN50-CL-1x1-Seed42/`
+- Seed 123: `logs/Final/MVTec-WRN50-CL-1x1-Seed123/`
+- Seed 456: `logs/Final/MVTec-MAIN-Seed456/`
+- Seed 789: `logs/Final/MVTec-MAIN-Seed789/`
+
+
+---
+
+## SVD 분석: Low-Rank Adaptation 검증 실험 (2026-01-16)
+
+### 목적
+
+**"Low-rank adaptation이 충분한 이유"**를 실증적으로 검증하기 위한 실험 설계.
+
+핵심 가설: Full fine-tuning 시 weight 변화량 Delta W = W_task - W_base가 intrinsically low-rank임.
+
+### 실험 설계
+
+#### 방법론
+
+1. **Task 0 (Base) 학습**: NF 모델을 Task 0 클래스(예: leather)에서 전체 학습
+2. **Task 1 Full Fine-tuning**: Task 0 모델을 Task 1 클래스(예: grid)에서 **모든 파라미터 학습** (LoRA 없음, Freezing 없음)
+3. **Delta W 계산**: 각 layer에 대해 Delta W = W_task1 - W_base
+4. **SVD 분석**: Delta W의 singular value spectrum 분석
+
+#### 분석 메트릭
+
+| 메트릭 | 설명 |
+|--------|------|
+| **Effective Rank (95%)** | 전체 에너지의 95%를 설명하는 데 필요한 singular value 개수 |
+| **Effective Rank (99%)** | 전체 에너지의 99%를 설명하는 데 필요한 singular value 개수 |
+| **Energy at Rank k** | 상위 k개 singular value가 설명하는 에너지 비율 |
+| **Relative Change** | ||Delta W|| / ||W_base|| |
+
+#### 기대 결과
+
+| 결과 | 해석 |
+|------|------|
+| Effective Rank (95%) << 64 | **Strong Evidence**: LoRA rank=64가 충분히 여유 있음 |
+| Energy at r=64 > 99% | **Very Strong**: 64-rank LoRA가 full fine-tuning의 99% 효과 달성 |
+| Effective Rank 32-64 범위 | **Moderate**: 현재 rank=64 설정이 적절 |
+| Effective Rank > 64 | **Weak**: 더 높은 rank 필요할 수 있음 |
+
+### LoRA 적용 Layer 구조 분석
+
+```
+MoLESpatialAwareNF
+├── subnets (List[MoLESubnet 또는 MoLEContextSubnet])
+│   ├── MoLESubnet (use_scale_context=False)
+│   │   ├── layer1: LoRALinear (in_features → hidden_dim)
+│   │   └── layer2: LoRALinear (hidden_dim → dims_out)
+│   │
+│   └── MoLEContextSubnet (use_scale_context=True)
+│       ├── s_layer1: LoRALinear (dims_in*2 → hidden_dim) - context-aware
+│       ├── s_layer2: LoRALinear (hidden_dim → dims_out//2)
+│       ├── t_layer1: LoRALinear (dims_in → hidden_dim) - context-free
+│       └── t_layer2: LoRALinear (hidden_dim → dims_out//2)
+```
+
+#### LoRALinear 구조
+
+```python
+class LoRALinear(nn.Module):
+    # Base weight: W_base (out_features × in_features)
+    # LoRA A: (rank × in_features) - down projection
+    # LoRA B: (out_features × rank) - up projection
+    # Output: h(x) = W_base @ x + scaling * (B @ A) @ x + bias
+    #         where scaling = alpha / rank
+```
+
+### 실험 설정
+
+#### 기본 설정
+
+```bash
+python scripts/analyze_svd_full_finetune.py \
+    --data_path /Data/MVTecAD \
+    --task0_class leather \
+    --task1_class grid \
+    --backbone wide_resnet50_2 \
+    --coupling_layers 8 \
+    --num_epochs 30 \
+    --lr 3e-4 \
+    --batch_size 16 \
+    --output_dir ./analysis_results/svd_full_finetune
+```
+
+#### 다양한 Task Pair 테스트
+
+| Task 0 | Task 1 | 특성 |
+|--------|--------|------|
+| leather | grid | 텍스처 → 구조적 패턴 |
+| carpet | transistor | 텍스처 → 복잡한 객체 |
+| hazelnut | screw | 단순 객체 → rotation-sensitive |
+| bottle | zipper | 단순 객체 → 세부 결함 |
+
+### 스크립트 위치
+
+```
+/Volume/MoLeFlow/scripts/analyze_svd_full_finetune.py
+```
+
+### 출력물
+
+1. **svd_spectrum.png**: 각 layer의 singular value spectrum (log scale)
+2. **energy_at_ranks.png**: LoRA rank별 에너지 capture 비율
+3. **effective_rank_histogram.png**: Effective rank 분포
+4. **analysis_results.json**: 상세 분석 결과
+
+### 예상 결과 해석 가이드
+
+#### Case 1: Strong Low-Rank Structure
+
+```
+Mean Effective Rank (95%): 15-30
+Energy at r=64: > 99.5%
+
+→ Delta W가 매우 low-rank
+→ LoRA rank=32로 충분할 수 있음
+→ Task adaptation이 본질적으로 저차원 부분공간에서 발생
+```
+
+#### Case 2: Moderate Low-Rank Structure
+
+```
+Mean Effective Rank (95%): 40-60
+Energy at r=64: 95-99%
+
+→ Delta W가 moderate low-rank
+→ 현재 LoRA rank=64 설정이 적절
+→ 일부 정보 손실 있지만 성능에 미미한 영향
+```
+
+#### Case 3: High-Rank Structure
+
+```
+Mean Effective Rank (95%): > 80
+Energy at r=64: < 90%
+
+→ Delta W가 high-rank 또는 full-rank에 가까움
+→ LoRA rank 증가 필요 (128+)
+→ 또는 LoRA 이외의 approach 고려
+```
+
+### 추가 분석 방향
+
+1. **Cross-Task Generalization**: 여러 task pair에서 일관된 low-rank 구조 확인
+2. **Layer-wise Analysis**: 어느 layer가 더 low-rank인지 분석
+3. **Rank Ablation**: 실제 성능과 effective rank의 상관관계 검증
+4. **LoRA vs Full Fine-tuning**: 동일 조건에서 성능 비교
+
+### 관련 파일
+
+- 분석 스크립트: `/Volume/MoLeFlow/scripts/analyze_svd_full_finetune.py`
+- 기존 LoRA 분석: `/Volume/MoLeFlow/scripts/analyze_lora_rank.py` (학습된 LoRA 가중치 분석)
+
