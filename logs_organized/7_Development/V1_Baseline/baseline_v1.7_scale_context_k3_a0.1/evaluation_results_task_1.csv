@@ -1,0 +1,2 @@
+timestamp,task_id,epoch,leather_img_auc,leather_pixel_auc,leather_routing_acc,grid_img_auc,grid_pixel_auc,grid_routing_acc,mean_img_auc,mean_pixel_auc,mean_routing_acc
+2025-12-26 08:12:21,1,39,1.0,0.9802994455482822,1.0,0.7786131996658312,0.9299527405358252,1.0,0.8893065998329156,0.9551260930420538,1.0

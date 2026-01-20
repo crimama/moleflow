@@ -1,0 +1,2 @@
+timestamp,task_id,epoch,candle_img_auc,candle_pixel_auc,candle_routing_acc,mean_img_auc,mean_pixel_auc,mean_routing_acc
+2026-01-04 12:45:38,0,79,0.8314,0.9696674907361028,1.0,0.8314,0.9696674907361028,1.0

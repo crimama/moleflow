@@ -1,0 +1,2 @@
+timestamp,task_id,epoch,bottle_img_auc,bottle_pixel_auc,bottle_routing_acc,cable_img_auc,cable_pixel_auc,cable_routing_acc,mean_img_auc,mean_pixel_auc,mean_routing_acc
+2025-12-27 16:51:14,1,39,1.0,0.9449429393847624,1.0,0.8680659670164917,0.9075325682409856,1.0,0.9340329835082459,0.926237753812874,1.0

@@ -1,0 +1,6 @@
+class_name,task_id,img_auc,pixel_auc,is_current_task,routing_accuracy
+candle,0,0.8904,0.8606651000591412,False,1.0
+capsules,1,0.883,0.9558054096987105,True,1.0
+Average,,0.8867,0.9082352548789259,,1.0
+Task_0_Average,0,0.8904,0.8606651000591412,,1.0
+Task_1_Average,1,0.883,0.9558054096987105,,1.0

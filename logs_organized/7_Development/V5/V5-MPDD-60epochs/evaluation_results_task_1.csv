@@ -1,0 +1,2 @@
+timestamp,task_id,epoch,bracket_black_img_auc,bracket_black_pixel_auc,bracket_black_routing_acc,bracket_brown_img_auc,bracket_brown_pixel_auc,bracket_brown_routing_acc,mean_img_auc,mean_pixel_auc,mean_routing_acc
+2025-12-31 00:51:27,1,59,0.6316489361702128,0.9017751042126501,1.0,0.823529411764706,0.9421954806849954,1.0,0.7275891739674594,0.9219852924488228,1.0

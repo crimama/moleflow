@@ -1,0 +1,4 @@
+Task ID,Class Name,Routing Acc (%),Image AUC,Pixel AUC,Image AP,Pixel AP
+0,bottle,100.00,0.9897,0.9689,0.9969,0.6639
+1,cable,100.00,0.7288,0.9310,0.8429,0.4340
+Mean,Overall,100.00,0.8593*,0.9499*,0.9199*,0.5490*

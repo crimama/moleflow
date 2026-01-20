@@ -1,0 +1,4 @@
+class_name,task_id,img_auc,pixel_auc,is_current_task,routing_accuracy
+bracket_black,0,0.742686170212766,0.9361693811699359,True,1.0
+Average,,0.742686170212766,0.9361693811699359,,1.0
+Task_0_Average,0,0.742686170212766,0.9361693811699359,,1.0
