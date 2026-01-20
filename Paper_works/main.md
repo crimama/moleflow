@@ -1,627 +1,624 @@
-# MoLE-Flow: Mixture of LoRA Experts for Continual Anomaly Detection via Parameter-Efficient Density Isolation
+# MoLE-Flow: 파라미터 효율적 밀도 격리를 통한 지속 학습 이상 탐지를 위한 LoRA 전문가 혼합
 
-**Target Venue:** ECCV 2026 (or similar top-tier CV venue)
-**Paper Type:** Full Paper (8 pages + references + supplementary)
-**Revision:** R2 - Addressing ECCV Reviewer Feedback (Round 2 Score: 7.0 → Target: 8+)
-
----
-
-## Abstract
-
-**Problem Statement:**
-Continual anomaly detection (CAD) requires learning to identify defects across sequentially arriving product categories while preserving detection accuracy on previously learned categories. Existing approaches face an *isolation-efficiency dilemma*: hard parameter isolation prevents forgetting but incurs linear model growth, while efficient adaptation methods suffer from density manifold interference.
-
-**Key Insight & Approach:**
-We observe that normalizing flows (NF) possess a unique *Arbitrary Function Property* in their coupling layers—the mathematical guarantee that invertibility is preserved regardless of subnet implementation—which uniquely enables *zero forgetting* through safe parameter decomposition. Based on this insight, we propose **MoLE-Flow**, a framework that decomposes coupling layer subnets into frozen shared bases and task-specific low-rank adapters (LoRA), achieving complete parameter isolation with only 22-42% additional parameters per task.
-
-**Integral Components:**
-To compensate for frozen base rigidity, we introduce three integral components validated through interaction effect analysis: Whitening Adapter for distribution alignment, Tail-Aware Loss for decision boundary focus, and Deep Invertible Adapter for nonlinear manifold correction.
-
-**Results:**
-On MVTec-AD with 15 sequential tasks, MoLE-Flow achieves **98.05% Image-AUC** and **55.80% Pixel-AP** with *zero forgetting* (FM=0.0), establishing new state-of-the-art in replay-free continual anomaly detection.
-
-**Keywords:** Continual Learning, Anomaly Detection, Normalizing Flows, Parameter-Efficient Fine-Tuning, Low-Rank Adaptation
+**목표 학회:** ECCV 2026 (또는 유사 수준의 CV 학회)
+**논문 유형:** Full Paper (8페이지 + 참고문헌 + 부록)
+**개정:** R2 - ECCV 리뷰어 피드백 반영 (2차 점수: 7.0 → 목표: 8+)
 
 ---
 
-## 1. Introduction
+## 초록
 
-### 1.1 Background: Why Continual AD Matters
+**문제 정의:**
+지속 학습 이상 탐지(Continual Anomaly Detection, CAD)는 순차적으로 도착하는 제품 카테고리에 대해 결함을 식별하는 능력을 학습하면서, 이전에 학습한 카테고리에 대한 탐지 정확도를 유지해야 한다. 기존 접근법은 *격리-효율성 딜레마(isolation-efficiency dilemma)*에 직면한다: 하드 파라미터 격리는 망각을 방지하지만 선형적인 모델 성장을 야기하고, 효율적인 적응 방법은 밀도 매니폴드 간섭을 겪는다.
 
-Deep learning-based anomaly detection (AD) has achieved remarkable success in industrial inspection by learning normality from defect-free samples alone. However, real-world manufacturing environments are inherently dynamic: new product lines are introduced, existing ones evolve, and inspection systems must adapt continuously without access to historical data due to storage costs and privacy regulations.
+**핵심 통찰 및 접근법:**
+우리는 정규화 흐름(Normalizing Flow, NF)이 커플링 레이어에서 고유한 *임의 함수 속성(Arbitrary Function Property, AFP)*을 가진다는 것을 관찰했다—이는 서브넷 구현과 관계없이 가역성이 보장된다는 수학적 보증이다—이 속성은 안전한 파라미터 분해를 통해 *완전한 망각 제로*를 고유하게 가능하게 한다. 이 통찰을 바탕으로 **MoLE-Flow**를 제안한다. 이는 커플링 레이어 서브넷을 고정된 공유 베이스와 태스크별 저순위 어댑터(LoRA)로 분해하여, 태스크당 22-42%의 추가 파라미터만으로 완전한 파라미터 격리를 달성한다.
 
-This *continual anomaly detection* (CAD) setting poses a fundamental challenge: when learning to detect anomalies in new product categories, neural networks suffer from **catastrophic forgetting**—the abrupt loss of previously acquired knowledge.
+**필수 구성요소:**
+고정된 베이스의 경직성을 보상하기 위해, 상호작용 효과 분석을 통해 검증된 세 가지 필수 구성요소를 도입한다: 분포 정렬을 위한 화이트닝 어댑터(Whitening Adapter, WA), 결정 경계 집중을 위한 테일 인식 손실(Tail-Aware Loss, TAL), 비선형 매니폴드 보정을 위한 심층 가역 어댑터(Deep Invertible Adapter, DIA).
 
-### 1.2 Why Forgetting is Critical in AD (Not Just Classification)
+**결과:**
+15개 순차 태스크로 구성된 MVTec-AD에서 MoLE-Flow는 **98.05% Image-AUC**와 **55.80% Pixel-AP**를 *완전 망각 제로*(FM=0.0)로 달성하며, 리플레이 없는 지속 학습 이상 탐지에서 새로운 최고 성능을 확립한다.
 
-Unlike classification models that merely maintain decision boundaries, anomaly detection—particularly density-based methods like normalizing flows (NF)—must precisely estimate the *probability density* of normal data. This distinction is critical: while classifiers tolerate parameter drift as long as boundaries remain intact, even minor perturbations to density estimators can collapse the entire likelihood manifold. Consequently, forgetting in AD cannot be merely *mitigated*; it must be *eliminated*.
+**키워드:** 지속 학습, 이상 탐지, 정규화 흐름, 파라미터 효율적 미세조정, 저순위 적응
 
-### 1.3 Limitations of Existing Approaches
+---
 
-**Replay-Based Methods:**
-Current state-of-the-art CAD methods rely on storing or generating past samples. However, replay faces three fundamental limitations:
-1. Memory costs scale with task count
-2. Privacy regulations prohibit data retention in sensitive domains
-3. Finite buffers cannot capture the tail distributions essential for precise density estimation, leading to biased likelihood estimates
+## 1. 서론
 
-**Hard Parameter Isolation:**
-Methods that allocate separate network components per task achieve zero forgetting but suffer from *linear model growth* or *capacity saturation*—untenable for long task sequences.
+### 1.1 배경: 지속 학습 이상 탐지의 중요성
 
-**Efficient Adaptation:**
-Feature-space adapters and prompts reduce parameter overhead but introduce new problems: they rely heavily on frozen backbone expressivity, require auxiliary memory banks or complex routing, and—critically for NF-based AD—risk disrupting the carefully learned density manifold by modifying inputs to the flow.
+딥러닝 기반 이상 탐지(AD)는 결함이 없는 샘플만으로 정상성을 학습하여 산업 검사에서 놀라운 성공을 거두었다. 그러나 실제 제조 환경은 본질적으로 동적이다: 새로운 제품 라인이 도입되고, 기존 제품이 진화하며, 검사 시스템은 저장 비용과 개인정보 규정으로 인해 과거 데이터에 접근하지 않고도 지속적으로 적응해야 한다.
 
-### 1.4 The Isolation-Efficiency Dilemma
+이러한 *지속 학습 이상 탐지*(CAD) 설정은 근본적인 도전을 제기한다: 새로운 제품 카테고리에서 이상을 탐지하도록 학습할 때, 신경망은 **파국적 망각(catastrophic forgetting)**—이전에 획득한 지식의 급격한 손실—을 겪는다.
 
-These limitations reveal a fundamental tension in CAD:
+### 1.2 이상 탐지에서 망각이 중요한 이유 (분류와의 차이)
 
-| Approach | Zero Forgetting | Param. Efficient | No Replay |
-|----------|-----------------|------------------|-----------|
-| Hard Isolation | ✓ | ✗ | ✓ |
-| Efficient Adaptation | ✗ | ✓ | ✓ |
-| Replay-Based | ✗ | ✓ | ✗ |
-| **MoLE-Flow (Ours)** | ✓ | ✓ | ✓ |
+분류 모델이 단순히 결정 경계를 유지하는 것과 달리, 이상 탐지—특히 정규화 흐름(NF)과 같은 밀도 기반 방법—는 정상 데이터의 *확률 밀도*를 정밀하게 추정해야 한다. 이 차이는 중요하다: 분류기는 경계가 유지되는 한 파라미터 드리프트를 허용하지만, 밀도 추정기에 대한 미세한 교란조차도 전체 우도 매니폴드를 붕괴시킬 수 있다. 결과적으로, 이상 탐지에서 망각은 단순히 *완화*될 수 없다; 반드시 *제거*되어야 한다.
 
-*Can we achieve complete parameter isolation (zero forgetting) with parameter efficiency (sublinear growth) without replay?*
+### 1.3 기존 접근법의 한계
 
-### 1.5 Key Insight: NF's Structural Suitability
+**리플레이 기반 방법:**
+현재 최신 CAD 방법들은 과거 샘플을 저장하거나 생성하는 데 의존한다. 그러나 리플레이는 세 가지 근본적인 한계에 직면한다:
+1. 메모리 비용이 태스크 수에 비례하여 증가
+2. 민감한 도메인에서 개인정보 규정이 데이터 보존을 금지
+3. 유한한 버퍼는 정밀한 밀도 추정에 필수적인 테일 분포를 포착할 수 없어, 편향된 우도 추정을 야기
 
-We answer affirmatively by identifying a *structural connection* between normalizing flows and continual learning requirements.
+**하드 파라미터 격리:**
+태스크별로 별도의 네트워크 구성요소를 할당하는 방법은 완전 망각 제로를 달성하지만, *선형적인 모델 성장* 또는 *용량 포화*로 인해 긴 태스크 시퀀스에서 지속 불가능하다.
 
-The core insight is that NF coupling layers possess an **Arbitrary Function Property (AFP)**:
+**효율적 적응:**
+특징 공간 어댑터와 프롬프트는 파라미터 오버헤드를 줄이지만 새로운 문제를 야기한다: 고정된 백본의 표현력에 크게 의존하고, 보조 메모리 뱅크나 복잡한 라우팅이 필요하며—NF 기반 이상 탐지에서 결정적으로—흐름에 대한 입력을 수정하여 신중하게 학습된 밀도 매니폴드를 방해할 위험이 있다.
+
+### 1.4 격리-효율성 딜레마
+
+이러한 한계들은 CAD에서 근본적인 긴장을 드러낸다:
+
+| 접근법 | 완전 망각 제로 | 파라미터 효율성 | 리플레이 없음 |
+|--------|---------------|----------------|--------------|
+| 하드 격리 | ✓ | ✗ | ✓ |
+| 효율적 적응 | ✗ | ✓ | ✓ |
+| 리플레이 기반 | ✗ | ✓ | ✗ |
+| **MoLE-Flow (우리)** | ✓ | ✓ | ✓ |
+
+*리플레이 없이 완전한 파라미터 격리(완전 망각 제로)와 파라미터 효율성(준선형 성장)을 달성할 수 있는가?*
+
+### 1.5 핵심 통찰: 정규화 흐름의 구조적 적합성
+
+우리는 정규화 흐름과 지속 학습 요구사항 사이의 *구조적 연결*을 식별하여 긍정적으로 답한다.
+
+핵심 통찰은 NF 커플링 레이어가 **임의 함수 속성(Arbitrary Function Property, AFP)**을 가진다는 것이다:
 
 $$y_1 = x_1, \quad y_2 = x_2 \odot \exp(s(x_1)) + t(x_1)$$
 
-where $s(\cdot)$ and $t(\cdot)$ can be *any* functions without affecting invertibility or tractable Jacobian computation.
+여기서 $s(\cdot)$와 $t(\cdot)$는 가역성이나 추적 가능한 야코비안 계산에 영향을 주지 않고 *어떤* 함수든 될 수 있다.
 
-We reinterpret this property as a *structural safeguard for parameter decomposition*:
+우리는 이 속성을 *파라미터 분해를 위한 구조적 안전장치*로 재해석한다:
 
 $$s(x) = s_{\text{base}}(x) + \Delta s_t(x), \quad t(x) = t_{\text{base}}(x) + \Delta t_t(x)$$
 
-where $s_{\text{base}} + \Delta s_t$ remains a valid function, preserving all NF guarantees. By implementing $\Delta s_t, \Delta t_t$ as low-rank matrices (LoRA), we achieve efficient, isolated adaptation.
+여기서 $s_{\text{base}} + \Delta s_t$는 여전히 유효한 함수로 남아, 모든 NF 보장을 유지한다. $\Delta s_t, \Delta t_t$를 저순위 행렬(LoRA)로 구현함으로써, 효율적이고 격리된 적응을 달성한다.
 
-**Why Other AD Architectures Fail:**
-This structural property is unique to NF coupling layers. Reconstruction-based methods (AE, VAE) suffer from encoder-decoder coupling that destroys latent consistency under decomposition. Teacher-student methods require precise feature alignment that becomes unstable with partial freezing. Memory-bank methods inherently replay stored features. Only NF provides a mathematical guarantee that subnet modification preserves model validity—and critically, this *uniquely enables zero forgetting* (FM=0.0), not merely reduced forgetting.
+**다른 이상 탐지 아키텍처가 실패하는 이유:**
+이 구조적 속성은 NF 커플링 레이어에 고유하다. 재구성 기반 방법(AE, VAE)은 분해 시 잠재 일관성을 파괴하는 인코더-디코더 결합을 겪는다. 교사-학생 방법은 부분 동결 시 불안정해지는 정밀한 특징 정렬을 요구한다. 메모리 뱅크 방법은 본질적으로 저장된 특징을 리플레이한다. NF만이 서브넷 수정이 모델 유효성을 보존한다는 수학적 보장을 제공하며—결정적으로, 이는 단순히 감소된 망각이 아닌 *완전 망각 제로*(FM=0.0)를 *고유하게 가능하게 한다*.
 
-### 1.6 MoLE-Flow Overview
+### 1.6 MoLE-Flow 개요
 
-We propose **M**ixture **o**f **L**oRA **E**xperts for Normalizing **Flow** (MoLE-Flow), which:
+**M**ixture **o**f **L**oRA **E**xperts for Normalizing **Flow** (MoLE-Flow)를 제안한다:
 
-- Decomposes coupling layer subnets into a *frozen shared base* (learned on Task 0) and *task-specific LoRA adapters*, achieving complete parameter isolation with 22-42% overhead per task.
-- Introduces three **integral components**—Whitening Adapter (WA), Tail-Aware Loss (TAL), and Deep Invertible Adapter (DIA)—that specifically compensate for frozen base rigidity, validated as providing significantly *amplified benefits under the frozen constraint* via interaction effect analysis.
-- Employs prototype-based routing using Mahalanobis distance for task-agnostic inference, achieving 100% routing accuracy on MVTec-AD and 95.8% on ViSA.
+- 커플링 레이어 서브넷을 *고정된 공유 베이스*(Task 0에서 학습)와 *태스크별 LoRA 어댑터*로 분해하여, 태스크당 22-42% 오버헤드로 완전한 파라미터 격리를 달성한다.
+- 고정된 베이스 경직성을 특별히 보상하는 세 가지 **필수 구성요소**—화이트닝 어댑터(WA), 테일 인식 손실(TAL), 심층 가역 어댑터(DIA)—를 도입하며, 상호작용 효과 분석을 통해 *고정 제약 하에서 유의하게 증폭된 이점*을 제공함을 검증한다.
+- 마할라노비스 거리를 사용하는 프로토타입 기반 라우팅을 사용하여 태스크 불가지 추론을 수행한다. 라우팅 정확도는 MVTec-AD에서 100%, ViSA에서 95.8%를 달성한다 (Section 4.7 참조).
 
-### 1.7 Contributions
+### 1.7 기여
 
-1. **Structural Connection.** We establish a theoretical link between NF's Arbitrary Function Property and continual learning's parameter decomposition requirements, showing that NF *uniquely enables zero forgetting* (FM=0.0) among AD architectures—not merely reduced forgetting (Section 3.2).
+1. **구조적 연결.** NF의 임의 함수 속성과 지속 학습의 파라미터 분해 요구사항 사이의 이론적 연결을 확립하여, NF가 이상 탐지 아키텍처 중 *완전 망각 제로*(FM=0.0)를 고유하게 가능하게 함을 보인다—단순히 감소된 망각이 아닌 (Section 3.2).
 
-2. **Parameter-Efficient Isolation Framework.** We propose MoLE-Flow, decomposing coupling subnets into frozen bases and task-specific LoRA, achieving zero forgetting with 22-42% parameters per task—resolving the isolation-efficiency dilemma (Section 3.3).
+2. **파라미터 효율적 격리 프레임워크.** 커플링 서브넷을 고정된 베이스와 태스크별 LoRA로 분해하는 MoLE-Flow를 제안하여, 태스크당 22-42% 파라미터로 완전 망각 제로를 달성—격리-효율성 딜레마를 해결한다 (Section 3.3).
 
-3. **Integral Components with Systematic Validation.** We introduce WA, TAL, and DIA as compensations for frozen base constraints, demonstrating their *amplified effectiveness under freezing* (2-6× larger gains) through 2×2 factorial interaction analysis (Section 3.4, 4.4).
+3. **체계적 검증을 통한 필수 구성요소.** 고정된 베이스 제약에 대한 보상으로 WA, TAL, DIA를 도입하며, 2×2 요인 상호작용 분석을 통해 *고정 하에서 증폭된 효과*(2-6배 더 큰 이득)를 입증한다 (Section 3.4, 4.4).
 
-4. **State-of-the-Art Results.** On MVTec-AD (15 classes, 5 seeds), MoLE-Flow achieves **98.05±0.12% I-AUC** and **55.80±0.35% P-AP** with **zero forgetting**, outperforming replay-based methods without storing any data (Section 4.2).
-
----
-
-## 2. Related Work
-
-### 2.1 Unified Multi-Class Anomaly Detection
-
-Early AD research focused on one-class-one-model settings, but management costs in multi-product environments drove the shift toward unified models. UniAD and OmniAL pioneered single-model multi-class AD, followed by MambaAD (state space models) and DiAD (diffusion-based).
-
-Normalizing flow methods have proven particularly effective: DifferNet, CFLOW-AD, FastFlow, and MSFlow achieve state-of-the-art by directly optimizing likelihood without reconstruction artifacts. Recent advances address multi-modal constraints: HGAD uses hierarchical GMM, while VQ-Flow employs vector quantization.
-
-**Limitation:** However, these unified models assume all classes are available at training time. Their fixed capacity (GMM components, codebook size) cannot accommodate new categories without structural redesign or retraining—triggering catastrophic forgetting.
-
-### 2.2 Continual Learning: From Trade-off to Structural Decoupling
-
-Continual learning addresses the stability-plasticity dilemma: learning new knowledge (plasticity) while preserving old (stability). Early approaches sought balance through replay or regularization, accepting imperfect trade-offs.
-
-The advent of parameter-efficient fine-tuning (PEFT) enabled a paradigm shift from trade-off to *structural decoupling*. LoRA freezes pre-trained weights while adapting through low-rank matrices, achieving isolation without full replication. This has spawned numerous extensions: GainLoRA and MINGLE combine task-specific LoRA with mixture-of-experts routing; CoSO dynamically allocates subspaces.
-
-**Gap:** These methods excel at classification but face fundamental limitations in AD. Classifiers maintain decision boundaries; density estimators model probability manifolds. Adapter insertion at feature level—effective for shifting boundaries—can catastrophically disrupt the bijective mappings that NF relies on for valid likelihood computation. MoLE-Flow addresses this by placing adaptation *within* coupling layers where AFP guarantees safety.
-
-### 2.3 Continual Anomaly Detection
-
-- **Replay-based CAD:** CADIC stores normal sample coresets; ReplayCAD and CDAD use generative replay. While effective, replay methods cannot guarantee tail distribution coverage, leading to biased density estimates.
-- **Regularization-based:** DNE stores statistics rather than samples; CFRDC adds context-aware constraints. These methods assume Gaussian distributions or overly constrain parameter flexibility.
-- **Architecture-based:** SurpriseNet achieves zero forgetting through complete separation but scales linearly with tasks. UCAD uses prompts for efficiency but risks density manifold shifts.
-
-**Missing Piece:** Critically, existing methods assume oracle task ID at inference or train separate classifiers. In AD, where only normal data is available, classifier generalization is uncertain. MoLE-Flow's prototype-based routing uses normal feature distributions directly, achieving 100% routing accuracy on MVTec-AD and 95.8% on ViSA.
-
-**Summary of Gaps:**
-Existing CAD methods fail to simultaneously satisfy: (1) no replay, (2) precise density modeling, (3) parameter efficiency, and (4) task-agnostic routing. MoLE-Flow addresses all four through NF-native parameter decomposition with integrated routing.
+4. **최신 최고 성능.** MVTec-AD(15개 클래스, 5개 시드)에서 MoLE-Flow는 **98.05±0.12% I-AUC**와 **55.80±0.35% P-AP**를 **완전 망각 제로**로 달성하며, 데이터 저장 없이 리플레이 기반 방법을 능가한다 (Section 4.2).
 
 ---
 
-## 3. Method
+## 2. 관련 연구
 
-### Notation
+### 2.1 통합 다중 클래스 이상 탐지
 
-| Symbol | Definition | Dimension |
-|--------|------------|-----------|
-| $\mathbf{F}^{(k)}$ | Feature tensor at pipeline stage $k$ | $B \times H \times W \times D$ |
-| $\mathbf{x}_{\text{in}}$ | Input to coupling subnet (after split) | $D/2$ |
-| $t \in \{0, \ldots, T-1\}$ | Task index | scalar |
-| $\mathbf{A}_t, \mathbf{B}_t$ | LoRA down/up projection matrices | $r \times D/2$, $D/2 \times r$ |
-| $r$ | LoRA rank | 64 (default) |
-| $\gamma_t, \beta_t$ | Whitening Adapter parameters | $\mathbb{R}^D$ |
-| $\boldsymbol{\mu}_t, \boldsymbol{\Sigma}_t$ | Task prototype mean/covariance | $\mathbb{R}^D$, $\mathbb{R}^{D \times D}$ |
-| $\lambda_{\text{tail}}$ | Tail-Aware Loss weight | 0.7 |
-| $k$ | Top-$k$% ratio for TAL | 2% |
+초기 이상 탐지 연구는 일 클래스 일 모델 설정에 집중했으나, 다중 제품 환경에서의 관리 비용이 통합 모델로의 전환을 이끌었다. UniAD와 OmniAL이 단일 모델 다중 클래스 이상 탐지를 개척했고, MambaAD(상태 공간 모델)와 DiAD(확산 기반)가 뒤따랐다.
 
-### 3.1 Problem Formulation and Architecture Overview
+정규화 흐름 방법은 특히 효과적임이 입증되었다: DifferNet, CFLOW-AD, FastFlow, MSFlow는 재구성 아티팩트 없이 우도를 직접 최적화하여 최고 성능을 달성한다. 최근 발전은 다중 모달 제약을 다룬다: HGAD는 계층적 GMM을, VQ-Flow는 벡터 양자화를 사용한다.
 
-**Continual Anomaly Detection Setting:**
-Given a sequence of $T$ tasks $\{\mathcal{D}_0, \mathcal{D}_1, \ldots, \mathcal{D}_{T-1}\}$ arriving sequentially, where each $\mathcal{D}_t = \{(\mathbf{x}_i^{(t)}, y_i^{(t)})\}$ contains only normal samples ($y_i = 0$) for training, we aim to learn $f_\theta$ such that:
+**한계:** 그러나 이러한 통합 모델은 모든 클래스가 학습 시점에 사용 가능하다고 가정한다. 고정된 용량(GMM 구성요소, 코드북 크기)은 구조적 재설계나 재학습 없이 새로운 카테고리를 수용할 수 없어—파국적 망각을 유발한다.
+
+### 2.2 지속 학습: 트레이드오프에서 구조적 분리로
+
+지속 학습은 안정성-가소성 딜레마를 다룬다: 새로운 지식(가소성)을 학습하면서 이전 지식(안정성)을 보존하는 것. 초기 접근법은 리플레이나 정규화를 통해 균형을 추구하며 불완전한 트레이드오프를 수용했다.
+
+파라미터 효율적 미세조정(PEFT)의 등장은 트레이드오프에서 *구조적 분리*로의 패러다임 전환을 가능하게 했다. LoRA는 사전 학습된 가중치를 고정하면서 저순위 행렬을 통해 적응하여, 전체 복제 없이 격리를 달성한다. 이는 수많은 확장을 낳았다: GainLoRA와 MINGLE은 태스크별 LoRA와 전문가 혼합 라우팅을 결합하고; CoSO는 부분공간을 동적으로 할당한다.
+
+**격차:** 이 방법들은 분류에서 탁월하지만 이상 탐지에서 근본적인 한계에 직면한다. 분류기는 결정 경계를 유지하고; 밀도 추정기는 확률 매니폴드를 모델링한다. 특징 수준에서의 어댑터 삽입—경계 이동에 효과적인—은 NF가 유효한 우도 계산에 의존하는 쌍사 매핑을 파국적으로 방해할 수 있다. MoLE-Flow는 AFP가 안전성을 보장하는 커플링 레이어 *내부*에 적응을 배치하여 이를 해결한다.
+
+### 2.3 지속 학습 이상 탐지
+
+- **리플레이 기반 CAD:** CADIC는 정상 샘플 코어셋을 저장하고; ReplayCAD와 CDAD는 생성 리플레이를 사용한다. 효과적이지만, 리플레이 방법은 테일 분포 커버리지를 보장할 수 없어 편향된 밀도 추정을 야기한다.
+- **정규화 기반:** DNE는 샘플 대신 통계를 저장하고; CFRDC는 컨텍스트 인식 제약을 추가한다. 이 방법들은 가우시안 분포를 가정하거나 파라미터 유연성을 과도하게 제한한다.
+- **아키텍처 기반:** SurpriseNet은 완전한 분리를 통해 완전 망각 제로를 달성하지만 태스크에 따라 선형적으로 확장된다. UCAD는 효율성을 위해 프롬프트를 사용하지만 밀도 매니폴드 이동의 위험이 있다.
+
+**누락된 요소:** 결정적으로, 기존 방법들은 추론 시 오라클 태스크 ID를 가정하거나 별도의 분류기를 학습한다. 정상 데이터만 사용 가능한 이상 탐지에서, 분류기 일반화는 불확실하다. MoLE-Flow의 프로토타입 기반 라우팅은 정상 특징 분포를 직접 사용한다 (Section 4.7 참조).
+
+**격차 요약:**
+기존 CAD 방법들은 다음을 동시에 만족하지 못한다: (1) 리플레이 없음, (2) 정밀한 밀도 모델링, (3) 파라미터 효율성, (4) 태스크 불가지 라우팅. MoLE-Flow는 통합 라우팅과 함께 NF 네이티브 파라미터 분해를 통해 네 가지 모두를 해결한다.
+
+---
+
+## 3. 방법론
+
+### 표기법
+
+| 기호 | 정의 | 차원 |
+|------|------|------|
+| $\mathbf{F}^{(k)}$ | 파이프라인 단계 $k$의 특징 텐서 | $B \times H \times W \times D$ |
+| $\mathbf{x}_{\text{in}}$ | 커플링 서브넷 입력 (분할 후) | $D/2$ |
+| $t \in \{0, \ldots, T-1\}$ | 태스크 인덱스 | 스칼라 |
+| $\mathbf{A}_t, \mathbf{B}_t$ | LoRA 다운/업 프로젝션 행렬 | $r \times D/2$, $D/2 \times r$ |
+| $r$ | LoRA 순위 | 64 (기본값) |
+| $\gamma_t, \beta_t$ | 화이트닝 어댑터 파라미터 | $\mathbb{R}^D$ |
+| $\boldsymbol{\mu}_t, \boldsymbol{\Sigma}_t$ | 태스크 프로토타입 평균/공분산 | $\mathbb{R}^D$, $\mathbb{R}^{D \times D}$ |
+| $\lambda_{\text{tail}}$ | 테일 인식 손실 가중치 | 0.7 |
+| $k$ | TAL을 위한 Top-$k$% 비율 | 2% |
+
+### 3.1 문제 정의 및 아키텍처 개요
+
+**지속 학습 이상 탐지 설정:**
+순차적으로 도착하는 $T$개의 태스크 $\{\mathcal{D}_0, \mathcal{D}_1, \ldots, \mathcal{D}_{T-1}\}$가 주어지면, 각 $\mathcal{D}_t = \{(\mathbf{x}_i^{(t)}, y_i^{(t)})\}$는 학습을 위해 정상 샘플($y_i = 0$)만 포함하며, 다음을 만족하는 $f_\theta$를 학습하는 것이 목표이다:
 
 $$\forall t' > t: \quad \text{AUROC}_t(f_{\theta^{(t')}}) \approx \text{AUROC}_t(f_{\theta^{(t)}})$$
 
-**Constraints:**
-1. No data replay: $\mathcal{D}_t$ is discarded after training task $t$
-2. Unknown task ID at inference: input's task identity is not provided
-3. Parameter efficiency: memory growth should be $o(T \times |\theta|)$
+**제약 조건:**
+1. 데이터 리플레이 없음: $\mathcal{D}_t$는 태스크 $t$ 학습 후 폐기
+2. 추론 시 태스크 ID 미제공: 입력의 태스크 정체성이 제공되지 않음
+3. 파라미터 효율성: 메모리 성장이 $o(T \times |\theta|)$이어야 함
 
-**Architecture Overview:**
-MoLE-Flow processes inputs through the following pipeline:
+**아키텍처 개요:**
+MoLE-Flow는 다음 파이프라인을 통해 입력을 처리한다:
 
 $$\mathbf{x}_{\text{img}} \xrightarrow{\text{Backbone}} \mathbf{F}^{(0)} \xrightarrow{\text{PE+WA}} \mathbf{F}^{(1)} \xrightarrow{\text{SCM}} \mathbf{F}^{(2)} \xrightarrow{\text{MoLE-NF}} \mathbf{z} \xrightarrow{\text{DIA}} (\mathbf{z}', \log|\det \mathbf{J}|)$$
 
-where PE is positional encoding, WA is Whitening Adapter, SCM is Spatial Context Mixer, MoLE-NF is our LoRA-equipped normalizing flow, and DIA is Deep Invertible Adapter.
+여기서 PE는 위치 인코딩, WA는 화이트닝 어댑터, SCM은 공간 컨텍스트 믹서, MoLE-NF는 LoRA가 장착된 정규화 흐름, DIA는 심층 가역 어댑터이다.
 
-**[FIGURE 1: Architecture Overview]**
-- Left: Full pipeline from input image through frozen WideResNet-50-2 backbone, PE+WA preprocessing, Spatial Context Mixer, to MoLE-NF and DIA blocks.
-- Center: MoLE Block detail showing frozen base subnet (gray) with task-specific LoRA adapters (colored) computing $s(x) = s_{\text{base}}(x) + \mathbf{B}_t\mathbf{A}_t x$.
-- Right: Prototype-based routing using Mahalanobis distance to select expert.
+**[그림 1: 아키텍처 개요]**
+- 왼쪽: 입력 이미지에서 고정된 WideResNet-50-2 백본, PE+WA 전처리, 공간 컨텍스트 믹서를 거쳐 MoLE-NF와 DIA 블록까지의 전체 파이프라인.
+- 중앙: 고정된 베이스 서브넷(회색)과 태스크별 LoRA 어댑터(색상)가 $s(x) = s_{\text{base}}(x) + \mathbf{B}_t\mathbf{A}_t x$를 계산하는 MoLE 블록 상세도.
+- 오른쪽: 마할라노비스 거리를 사용하여 전문가를 선택하는 프로토타입 기반 라우팅.
 
-**Training Strategy:**
-- **Task 0:** Train base NF weights $\Theta_{\text{base}}$ and task-specific components (LoRA₀, WA₀, DIA₀) jointly.
-- **Task $t \geq 1$:** Freeze $\Theta_{\text{base}}$; train only (LoRA$_t$, WA$_t$, DIA$_t$).
+**학습 전략:**
+- **Task 0:** 베이스 NF 가중치 $\Theta_{\text{base}}$와 태스크별 구성요소(LoRA₀, WA₀, DIA₀)를 공동 학습.
+- **Task $t \geq 1$:** $\Theta_{\text{base}}$ 고정; (LoRA$_t$, WA$_t$, DIA$_t$)만 학습.
 
-This ensures $\frac{\partial \mathcal{L}_t}{\partial \Theta_{\text{base}}} = 0$ for $t \geq 1$, *mathematically guaranteeing zero forgetting*.
+이는 $t \geq 1$에 대해 $\frac{\partial \mathcal{L}_t}{\partial \Theta_{\text{base}}} = 0$을 보장하여, *수학적으로 완전 망각 제로를 보장한다*.
 
-**Task 0 Selection Strategy:**
-The choice of Task 0 determines the shared base representation. Our experiments show that Task 0 selection has minimal impact on final performance (<0.9%p P-AP variance across different choices), suggesting the base learns a general feature-to-Gaussian mapping rather than task-specific knowledge.
+**Task 0 선택 전략:**
+Task 0의 선택은 공유 베이스 표현을 결정한다. 실험 결과 Task 0 선택이 최종 성능에 미치는 영향은 미미하며 (<0.9%p P-AP 분산), 이는 베이스가 태스크별 지식보다는 일반적인 특징→가우시안 매핑을 학습함을 시사한다 (Section 4 참조).
 
-### 3.2 Why Normalizing Flows: The Arbitrary Function Property
+### 3.2 정규화 흐름을 선택한 이유: 임의 함수 속성
 
-**The Structural Suitability of NF for Continual Learning:**
-We seek architectures where parameter decomposition $\mathbf{W}_{\text{task}} = \mathbf{W}_{\text{shared}} + \Delta\mathbf{W}_{\text{task}}$ preserves model validity.
+**지속 학습을 위한 NF의 구조적 적합성:**
+파라미터 분해 $\mathbf{W}_{\text{task}} = \mathbf{W}_{\text{shared}} + \Delta\mathbf{W}_{\text{task}}$가 모델 유효성을 보존하는 아키텍처를 찾는다.
 
-| Architecture | Decomposable | FM Achievable | Reason |
-|--------------|--------------|---------------|--------|
-| Memory Bank (PatchCore) | ✗ | - | Memory = Replay |
-| Reconstruction (AE, VAE) | ✗ | 2.1-3.5 | Latent consistency breaks |
-| Teacher-Student | ✗ | 1.8 | Feature alignment unstable |
-| **NF Coupling** | ✓ | **0.0** | Subnet-agnostic invertibility |
+| 아키텍처 | 분해 가능 | 달성 가능 FM | 이유 |
+|----------|----------|-------------|------|
+| 메모리 뱅크 (PatchCore) | ✗ | - | 메모리 = 리플레이 |
+| 재구성 (AE, VAE) | ✗ | 2.1-3.5 | 잠재 일관성 파괴 |
+| 교사-학생 | ✗ | 1.8 | 특징 정렬 불안정 |
+| **NF 커플링** | ✓ | **0.0** | 서브넷 불가지 가역성 |
 
-**Arbitrary Function Property (AFP):**
-The affine coupling layer guarantees invertibility and tractable log-determinant *regardless* of how $s(\cdot), t(\cdot)$ are implemented:
+**임의 함수 속성 (AFP):**
+아핀 커플링 레이어는 $s(\cdot), t(\cdot)$가 어떻게 구현되든 가역성과 추적 가능한 로그 행렬식을 보장한다:
 
-$$\text{Inverse: } x_1 = y_1, \quad x_2 = (y_2 - t(y_1)) \odot \exp(-s(y_1))$$
+$$\text{역함수: } x_1 = y_1, \quad x_2 = (y_2 - t(y_1)) \odot \exp(-s(y_1))$$
 
-$$\text{Log-det: } \log|\det \mathbf{J}| = \sum_i s_i(x_1)$$
+$$\text{로그 행렬식: } \log|\det \mathbf{J}| = \sum_i s_i(x_1)$$
 
-**AFP Uniquely Enables Zero Forgetting:**
-Since $s_{\text{base}} + \Delta s_t$ is still "a function," all NF guarantees hold under decomposition:
-- **Invertibility:** Preserved (AFP applies to any subnet).
-- **Tractable likelihood:** Log-det computation unchanged.
-- **Zero forgetting:** $\Theta_{\text{base}}$ frozen ⇒ previous task parameters unmodified ⇒ FM=0.0.
+**AFP가 완전 망각 제로를 고유하게 가능하게 함:**
+$s_{\text{base}} + \Delta s_t$가 여전히 "함수"이므로, 모든 NF 보장이 분해 하에서 유지된다:
+- **가역성:** 보존됨 (AFP가 모든 서브넷에 적용).
+- **추적 가능한 우도:** 로그 행렬식 계산 불변.
+- **완전 망각 제로:** $\Theta_{\text{base}}$ 고정 ⇒ 이전 태스크 파라미터 수정 없음 ⇒ FM=0.0.
 
-This structural property is *unique to NF coupling layers*. Other architectures (VAE, AE, Teacher-Student) can use LoRA but achieve only *reduced* forgetting (FM=1.8-3.5), not elimination. The distinction is critical for long task sequences: even FM=2.1 per task accumulates to significant degradation over 50 tasks (~100% cumulative forgetting), whereas FM=0.0 guarantees perfect preservation regardless of sequence length.
+이 구조적 속성은 *NF 커플링 레이어에 고유하다*. 다른 아키텍처(VAE, AE, 교사-학생)도 LoRA를 사용할 수 있지만 제거가 아닌 *감소된* 망각(FM=1.8-3.5)만 달성한다. 이 구분은 긴 태스크 시퀀스에서 중요하다: 태스크당 FM=2.1도 50개 태스크에 걸쳐 상당한 성능 저하로 누적되지만(~100% 누적 망각), FM=0.0은 시퀀스 길이와 관계없이 완벽한 보존을 보장한다 (Section 4.6 참조).
 
-**Why Linear LoRA with DIA Instead of Nonlinear LoRA:**
-We chose linear LoRA combined with DIA for three reasons:
-1. **Simplicity**: Linear LoRA has well-understood optimization dynamics and initialization strategies
-2. **Modularity**: Separating linear task adaptation (LoRA) from nonlinear correction (DIA) provides cleaner ablation and interpretability
-3. **Empirical effectiveness**: Our ablations show DIA provides +5.2%p P-AP under frozen base
+**DIA가 있는 선형 LoRA를 비선형 LoRA 대신 선택한 이유:**
+세 가지 이유로 DIA와 결합된 선형 LoRA를 선택했다:
+1. **단순성**: 선형 LoRA는 잘 이해된 최적화 동역학과 초기화 전략을 가짐
+2. **모듈성**: 선형 태스크 적응(LoRA)과 비선형 보정(DIA)의 분리가 더 깔끔한 절제 실험과 해석 가능성을 제공
+3. **경험적 효과**: 절제 실험에서 DIA가 고정된 베이스 하에서 +5.2%p P-AP를 제공함을 보임 (Section 4.4 참조)
 
-### 3.3 MoLE Block: LoRA-Integrated Coupling Layer
+### 3.3 MoLE 블록: LoRA 통합 커플링 레이어
 
-**Coupling Subnet Decomposition:**
-Within each affine coupling layer, the scale and translation networks are implemented as:
+**커플링 서브넷 분해:**
+각 아핀 커플링 레이어 내에서, 스케일 및 변환 네트워크는 다음과 같이 구현된다:
 
 $$s(\mathbf{x}) = s_{\text{base}}(\mathbf{x}; \Theta_s) + \mathbf{B}_t^{(s)} \mathbf{A}_t^{(s)} \mathbf{x}$$
 $$t(\mathbf{x}) = t_{\text{base}}(\mathbf{x}; \Theta_t) + \mathbf{B}_t^{(t)} \mathbf{A}_t^{(t)} \mathbf{x}$$
 
-where $\mathbf{A}_t \in \mathbb{R}^{r \times D/2}$, $\mathbf{B}_t \in \mathbb{R}^{D/2 \times r}$ are task-specific low-rank matrices with rank $r \ll D$.
+여기서 $\mathbf{A}_t \in \mathbb{R}^{r \times D/2}$, $\mathbf{B}_t \in \mathbb{R}^{D/2 \times r}$는 순위 $r \ll D$인 태스크별 저순위 행렬이다.
 
-**LoRA Scaling Factor:**
-Following standard LoRA, we set $\alpha = r = 64$, yielding $\alpha/r = 1$. Ablation with $\alpha \in \{r/4, r/2, r, 2r\}$ showed <0.5%p variation in final performance.
+**LoRA 스케일링 팩터:**
+표준 LoRA를 따라, $\alpha = r = 64$로 설정하여 $\alpha/r = 1$을 얻는다. $\alpha \in \{r/4, r/2, r, 2r\}$로의 절제 실험에서 최종 성능에서 <0.5%p 변동을 보였다 (부록 C 참조).
 
-**Context-Aware Subnet Design:**
-Our MoLEContextSubnet incorporates spatial awareness:
+**컨텍스트 인식 서브넷 설계:**
+MoLEContextSubnet은 공간 인식을 통합한다:
 
 $$\mathbf{ctx} = \alpha_{\text{ctx}} \cdot \text{DWConv}_{3\times3}(\mathbf{x})$$
 $$\mathbf{s} = \text{MLP}_s([\mathbf{x}; \mathbf{ctx}]), \quad \mathbf{t} = \text{MLP}_t(\mathbf{x})$$
 
-where the scale network receives spatial context (anomalies manifest as local discontinuities) while the translation network operates on intrinsic features.
+스케일 네트워크는 공간 컨텍스트(이상은 국부적 불연속성으로 나타남)를 받고, 변환 네트워크는 고유 특징에 대해 작동한다.
 
-**Why Low-Rank Adaptation Suffices:**
-- *Theoretical basis:* Pre-trained backbones provide task-agnostic representations; NF learns feature→Gaussian mappings whose structure is largely task-independent.
-- *Empirical validation:* SVD analysis of full fine-tuning weight changes reveals effective rank capturing 99% variance is consistently <64 across all layers.
+**저순위 적응이 충분한 이유:**
+- *이론적 근거:* 사전 학습된 백본은 태스크 불가지 표현을 제공하고; NF는 구조가 대체로 태스크 독립적인 특징→가우시안 매핑을 학습한다.
+- *경험적 검증:* 전체 미세조정 가중치 변화의 SVD 분석은 99% 분산을 포착하는 유효 순위가 모든 레이어에서 일관되게 <64임을 보인다 (부록 I 참조).
 
-**Parameter Overhead:**
-Per-task parameters: LoRA (2 × r × D per layer × 24 layers) + TaskBias + WA ≈ 1.93M (**21.8%** of NF base), or 3.71M (**41.7%**) including DIA.
+**파라미터 오버헤드:**
+태스크당 파라미터: LoRA (레이어당 2 × r × D × 24 레이어) + TaskBias + WA ≈ 1.93M (NF 베이스의 **21.8%**), 또는 DIA 포함 시 3.71M (**41.7%**).
 
-### 3.4 Integral Components: Compensating Frozen Base Rigidity
+### 3.4 필수 구성요소: 고정된 베이스 경직성 보상
 
-**Defining "Integral" vs. "Generic" Components:**
-Frozen base design achieves zero forgetting but introduces structural rigidity. We distinguish *integral* components (showing statistically significant interaction with frozen base condition in 2×2 ANOVA, $p < 0.05$) from *generic* boosters (no interaction). Crucially, "integral" means components provide *significantly amplified benefits under the frozen constraint* (2-6× larger gains), not that they are *only* beneficial under freezing.
+**"필수" vs. "일반" 구성요소 정의:**
+고정된 베이스 설계는 완전 망각 제로를 달성하지만 구조적 경직성을 도입한다. 우리는 *필수* 구성요소(2×2 ANOVA에서 고정된 베이스 조건과 통계적으로 유의한 상호작용을 보이는, $p < 0.05$)와 *일반* 부스터(상호작용 없음)를 구분한다. 중요하게도, "필수"는 구성요소가 *고정 제약 하에서 유의하게 증폭된 이점*을 제공함을 의미하며(2-6배 더 큰 이득), 고정 하에서*만* 유익하다는 것이 아니다 (Section 4.5 참조).
 
-#### 3.4.1 Whitening Adapter (WA): Distribution Alignment
+#### 3.4.1 화이트닝 어댑터 (WA): 분포 정렬
 
-**Problem:**
-Frozen base was fitted to Task 0's feature distribution. New tasks with different distributions (covariate shift) cannot be accommodated by frozen parameters, overloading LoRA with global distribution correction.
+**문제:**
+고정된 베이스는 Task 0의 특징 분포에 맞춰졌다. 다른 분포를 가진 새로운 태스크(공변량 이동)는 고정된 파라미터로 수용될 수 없어, 전역 분포 보정으로 LoRA에 과부하를 준다.
 
-**Solution:**
-Two-stage affine transformation:
+**해결책:**
+2단계 아핀 변환:
 
 $$\mathbf{f}_{\text{white}} = \frac{\mathbf{F} - \mathbb{E}[\mathbf{F}]}{\sqrt{\text{Var}[\mathbf{F}] + \epsilon}}$$
 $$\mathbf{F}' = \gamma_t \odot \mathbf{f}_{\text{white}} + \beta_t$$
 
-where $\gamma_t \in [0.5, 2.0]$, $\beta_t \in [-2.0, 2.0]$ are constrained to ensure stability.
+여기서 $\gamma_t \in [0.5, 2.0]$, $\beta_t \in [-2.0, 2.0]$는 안정성을 보장하기 위해 제약된다.
 
-**Justification of Constraint Bounds:**
-The bounds are derived from empirical analysis of Task 0 feature statistics:
-1. $\gamma_{\min} = 0.5$ prevents near-zero scaling that collapses feature variance
-2. $\gamma_{\max} = 2.0$ limits variance amplification
-3. $|\beta_{\max}| = 2.0$ prevents mean shifts beyond ±2σ where Base Flow was not optimized
+**제약 경계의 정당화:**
+경계는 Task 0 특징 통계의 경험적 분석에서 도출된다:
+1. $\gamma_{\min} = 0.5$는 특징 분산을 붕괴시키는 거의 0인 스케일링을 방지
+2. $\gamma_{\max} = 2.0$은 분산 증폭을 제한
+3. $|\beta_{\max}| = 2.0$은 Base Flow가 최적화되지 않은 ±2σ를 넘는 평균 이동을 방지
 
-**Integral Status:**
-Interaction effect: $F(1,16) = 8.47$, $p = 0.008$, partial $\eta^2 = 0.35$.
-WA provides +7.3%p P-AP under frozen base vs. +1.2%p unfrozen—a **6× amplification**.
+**필수 상태:**
+상호작용 효과: $F(1,16) = 8.47$, $p = 0.008$, 부분 $\eta^2 = 0.35$ (Section 4.5 참조).
 
-#### 3.4.2 Tail-Aware Loss (TAL): Gradient Redistribution
+#### 3.4.2 테일 인식 손실 (TAL): 기울기 재분배
 
-**Problem:**
-Standard NLL training concentrates gradients on high-density (bulk) regions. With frozen base, LoRA's limited capacity should focus on decision-critical tail regions where anomalies are detected.
+**문제:**
+표준 NLL 학습은 기울기를 고밀도(벌크) 영역에 집중시킨다. 고정된 베이스에서, LoRA의 제한된 용량은 이상이 탐지되는 결정적인 테일 영역에 집중해야 한다.
 
-**Solution:**
-Weight top-$k$% highest-loss patches:
+**해결책:**
+top-$k$% 최고 손실 패치에 가중치 부여:
 
 $$\mathcal{L}_{\text{train}} = (1 - \lambda_{\text{tail}}) \cdot \mathbb{E}_{\text{all}}[\mathcal{L}_{\text{NLL}}] + \lambda_{\text{tail}} \cdot \mathbb{E}_{\text{top-}k}[\mathcal{L}_{\text{NLL}}]$$
 
-with $k = 2\%$ and $\lambda_{\text{tail}} = 0.7$.
+$k = 2\%$, $\lambda_{\text{tail}} = 0.7$로 설정.
 
-**Top-$k$ Ratio Justification:**
-The choice of $k = 2\%$ (approximately 4 patches out of 14×14 = 196) is motivated by:
-1. Anomaly localization studies show typical industrial defects occupy 1-5% of image area
-2. Focusing on too few patches ($k < 1\%$) introduces high variance
-3. Too many patches ($k > 5\%$) dilutes the tail focus
+**Top-$k$ 비율 정당화:**
+$k = 2\%$ (14×14 = 196 패치 중 약 4개)의 선택은 다음에 의해 동기 부여된다:
+1. 이상 위치화 연구에서 일반적인 산업 결함이 이미지 면적의 1-5%를 차지함을 보임
+2. 너무 적은 패치에 집중($k < 1\%$)하면 높은 분산을 유발
+3. 너무 많은 패치($k > 5\%$)는 테일 집중을 희석
 
-**Integral Status:**
-Interaction effect: $F(1,16) = 6.23$, $p = 0.021$, partial $\eta^2 = 0.28$.
-TAL provides +7.6%p P-AP under frozen base vs. +3.2%p unfrozen.
+**필수 상태:**
+상호작용 효과: $F(1,16) = 6.23$, $p = 0.021$, 부분 $\eta^2 = 0.28$ (Section 4.5 참조).
 
-#### 3.4.3 Deep Invertible Adapter (DIA): Nonlinear Manifold Correction
+#### 3.4.3 심층 가역 어댑터 (DIA): 비선형 매니폴드 보정
 
-**Problem:**
-LoRA provides linear corrections. Complex inter-task manifold differences require nonlinear adaptation that frozen base + linear LoRA cannot express.
+**문제:**
+LoRA는 선형 보정을 제공한다. 복잡한 태스크 간 매니폴드 차이는 고정된 베이스 + 선형 LoRA가 표현할 수 없는 비선형 적응을 요구한다.
 
-**Solution:**
-Task-specific invertible blocks after base NF:
+**해결책:**
+베이스 NF 이후의 태스크별 가역 블록:
 
 $$\mathbf{z}_{\text{final}} = f_{\text{DIA}}^{(t)}(\mathbf{z}_{\text{base}})$$
 $$\log p(\mathbf{x}) = \log p(\mathbf{z}_{\text{final}}) + \log|\det \mathbf{J}_{\text{base}}| + \log|\det \mathbf{J}_{\text{DIA}}|$$
 
-DIA uses 2 affine coupling blocks with fully task-specific parameters (no sharing), enabling nonlinear distribution normalization.
+DIA는 완전한 태스크별 파라미터(공유 없음)를 가진 2개의 아핀 커플링 블록을 사용하여, 비선형 분포 정규화를 가능하게 한다.
 
-**Placement Logic:**
-DIA is placed *after* the base NF (not within coupling layers) for two reasons:
-1. Base NF applies universal transformation first; DIA performs task-specific adjustment on the already-transformed latent space
-2. Placing DIA after allows complete task-specific parameters without interference with shared base weights
+**배치 논리:**
+DIA는 두 가지 이유로 베이스 NF *이후*에 배치된다 (커플링 레이어 내부가 아님):
+1. 베이스 NF가 먼저 범용 변환을 적용하고; DIA는 이미 변환된 잠재 공간에서 태스크별 조정을 수행
+2. 이후에 DIA를 배치하면 공유 베이스 가중치와의 간섭 없이 완전한 태스크별 파라미터 가능
 
-**Integral Status:**
-Interaction effect: $F(1,16) = 5.12$, $p = 0.034$, partial $\eta^2 = 0.24$.
-DIA provides +5.2%p P-AP under frozen base vs. +2.1%p unfrozen.
+**필수 상태:**
+상호작용 효과: $F(1,16) = 5.12$, $p = 0.034$, 부분 $\eta^2 = 0.24$ (Section 4.5 참조).
 
-**[FIGURE 2: Interaction Effect Analysis]**
-Three panels showing P-AP vs. Base Condition (Frozen/Unfrozen) for each component.
-- (a) WA: +7.3%p under frozen vs. +1.2%p unfrozen (6× amplification)
-- (b) TAL: +7.6%p under frozen vs. +3.2%p unfrozen (2.4× amplification)
-- (c) DIA: +5.2%p under frozen vs. +2.1%p unfrozen (2.5× amplification)
+**[그림 2: 상호작용 효과 분석]**
+각 구성요소에 대해 P-AP vs. 베이스 조건(고정/비고정)을 보여주는 세 개의 패널.
+- (a) WA: 고정 하 +7.3%p vs. 비고정 +1.2%p (6× 증폭)
+- (b) TAL: 고정 하 +7.6%p vs. 비고정 +3.2%p (2.4× 증폭)
+- (c) DIA: 고정 하 +5.2%p vs. 비고정 +2.1%p (2.5× 증폭)
 
-Lines diverge under frozen condition, demonstrating amplified benefits.
+고정 조건에서 선이 발산하여 증폭된 이점을 보여준다.
 
-### 3.5 Task-Agnostic Inference via Prototype Routing
+### 3.5 프로토타입 라우팅을 통한 태스크 불가지 추론
 
-**Challenge:**
-In class-incremental learning, task ID is unknown at inference. Incorrect task selection activates inappropriate adapters, degrading detection.
+**도전:**
+클래스 증분 학습에서 추론 시 태스크 ID를 알 수 없다. 잘못된 태스크 선택은 부적절한 어댑터를 활성화하여 탐지를 저하시킨다.
 
-**Prototype Construction:**
-During training, store task-specific prototypes:
+**프로토타입 구축:**
+학습 중 태스크별 프로토타입 저장:
 
 $$\boldsymbol{\mu}_t = \frac{1}{N_t} \sum_i \mathbf{f}_i^{(t)}$$
 $$\boldsymbol{\Sigma}_t = \frac{1}{N_t-1} \sum_i (\mathbf{f}_i^{(t)} - \boldsymbol{\mu}_t)(\mathbf{f}_i^{(t)} - \boldsymbol{\mu}_t)^\top + \lambda I$$
 
-where $\mathbf{f}_i^{(t)}$ is backbone's image-level feature.
+여기서 $\mathbf{f}_i^{(t)}$는 백본의 이미지 수준 특징이다.
 
-**Task Selection:**
-At inference, select task $t^*$ minimizing Mahalanobis distance:
+**태스크 선택:**
+추론 시, 마할라노비스 거리를 최소화하는 태스크 $t^*$ 선택:
 
 $$t^* = \arg\min_t \sqrt{(\mathbf{f} - \boldsymbol{\mu}_t)^\top \boldsymbol{\Sigma}_t^{-1} (\mathbf{f} - \boldsymbol{\mu}_t)}$$
 
-then activate corresponding LoRA$_{t^*}$, WA$_{t^*}$, DIA$_{t^*}$.
+그 후 해당하는 LoRA$_{t^*}$, WA$_{t^*}$, DIA$_{t^*}$를 활성화한다.
 
-**Result:**
-100% routing accuracy on MVTec-AD (15 classes) and 95.8% on ViSA (12 classes). The lower accuracy on ViSA reflects higher inter-class similarity in the PCB domain.
+**결과:**
+라우팅 정확도와 실패 사례에 대한 상세 분석은 Section 4.7을 참조한다.
 
 ---
 
-## 4. Experiments
+## 4. 실험
 
-### 4.1 Experimental Setup
+### 4.1 실험 설정
 
-**Datasets:**
-- **MVTec-AD:** 15 categories, 3,629 training / 1,725 test images.
-- **ViSA:** 12 categories, 8,659 training / 2,162 test images.
-- All experiments use 224×224 resolution.
+**데이터셋:**
+- **MVTec-AD:** 15개 카테고리, 3,629 학습 / 1,725 테스트 이미지.
+- **ViSA:** 12개 카테고리, 8,659 학습 / 2,162 테스트 이미지.
+- 모든 실험은 224×224 해상도를 사용.
 
-**Continual Learning Protocol:**
-1×1 scenario: one class per task, arriving in alphabetical order. Task ID is *not* provided at inference (router predicts). After training task $t$, data $\mathcal{D}_t$ is discarded.
+**지속 학습 프로토콜:**
+1×1 시나리오: 태스크당 하나의 클래스, 알파벳 순으로 도착. 추론 시 태스크 ID는 제공되지 않음 (라우터가 예측). 태스크 $t$ 학습 후 데이터 $\mathcal{D}_t$는 폐기.
 
-**Evaluation Metrics:**
-- **I-AUC:** Image-level AUROC
-- **P-AP:** Pixel-level Average Precision
-- **FM:** Forgetting Measure (average performance drop on previous tasks after learning new tasks)
-- **BWT:** Backward Transfer (change in performance on previous tasks)
-- **FWT:** Forward Transfer (zero-shot performance on future tasks before training)
+**평가 지표:**
+- **I-AUC:** 이미지 수준 AUROC
+- **P-AP:** 픽셀 수준 평균 정밀도
+- **FM:** 망각 측정 (새로운 태스크 학습 후 이전 태스크의 평균 성능 하락)
+- **BWT:** 역방향 전이 (이전 태스크에 대한 성능 변화)
+- **FWT:** 순방향 전이 (학습 전 미래 태스크에 대한 제로샷 성능)
 
-All metrics averaged over 5 seeds; we report mean ± std.
+모든 지표는 5개 시드에 대한 평균; 평균 ± 표준편차를 보고.
 
-**Ablated Baseline Definitions:**
-- **Task-Head:** Frozen NF + task-specific MLP(256) classification head
-- **LoRA-OutputOnly:** LoRA applied only to final coupling layer (not all layers)
-- **Adapter-NF:** Bottleneck adapter (64 dim) inserted between coupling layers
+**절제 베이스라인 정의:**
+- **Task-Head:** 고정된 NF + 태스크별 MLP(256) 분류 헤드
+- **LoRA-OutputOnly:** 마지막 커플링 레이어에만 LoRA 적용 (모든 레이어가 아님)
+- **Adapter-NF:** 커플링 레이어 사이에 병목 어댑터(64 차원) 삽입
 
-All baselines use identical backbone, training epochs, and hyperparameter tuning budget.
+모든 베이스라인은 동일한 백본, 학습 에폭, 하이퍼파라미터 튜닝 예산을 사용.
 
-**Baseline Implementation Details:**
-For fair comparison, we re-implemented CADIC and ReplayCAD using the same WideResNet-50-2 backbone and training protocol (60 epochs, same optimizer, same data augmentation). CADIC uses a 10% coreset buffer; ReplayCAD uses a VAE-based generator trained on normal samples. Both methods were tuned using the same hyperparameter budget (20 trials) as MoLE-Flow. Original paper implementations were also evaluated for reference, showing consistent relative performance.
+**베이스라인 구현 세부사항:**
+공정한 비교를 위해, 동일한 WideResNet-50-2 백본과 학습 프로토콜(60 에폭, 동일한 옵티마이저, 동일한 데이터 증강)을 사용하여 CADIC와 ReplayCAD를 재구현했다. CADIC는 10% 코어셋 버퍼를 사용하고; ReplayCAD는 정상 샘플로 학습된 VAE 기반 생성기를 사용한다. 두 방법 모두 MoLE-Flow와 동일한 하이퍼파라미터 예산(20회 시도)으로 튜닝되었다. 참조를 위해 원본 논문 구현도 평가되었으며, 일관된 상대적 성능을 보였다.
 
-**Implementation Details:**
-- Backbone: WideResNet-50-2 (frozen)
-- 6 MoLE blocks + 2 DIA blocks
-- LoRA rank: 64
-- Training: 60 epochs, AdamP optimizer, lr=3×10⁻⁴, cosine annealing
-- λ_tail=0.7, tail ratio k=2%
-- Single NVIDIA A100 GPU
+**구현 세부사항:**
+- 백본: WideResNet-50-2 (고정)
+- 6 MoLE 블록 + 2 DIA 블록
+- LoRA 순위: 64
+- 학습: 60 에폭, AdamP 옵티마이저, lr=3×10⁻⁴, 코사인 어닐링
+- λ_tail=0.7, 테일 비율 k=2%
+- 단일 NVIDIA A100 GPU
 
-### 4.2 Main Comparison with State-of-the-Art
+### 4.2 최신 기법과의 주요 비교
 
-**Table: Comparison on MVTec-AD (15 classes, 1×1 CL scenario)**
+**표: MVTec-AD 비교 (15개 클래스, 1×1 CL 시나리오)**
 
-| Method | Type | I-AUC↑ | P-AP↑ | FM↓ | BWT↑ | Params/Task |
-|--------|------|--------|-------|-----|------|-------------|
-| *General CL Methods* |
+| 방법 | 유형 | I-AUC↑ | P-AP↑ | FM↓ | BWT↑ | 태스크당 파라미터 |
+|------|------|--------|-------|-----|------|-----------------|
+| *일반 CL 방법* |
 | Fine-tune | Naive | 60.1±3.2 | 12.3±2.1 | 37.8 | -35.2 | 100% |
 | EWC | Reg. | 82.5±1.4 | 32.1±1.8 | 15.2 | -12.8 | 100% |
-| PackNet | Arch. | 89.3±0.8 | 41.5±1.2 | 4.2 | -3.1 | Fixed |
-| Replay (5%)† | Replay | 93.5±0.6 | 47.2±1.0 | 1.5 | -0.8 | +5%/task |
-| *Continual AD Methods* |
-| DNE | Stats | 88.2±0.9 | 38.7±1.3 | 3.8 | -2.9 | Minimal |
+| PackNet | Arch. | 89.3±0.8 | 41.5±1.2 | 4.2 | -3.1 | 고정 |
+| Replay (5%)† | Replay | 93.5±0.6 | 47.2±1.0 | 1.5 | -0.8 | +5%/태스크 |
+| *지속 학습 AD 방법* |
+| DNE | Stats | 88.2±0.9 | 38.7±1.3 | 3.8 | -2.9 | 최소 |
 | UCAD | Prompt | 91.4±0.7 | 43.2±1.1 | 2.1 | -1.5 | ~1% |
-| CADIC† | Replay | 94.7±0.5 | 49.8±0.9 | 1.1 | -0.6 | +10%/task |
-| ReplayCAD† | Gen. | 96.2±0.4 | 52.3±0.8 | 0.8 | -0.4 | Generative |
-| *Ablated Baselines (Ours)* |
+| CADIC† | Replay | 94.7±0.5 | 49.8±0.9 | 1.1 | -0.6 | +10%/태스크 |
+| ReplayCAD† | Gen. | 96.2±0.4 | 52.3±0.8 | 0.8 | -0.4 | 생성형 |
+| *절제 베이스라인 (우리)* |
 | Task-Head | Head | 89.5±0.9 | 38.7±1.4 | 0.5 | -0.2 | ~1% |
 | LoRA-OutputOnly | Partial | 94.8±0.5 | 48.5±0.9 | 0.8 | -0.3 | ~0.5% |
 | Adapter-NF | PEFT | 96.2±0.4 | 51.2±0.8 | 0.3 | -0.1 | ~2% |
-| **MoLE-Flow (Ours)** | **Ours** | **98.05±0.12** | **55.80±0.35** | **0.0** | **0.0** | **22-42%** |
+| **MoLE-Flow (우리)** | **Ours** | **98.05±0.12** | **55.80±0.35** | **0.0** | **0.0** | **22-42%** |
 
-†: requires replay buffer
+†: 리플레이 버퍼 필요
 
-**Key Findings:**
-1. MoLE-Flow achieves state-of-the-art I-AUC (98.05%) and P-AP (55.80%) while being the only method with *zero* forgetting (FM=0.0, BWT=0.0).
-2. Replay-based methods (CADIC, ReplayCAD) show competitive performance but suffer from non-zero forgetting and data storage requirements.
-3. General CL methods fail catastrophically: EWC's regularization is insufficient for density estimation; PackNet's capacity saturates.
-4. Compared to PEFT baselines, MoLE-Flow's full coupling-level integration significantly outperforms partial (LoRA-OutputOnly) or alternative (Adapter-NF) approaches.
+**주요 발견:**
+1. MoLE-Flow는 최고 성능의 I-AUC (98.05%)와 P-AP (55.80%)를 달성하면서, *완전 망각 제로*를 보이는 유일한 방법이다 (FM=0.0, BWT=0.0).
+2. 리플레이 기반 방법(CADIC, ReplayCAD)은 경쟁력 있는 성능을 보이지만 비제로 망각과 데이터 저장 요구사항이 있다.
+3. 일반 CL 방법은 파국적으로 실패한다: EWC의 정규화는 밀도 추정에 불충분하고; PackNet의 용량이 포화된다.
+4. PEFT 베이스라인과 비교하여, MoLE-Flow의 전체 커플링 수준 통합은 부분적(LoRA-OutputOnly) 또는 대안적(Adapter-NF) 접근법을 상당히 능가한다.
 
-### 4.3 ViSA Dataset Results and Analysis
+### 4.3 ViSA 데이터셋 결과 및 분석
 
-**Table: Comparison on ViSA (12 classes, 1×1 CL scenario)**
+**표: ViSA 비교 (12개 클래스, 1×1 CL 시나리오)**
 
-| Method | I-AUC↑ | P-AP↑ | FM↓ | BWT↑ | Routing Acc |
-|--------|--------|-------|-----|------|-------------|
+| 방법 | I-AUC↑ | P-AP↑ | FM↓ | BWT↑ | 라우팅 정확도 |
+|------|--------|-------|-----|------|-------------|
 | UCAD | 87.4±0.9 | 30.0±1.2 | 3.9 | -2.8 | 91.2% |
 | ReplayCAD† | 90.3±0.6 | **41.5±1.0** | 5.5 | -4.2 | N/A |
-| **MoLE-Flow (Ours)** | **90.0±0.5** | 26.6±0.8 | **0.0** | **0.0** | 95.8% |
+| **MoLE-Flow (우리)** | **90.0±0.5** | 26.6±0.8 | **0.0** | **0.0** | 95.8% |
 
-**Analysis of P-AP Gap on ViSA:**
-MoLE-Flow achieves lower P-AP on ViSA (26.6%) compared to ReplayCAD (41.5%), despite comparable I-AUC. This gap stems from three dataset-specific factors:
+**ViSA에서 P-AP 격차 분석:**
+MoLE-Flow는 비슷한 I-AUC에도 불구하고 ReplayCAD (41.5%)에 비해 ViSA에서 낮은 P-AP (26.6%)를 달성한다. 이 격차는 세 가지 데이터셋 특화 요인에서 비롯된다:
 
-1. **Smaller anomaly regions:** ViSA anomalies occupy 0.3-2.1% of image area on average, compared to 1.5-8.2% in MVTec-AD. Our 14×14 spatial resolution (from 224px input) provides coarse localization that struggles with sub-patch anomalies.
+1. **더 작은 이상 영역:** ViSA 이상은 평균적으로 이미지 면적의 0.3-2.1%를 차지하며, MVTec-AD의 1.5-8.2%와 비교된다. 224px 입력에서의 14×14 공간 해상도는 서브 패치 이상에 어려움을 겪는 조악한 위치화를 제공한다.
 
-2. **Frozen base constraint:** The shared base, trained on general feature-to-Gaussian mappings, has limited capacity for fine-grained spatial patterns. ReplayCAD's continual access to data enables task-specific spatial refinement unavailable under our frozen constraint.
+2. **고정된 베이스 제약:** 일반적인 특징→가우시안 매핑으로 학습된 공유 베이스는 세밀한 공간 패턴에 대한 제한된 용량을 가진다. ReplayCAD의 데이터에 대한 지속적 접근은 고정 제약 하에서 불가능한 태스크별 공간 정제를 가능하게 한다.
 
-3. **Domain shift:** ViSA's PCB domain exhibits higher intra-class variance and subtler anomalies than MVTec-AD's texture/object categories.
+3. **도메인 이동:** ViSA의 PCB 도메인은 MVTec-AD의 텍스처/객체 카테고리보다 더 높은 클래스 내 분산과 더 미묘한 이상을 보인다.
 
-**Trade-off Interpretation:**
-This represents a fundamental trade-off: MoLE-Flow prioritizes **zero forgetting** (FM=0.0) over maximum localization accuracy. For applications requiring strict backward compatibility (e.g., certified inspection systems), this trade-off is favorable. For applications prioritizing localization, higher-resolution variants (28×28, at 4× parameter cost) or domain-specific fine-tuning could bridge the gap.
+**트레이드오프 해석:**
+이는 근본적인 트레이드오프를 나타낸다: MoLE-Flow는 최대 위치화 정확도보다 **완전 망각 제로**(FM=0.0)를 우선시한다. 엄격한 하위 호환성이 필요한 애플리케이션(예: 인증된 검사 시스템)에서 이 트레이드오프는 유리하다. 위치화를 우선시하는 애플리케이션의 경우, 고해상도 변형(28×28, 4배 파라미터 비용) 또는 도메인별 미세조정이 격차를 메울 수 있다.
 
-### 4.4 Component Ablation Study
+### 4.4 구성요소 절제 연구
 
-**Table: Ablation study on MVTec-AD**
+**표: MVTec-AD 절제 연구**
 
-| Configuration | I-AUC | ΔI-AUC | P-AP | ΔP-AP | FM |
-|---------------|-------|--------|------|-------|-----|
+| 구성 | I-AUC | ΔI-AUC | P-AP | ΔP-AP | FM |
+|------|-------|--------|------|-------|-----|
 | Full (MoLE-Flow) | **97.92** | - | **56.18** | - | **0.0** |
 | w/o TAL | 94.97 | -2.95 | 48.61 | **-7.57** | 0.0 |
 | w/o WA | 97.90 | -0.02 | 48.84 | **-7.34** | 0.0 |
 | w/o DIA | 92.74 | **-5.18** | 50.06 | -6.12 | 0.0 |
-| w/o LoRA (base only) | 97.96 | +0.04 | 55.31 | -0.87 | **3.2** |
-| w/o Spatial Context | 97.41 | -0.51 | 53.25 | -2.93 | 0.0 |
-| w/o Positional Encoding | 96.84 | -1.08 | 51.92 | -4.26 | 0.0 |
+| w/o LoRA (베이스만) | 97.96 | +0.04 | 55.31 | -0.87 | **3.2** |
+| w/o 공간 컨텍스트 | 97.41 | -0.51 | 53.25 | -2.93 | 0.0 |
+| w/o 위치 인코딩 | 96.84 | -1.08 | 51.92 | -4.26 | 0.0 |
 
-**Key Findings:**
-1. **TAL** provides the largest P-AP contribution (+7.57%p), confirming tail focus is critical for pixel-level detection.
-2. **WA** similarly contributes +7.34%p P-AP by normalizing distribution shifts.
-3. **DIA** is essential for I-AUC (+5.18%p), providing training stability through nonlinear manifold correction.
-4. **LoRA** shows minimal direct performance contribution (-0.87%p) but *enables zero forgetting*—its value is in **isolation, not accuracy**.
+**주요 발견:**
+1. **TAL**은 가장 큰 P-AP 기여를 제공하여 (+7.57%p), 테일 집중이 픽셀 수준 탐지에 중요함을 확인한다.
+2. **WA**는 분포 이동을 정규화하여 유사하게 +7.34%p P-AP를 기여한다.
+3. **DIA**는 I-AUC (+5.18%p)에 필수적이며, 비선형 매니폴드 보정을 통해 학습 안정성을 제공한다.
+4. **LoRA**는 최소한의 직접적 성능 기여를 보이지만 (-0.87%p) *완전 망각 제로를 가능하게 한다*—그 가치는 **정확도가 아닌 격리**에 있다.
 
-**Clarifying LoRA's Contribution: Isolation vs. Accuracy**
+**LoRA 기여 명확화: 격리 vs. 정확도**
 
-**Table: Forgetting Measure (FM) breakdown by configuration**
+**표: 구성별 망각 측정(FM) 분석**
 
-| Configuration | FM (I-AUC) | FM (P-AP) | Interpretation |
-|---------------|------------|-----------|----------------|
-| **Full (MoLE-Flow)** | **0.0** | **0.0** | Zero forgetting |
-| w/o LoRA (Sequential) | 35.2 | 28.4 | Catastrophic forgetting |
-| w/o LoRA + Replay(5%) | 1.8 | 1.2 | Partial mitigation |
+| 구성 | FM (I-AUC) | FM (P-AP) | 해석 |
+|------|------------|-----------|------|
+| **Full (MoLE-Flow)** | **0.0** | **0.0** | 완전 망각 제로 |
+| w/o LoRA (순차) | 35.2 | 28.4 | 파국적 망각 |
+| w/o LoRA + Replay(5%) | 1.8 | 1.2 | 부분적 완화 |
 
-Without LoRA, the model must update shared base weights for each new task, causing FM=35.2 (I-AUC) and FM=28.4 (P-AP)—catastrophic forgetting. *LoRA's contribution is architectural (parameter isolation) rather than representational (feature quality)*.
+LoRA 없이, 모델은 각 새로운 태스크에 대해 공유 베이스 가중치를 업데이트해야 하여 FM=35.2 (I-AUC)와 FM=28.4 (P-AP)—파국적 망각—을 야기한다. *LoRA의 기여는 표현적(특징 품질)이 아닌 아키텍처적(파라미터 격리)이다*.
 
-### 4.5 Structural Necessity: Interaction Effect Analysis
+### 4.5 구조적 필요성: 상호작용 효과 분석
 
-Standard ablations show component contributions but not *why* they matter. We employ 2×2 factorial design to test whether components specifically compensate for frozen base constraints.
+표준 절제는 구성요소 기여를 보여주지만 *왜* 중요한지는 보여주지 않는다. 구성요소가 특히 고정된 베이스 제약을 보상하는지 테스트하기 위해 2×2 요인 설계를 사용한다.
 
-**Methodology:**
-For each component $C \in \{\text{WA}, \text{TAL}, \text{DIA}\}$:
-- 2×2 design: (Base: Frozen/Unfrozen) × (C: Present/Absent)
-- 5 seeds per condition (20 runs total per component)
-- Two-way ANOVA with Bonferroni correction
+**방법론:**
+각 구성요소 $C \in \{\text{WA}, \text{TAL}, \text{DIA}\}$에 대해:
+- 2×2 설계: (베이스: 고정/비고정) × (C: 있음/없음)
+- 조건당 5개 시드 (구성요소당 총 20회 실행)
+- Bonferroni 보정을 적용한 이원 ANOVA
 
-**Table: Interaction effect analysis (2×2 factorial)**
+**표: 상호작용 효과 분석 (2×2 요인)**
 
-| Component | Frozen | Unfrozen | Interaction F | p-value | Amplification |
-|-----------|--------|----------|---------------|---------|---------------|
+| 구성요소 | 고정 | 비고정 | 상호작용 F | p-값 | 증폭 |
+|----------|------|--------|-----------|------|------|
 | WA | +7.3%p | +1.2%p | F(1,16)=8.47 | 0.008* | 6.1× |
 | TAL | +7.6%p | +3.2%p | F(1,16)=6.23 | 0.021* | 2.4× |
 | DIA | +5.2%p | +2.1%p | F(1,16)=5.12 | 0.034* | 2.5× |
-| Spatial Context | +3.3%p | +3.1%p | F(1,16)=0.89 | 0.356 | 1.1× |
-| Scale Context | +1.7%p | +1.5%p | F(1,16)=1.24 | 0.278 | 1.1× |
+| 공간 컨텍스트 | +3.3%p | +3.1%p | F(1,16)=0.89 | 0.356 | 1.1× |
+| 스케일 컨텍스트 | +1.7%p | +1.5%p | F(1,16)=1.24 | 0.278 | 1.1× |
 
-**Interpretation:**
-All three integral components (WA, TAL, DIA) show statistically significant interactions ($p < 0.05$), with contributions amplified 2-6× under frozen base. This confirms they address *specific limitations* of the frozen base design. Note that components also provide benefits under unfrozen conditions (+1.2% to +3.2%p), but the key insight is the *disproportionate amplification* under freezing. Spatial and Scale Context show no interaction—they benefit any AD system equally regardless of freezing.
+**해석:**
+세 필수 구성요소(WA, TAL, DIA) 모두 통계적으로 유의한 상호작용을 보이며 ($p < 0.05$), 고정된 베이스 하에서 기여가 2-6배 증폭된다. 이는 이들이 고정된 베이스 설계의 *특정 한계*를 해결함을 확인한다. 구성요소가 비고정 조건에서도 이점을 제공하지만 (+1.2% ~ +3.2%p), 핵심 통찰은 고정 하에서의 *불균형적 증폭*이다. 공간 및 스케일 컨텍스트는 상호작용을 보이지 않아—고정 여부와 관계없이 모든 AD 시스템에 동등하게 이점을 제공한다.
 
-### 4.6 Architecture Comparison: Why Normalizing Flows
+### 4.6 아키텍처 비교: 정규화 흐름을 선택한 이유
 
-**Experimental Design:**
-To validate the AFP claim, we compare LoRA adaptation across AD architectures under identical settings:
-- Same backbone (WideResNet-50-2, frozen)
-- Same LoRA rank (64)
-- Same training epochs (60) and hyperparameter tuning budget
-- Same router (prototype-based Mahalanobis)
+**실험 설계:**
+AFP 주장을 검증하기 위해, 동일한 설정에서 AD 아키텍처 간 LoRA 적응을 비교한다:
+- 동일한 백본 (WideResNet-50-2, 고정)
+- 동일한 LoRA 순위 (64)
+- 동일한 학습 에폭 (60) 및 하이퍼파라미터 튜닝 예산
+- 동일한 라우터 (프로토타입 기반 마할라노비스)
 
-**Baseline Architectures:**
-- **VAE + LoRA:** LoRA applied to encoder convolutional layers; same latent dimension.
-- **AE + LoRA:** LoRA applied to encoder; reconstruction-based scoring.
-- **Teacher-Student + LoRA:** LoRA applied to student network; feature distillation scoring.
+**베이스라인 아키텍처:**
+- **VAE + LoRA:** 인코더 컨볼루션 레이어에 LoRA 적용; 동일한 잠재 차원.
+- **AE + LoRA:** 인코더에 LoRA 적용; 재구성 기반 스코어링.
+- **교사-학생 + LoRA:** 학생 네트워크에 LoRA 적용; 특징 증류 스코어링.
 
-**Table: LoRA adaptation across AD architectures (MVTec-AD, 15 classes)**
+**표: AD 아키텍처 간 LoRA 적응 (MVTec-AD, 15개 클래스)**
 
-| Base Architecture | I-AUC | P-AP | FM | Gap from NF |
-|-------------------|-------|------|-----|-------------|
+| 베이스 아키텍처 | I-AUC | P-AP | FM | NF와의 격차 |
+|----------------|-------|------|-----|------------|
 | **NF (MoLE-Flow)** | **98.05** | **55.80** | **0.0** | - |
 | VAE + LoRA | 91.5±0.8 | 42.3±1.2 | 2.1 | -6.6 / -13.5 |
 | AE + LoRA | 89.2±1.1 | 38.7±1.4 | 3.5 | -8.9 / -17.1 |
-| Teacher-Student + LoRA | 93.8±0.6 | 46.5±1.0 | 1.8 | -4.3 / -9.3 |
+| 교사-학생 + LoRA | 93.8±0.6 | 46.5±1.0 | 1.8 | -4.3 / -9.3 |
 
-**Expected vs. Observed Results:**
-If AFP is merely a theoretical curiosity without practical impact, all architectures should achieve similar performance with LoRA. However:
-- **NF:** Zero forgetting (FM=0.0), highest accuracy (98.05% I-AUC, 55.80% P-AP).
-- **VAE/AE:** Non-zero forgetting (FM=2.1-3.5) despite LoRA isolation, indicating that freezing base parameters disrupts encoder-decoder latent consistency.
-- **Teacher-Student:** Moderate forgetting (FM=1.8), as frozen teacher creates unstable feature alignment targets.
+**예상 vs. 관찰 결과:**
+AFP가 실질적 영향 없는 단순한 이론적 호기심이라면, 모든 아키텍처가 LoRA로 유사한 성능을 달성해야 한다. 그러나:
+- **NF:** 완전 망각 제로 (FM=0.0), 최고 정확도 (98.05% I-AUC, 55.80% P-AP).
+- **VAE/AE:** LoRA 격리에도 불구하고 비제로 망각 (FM=2.1-3.5), 베이스 파라미터 고정이 인코더-디코더 잠재 일관성을 방해함을 나타냄.
+- **교사-학생:** 중간 정도 망각 (FM=1.8), 고정된 교사가 불안정한 특징 정렬 타겟을 생성함.
 
-**Cumulative Forgetting Analysis:**
-The distinction between FM=0.0 and FM>0 becomes critical at scale. For a 50-task sequence:
-- **NF (FM=0.0):** 0% cumulative degradation—all tasks maintain original accuracy.
-- **VAE (FM=2.1):** ~105% cumulative forgetting (2.1 × 50)—effectively random performance on early tasks.
-- **T-S (FM=1.8):** ~90% cumulative forgetting.
+**누적 망각 분석:**
+FM=0.0과 FM>0의 구분은 규모에서 중요해진다. 50개 태스크 시퀀스의 경우:
+- **NF (FM=0.0):** 0% 누적 성능 저하—모든 태스크가 원래 정확도를 유지.
+- **VAE (FM=2.1):** ~105% 누적 망각 (2.1 × 50)—초기 태스크에서 사실상 무작위 성능.
+- **T-S (FM=1.8):** ~90% 누적 망각.
 
-This analysis explains why *zero* forgetting, not merely *reduced* forgetting, is essential for long-horizon continual learning.
+이 분석은 긴 시야의 지속 학습에서 단순히 *감소된* 망각이 아닌 *완전* 망각 제로가 필수적인 이유를 설명한다.
 
-**Statistical Validation:**
-One-way ANOVA confirms significant architecture effect ($F(3,16) = 24.7$, $p < 0.001$). Post-hoc Tukey HSD shows NF significantly outperforms all alternatives ($p < 0.01$ for all pairwise comparisons).
+**통계적 검증:**
+일원 ANOVA는 유의한 아키텍처 효과를 확인한다 ($F(3,16) = 24.7$, $p < 0.001$). 사후 Tukey HSD는 NF가 모든 대안을 유의하게 능가함을 보인다 ($p < 0.01$ 모든 쌍별 비교).
 
-**Conclusion:**
-NF's AFP enables decomposition without model degradation. Other architectures suffer from latent inconsistency (VAE/AE) or alignment instability (T-S), resulting in both lower accuracy and non-zero forgetting. *This validates our central claim: NF uniquely enables zero-forgetting parameter-efficient continual AD.*
+**결론:**
+NF의 AFP는 모델 성능 저하 없이 분해를 가능하게 한다. 다른 아키텍처는 잠재 불일치(VAE/AE)나 정렬 불안정(T-S)으로 인해 낮은 정확도와 비제로 망각 모두를 겪는다. *이는 우리의 핵심 주장을 검증한다: NF만이 완전 망각 제로 파라미터 효율적 지속 학습 AD를 고유하게 가능하게 한다.*
 
-### 4.7 Routing Accuracy Analysis
+### 4.7 라우팅 정확도 분석
 
-**Table: Routing accuracy comparison**
+**표: 라우팅 정확도 비교**
 
-| Dataset | Overall Acc | Min Class Acc | Avg Cosine Sim | Confusion Cases |
-|---------|-------------|---------------|----------------|-----------------|
+| 데이터셋 | 전체 정확도 | 최소 클래스 정확도 | 평균 코사인 유사도 | 혼동 사례 |
+|----------|------------|------------------|------------------|----------|
 | MVTec-AD | 100.0% | 100.0% | 0.52 | 0 |
 | ViSA | 95.8% | 89.2% (PCB1) | 0.71 | PCB1↔PCB2 |
 
-**Per-Class Analysis for ViSA:**
-The 95.8% routing accuracy on ViSA (vs. 100% on MVTec-AD) reflects higher inter-class feature similarity:
-- PCB categories (PCB1, PCB2, PCB3, PCB4) share similar visual structures, yielding average pairwise cosine similarity of 0.78.
-- The primary confusion occurs between PCB1 and PCB2 (10.8% misrouting rate), which share nearly identical substrate patterns.
-- Non-PCB categories (Capsules, Candle, etc.) achieve 99.1% average routing accuracy.
+**ViSA 클래스별 분석:**
+ViSA에서 95.8% 라우팅 정확도(MVTec-AD의 100% 대비)는 더 높은 클래스 간 특징 유사도를 반영한다:
+- PCB 카테고리(PCB1, PCB2, PCB3, PCB4)는 유사한 시각적 구조를 공유하며, 평균 쌍별 코사인 유사도가 0.78이다.
+- 주요 혼동은 PCB1과 PCB2 사이에서 발생하며 (10.8% 오라우팅율), 거의 동일한 기판 패턴을 공유한다.
+- 비PCB 카테고리(Capsules, Candle 등)는 99.1% 평균 라우팅 정확도를 달성한다.
 
-**Empirical Validation of Routing Estimates:**
-- **Inter-class similarity sweep:** Artificially increasing feature overlap (via noise injection) showed routing accuracy degrades linearly: 100% at cosine sim <0.6, 95% at 0.7, 92% at 0.8.
-- **ViSA subgroup analysis:** Excluding high-similarity PCB pairs yields 99.3% accuracy on remaining classes.
+**라우팅 추정의 경험적 검증:**
+- **클래스 간 유사도 스윕:** 노이즈 주입을 통해 특징 중첩을 인위적으로 증가시킨 결과, 라우팅 정확도가 선형적으로 감소함을 보임: 코사인 유사도 <0.6에서 100%, 0.7에서 95%, 0.8에서 92%.
+- **ViSA 하위그룹 분석:** 고유사도 PCB 쌍을 제외하면 나머지 클래스에서 99.3% 정확도를 보임.
 
-**Mitigation Strategies:**
-- **Top-2 ensemble:** Averaging predictions from top-2 routing candidates improves accuracy to 98.5% on ViSA at 1.8× inference cost.
-- **Contrastive routing:** Training router with contrastive loss (future work) could further improve separation.
+**완화 전략:**
+- **Top-2 앙상블:** 상위 2개 라우팅 후보의 예측을 평균하면 1.8배 추론 비용으로 ViSA에서 98.5%로 정확도가 향상된다.
+- **대조 라우팅:** 대조 손실로 라우터를 학습 (향후 연구)하면 분리를 더 향상시킬 수 있다.
 
-### 4.8 Learning Dynamics and Transfer Metrics
+### 4.8 학습 동역학 및 전이 지표
 
-**Learning Curve Analysis:**
+**학습 곡선 분석:**
 
-**[FIGURE 3: Learning Curves Across Tasks]**
-- X-axis: Task index (0-14), Y-axis: Average I-AUC (%) on all seen tasks
-- Fine-tune (orange dashed): Steep decline from 98% to 60%
-- EWC (green dotted): Gradual decline from 98% to 82%
-- MoLE-Flow (blue solid): Flat line at 98% (zero forgetting)
-- Shaded regions show ±1 std over 5 seeds.
+**[그림 3: 태스크 간 학습 곡선]**
+- X축: 태스크 인덱스 (0-14), Y축: 모든 관찰된 태스크에 대한 평균 I-AUC (%)
+- Fine-tune (주황색 점선): 98%에서 60%로 급격한 하락
+- EWC (녹색 점선): 98%에서 82%로 점진적 하락
+- MoLE-Flow (파란색 실선): 98%에서 평평한 선 (완전 망각 제로)
+- 음영 영역은 5개 시드에 대한 ±1 표준편차를 보여줌.
 
-**Backward and Forward Transfer:**
-- **BWT = 0.0:** No performance degradation on previous tasks (by design—complete parameter isolation).
-- **FWT:** Not directly applicable as MoLE-Flow uses task-specific adapters. Zero-shot performance before task-specific training equals random (50% I-AUC).
+**역방향 및 순방향 전이:**
+- **BWT = 0.0:** 이전 태스크에 대한 성능 저하 없음 (설계상—완전한 파라미터 격리).
+- **FWT:** MoLE-Flow는 태스크별 어댑터를 사용하므로 직접 적용 불가. 태스크별 학습 전 제로샷 성능은 무작위와 같음 (50% I-AUC).
 
-### 4.9 Computational Efficiency
+### 4.9 계산 효율성
 
-**Table: Computational cost comparison**
+**표: 계산 비용 비교**
 
-| Method | GPU Memory | Train Time/Task | Inference | Params/Task |
-|--------|------------|-----------------|-----------|-------------|
-| ReplayCAD | 6.8 GB | ~2 min | 52 ms | +buffer |
-| CADIC | 8.5 GB | ~2.5 min | 68 ms | +10% |
-| **MoLE-Flow** | **2.6 GB** | **0.7 min** | **8.9 ms** | **22-42%** |
+| 방법 | GPU 메모리 | 태스크당 학습 시간 | 추론 | 태스크당 파라미터 |
+|------|-----------|------------------|------|-----------------|
+| ReplayCAD | 6.8 GB | ~2분 | 52 ms | +버퍼 |
+| CADIC | 8.5 GB | ~2.5분 | 68 ms | +10% |
+| **MoLE-Flow** | **2.6 GB** | **0.7분** | **8.9 ms** | **22-42%** |
 
-**Key Findings:**
-MoLE-Flow uses 3× less GPU memory, trains 3× faster per task (after Task 0), and infers 6× faster than replay methods. The 22-42% per-task parameter overhead (depending on DIA inclusion) is higher than prompt-based methods but provides complete isolation guaranteeing zero forgetting.
+**주요 발견:**
+MoLE-Flow는 3배 적은 GPU 메모리를 사용하고, 태스크당 3배 빠르게 학습하며(Task 0 이후), 리플레이 방법보다 6배 빠르게 추론한다. 태스크당 22-42% 파라미터 오버헤드(DIA 포함 여부에 따라)는 프롬프트 기반 방법보다 높지만, 완전 망각 제로를 보장하는 완전한 격리를 제공한다.
 
-**Scalability:**
-With rank-16 configuration, per-task overhead reduces to 6-26% with minimal performance loss (<0.5%p).
+**확장성:**
+rank-16 구성으로, 태스크당 오버헤드가 최소한의 성능 손실(<0.5%p)로 6-26%로 감소한다.
 
-### 4.10 Additional Analysis
+### 4.10 추가 분석
 
-**SVD Analysis of LoRA Weights:**
-Analysis of trained LoRA matrices reveals effective rank (capturing 95% variance) of only 1.3-14.5, far below the configured rank-64. This confirms task adaptation is intrinsically low-rank, validating our design choice.
+**LoRA 가중치의 SVD 분석:**
+학습된 LoRA 행렬 분석에서 유효 순위(95% 분산 포착)가 1.3-14.5에 불과하여, 구성된 rank-64보다 훨씬 낮음을 보인다. 이는 태스크 적응이 본질적으로 저순위임을 확인하여 설계 선택을 검증한다.
 
-**Task Order Sensitivity:**
-Performance variance across 5 random orderings is <0.3% I-AUC, confirming robustness to task sequence.
-
----
-
-## 5. Conclusion
-
-We presented MoLE-Flow, a continual anomaly detection framework that resolves the isolation-efficiency dilemma through normalizing flow's unique structural properties. By identifying the Arbitrary Function Property as a theoretical foundation for safe parameter decomposition, we enabled complete task isolation with only 22-42% parameter overhead per task. The three integral components—Whitening Adapter, Tail-Aware Loss, and Deep Invertible Adapter—were systematically validated as providing amplified benefits under frozen base constraints through interaction effect analysis.
-
-MoLE-Flow achieves state-of-the-art performance (98.05% I-AUC, 55.80% P-AP) with *zero forgetting* on MVTec-AD, outperforming replay-based methods without storing any data.
-
-**Limitations:**
-1. Per-task parameters (22-42%) are higher than prompt-based methods, though this enables stronger guarantees.
-2. P-AP on ViSA (26.6%) is lower than replay-based methods (41.5%), reflecting the trade-off between zero forgetting and fine-grained localization under frozen constraints.
-3. Task 0 choice moderately affects overall performance (~0.9%p P-AP variance).
-4. Routing accuracy depends on inter-class feature similarity (100% on MVTec-AD, 95.8% on ViSA).
-
-**Future Work:**
-1. Adaptive rank selection to reduce overhead.
-2. Higher-resolution variants for improved localization.
-3. Contrastive routing for scenarios with high inter-task similarity.
-4. Extension to video anomaly detection with temporal NF.
+**태스크 순서 민감도:**
+5개 무작위 순서에 대한 성능 분산이 <0.3% I-AUC로, 태스크 시퀀스에 대한 강건성을 확인한다.
 
 ---
 
-## References
+## 5. 결론
+
+MoLE-Flow를 제시했다. 이는 정규화 흐름의 고유한 구조적 특성을 통해 격리-효율성 딜레마를 해결하는 지속 학습 이상 탐지 프레임워크이다. 임의 함수 속성을 안전한 파라미터 분해를 위한 이론적 기반으로 식별함으로써, 태스크당 22-42% 파라미터 오버헤드만으로 완전한 태스크 격리를 가능하게 했다. 세 가지 필수 구성요소—화이트닝 어댑터, 테일 인식 손실, 심층 가역 어댑터—는 상호작용 효과 분석을 통해 고정된 베이스 제약 하에서 증폭된 이점을 제공함이 체계적으로 검증되었다.
+
+MoLE-Flow는 MVTec-AD에서 최고 성능(98.05% I-AUC, 55.80% P-AP)을 *완전 망각 제로*로 달성하며, 데이터 저장 없이 리플레이 기반 방법을 능가한다.
+
+**한계:**
+1. 태스크당 파라미터(22-42%)가 프롬프트 기반 방법보다 높지만, 이는 더 강한 보장을 가능하게 한다.
+2. ViSA에서 P-AP(26.6%)가 리플레이 기반 방법(41.5%)보다 낮으며, 이는 고정 제약 하에서 완전 망각 제로와 세밀한 위치화 사이의 트레이드오프를 반영한다.
+3. Task 0 선택이 전체 성능에 적당한 영향을 미친다 (~0.9%p P-AP 분산).
+4. 라우팅 정확도가 클래스 간 특징 유사도에 의존한다 (MVTec-AD 100%, ViSA 95.8%).
+
+**향후 연구:**
+1. 오버헤드 감소를 위한 적응형 순위 선택.
+2. 향상된 위치화를 위한 고해상도 변형.
+3. 태스크 간 높은 유사도 시나리오를 위한 대조 라우팅.
+4. 시간적 NF를 통한 비디오 이상 탐지로의 확장.
+
+---
+
+## 참고문헌
 
 1. Roth, K., et al.: Towards Total Recall in Industrial Anomaly Detection. CVPR (2022)
 2. Yu, J., et al.: FastFlow: Unsupervised Anomaly Detection and Localization via 2D Normalizing Flows. arXiv (2021)
@@ -650,103 +647,103 @@ MoLE-Flow achieves state-of-the-art performance (98.05% I-AUC, 55.80% P-AP) with
 
 ---
 
-# Supplementary Material
+# 부록 자료
 
-## A. Implementation Details
+## A. 구현 세부사항
 
-### A.1 Network Architecture
+### A.1 네트워크 아키텍처
 
-**Backbone:**
-WideResNet-50-2 pretrained on ImageNet, frozen throughout. Multi-scale features extracted from layer2 (28×28×512) and layer3 (14×14×1024).
+**백본:**
+ImageNet에서 사전 학습된 WideResNet-50-2, 전체 과정에서 고정. layer2 (28×28×512)와 layer3 (14×14×1024)에서 다중 스케일 특징 추출.
 
 **MoLE-Flow:**
-- 6 MoLE coupling blocks (alternating checkerboard/channel-wise splits)
-- Each MoLEContextSubnet: 4 LoRA layers (s_layer1, s_layer2, t_layer1, t_layer2)
-- Hidden dimension: 576
-- Soft clamping: α_clamp = 1.9
+- 6 MoLE 커플링 블록 (체커보드/채널 분할 교대)
+- 각 MoLEContextSubnet: 4 LoRA 레이어 (s_layer1, s_layer2, t_layer1, t_layer2)
+- 은닉 차원: 576
+- 소프트 클램핑: α_clamp = 1.9
 
-**Deep Invertible Adapter:**
-- 2 affine coupling blocks per task
+**심층 가역 어댑터:**
+- 태스크당 2개 아핀 커플링 블록
 - SimpleSubnet: Linear(D/2, D/2) → ReLU → Linear(D/2, D)
-- Zero-initialization for output layers (near-identity start)
+- 출력 레이어 제로 초기화 (거의 항등 시작)
 
-### A.2 Training Protocol
+### A.2 학습 프로토콜
 
-| Hyperparameter | Value | Sensitivity |
-|----------------|-------|-------------|
-| Optimizer | AdamP (AdamW fallback) | - |
-| Learning rate | 3×10⁻⁴ | Medium |
-| LR schedule | Cosine annealing | Low |
-| Weight decay | 0.01 | Low |
-| Batch size | 16 | Low |
-| Epochs per task | 60 | Low |
-| LoRA rank r | 64 | **Low** (16-128 similar) |
-| λ_tail | 0.7 | **High** |
-| Tail ratio k | 0.02 | Low |
-| λ_logdet | 1×10⁻⁴ | **High** |
-| WA γ range | [0.5, 2.0] | Medium |
-| WA β range | [-2.0, 2.0] | Medium |
+| 하이퍼파라미터 | 값 | 민감도 |
+|--------------|---|-------|
+| 옵티마이저 | AdamP (AdamW 폴백) | - |
+| 학습률 | 3×10⁻⁴ | 중간 |
+| LR 스케줄 | 코사인 어닐링 | 낮음 |
+| 가중치 감쇠 | 0.01 | 낮음 |
+| 배치 크기 | 16 | 낮음 |
+| 태스크당 에폭 | 60 | 낮음 |
+| LoRA 순위 r | 64 | **낮음** (16-128 유사) |
+| λ_tail | 0.7 | **높음** |
+| 테일 비율 k | 0.02 | 낮음 |
+| λ_logdet | 1×10⁻⁴ | **높음** |
+| WA γ 범위 | [0.5, 2.0] | 중간 |
+| WA β 범위 | [-2.0, 2.0] | 중간 |
 
-## B. Task 0 Selection Analysis
+## B. Task 0 선택 분석
 
-| Task 0 | I-AUC | P-AP | ΔP-AP from Best | Training Samples |
-|--------|-------|------|-----------------|------------------|
+| Task 0 | I-AUC | P-AP | 최고와의 ΔP-AP | 학습 샘플 |
+|--------|-------|------|--------------|----------|
 | leather | 98.03 | 55.78 | -0.40 | 245 |
 | grid | 97.94 | 55.42 | -0.76 | 264 |
 | transistor | 98.01 | 55.61 | -0.57 | 213 |
 | carpet | **98.08** | **56.18** | 0.00 | 280 |
 | bottle | 97.89 | 55.23 | -0.95 | 209 |
 
-**Recommendations:**
-Task 0 selection has modest impact (<0.95%p P-AP variance). We recommend selecting a task with:
-1. Moderate training samples (200-300)
-2. Representative visual complexity (not too simple, not too complex)
-3. Good feature separability from other tasks
+**권장사항:**
+Task 0 선택은 적당한 영향을 미친다 (<0.95%p P-AP 분산). 다음과 같은 태스크를 선택하는 것이 좋다:
+1. 적당한 학습 샘플 (200-300)
+2. 대표적인 시각적 복잡성 (너무 단순하지도, 너무 복잡하지도 않은)
+3. 다른 태스크와 좋은 특징 분리성
 
-## C. LoRA Scaling Factor Ablation
+## C. LoRA 스케일링 팩터 절제
 
-| Scaling α/r | I-AUC | P-AP | Note |
+| 스케일링 α/r | I-AUC | P-AP | 비고 |
 |-------------|-------|------|------|
-| 0.25 (α = r/4) | 97.85 | 55.42 | Under-scaled |
+| 0.25 (α = r/4) | 97.85 | 55.42 | 과소 스케일 |
 | 0.5 (α = r/2) | 97.91 | 55.68 | |
-| **1.0 (α = r)** | **97.92** | **56.18** | **Default** |
-| 2.0 (α = 2r) | 97.88 | 55.92 | Over-scaled |
+| **1.0 (α = r)** | **97.92** | **56.18** | **기본값** |
+| 2.0 (α = 2r) | 97.88 | 55.92 | 과대 스케일 |
 
-The <0.5%p variation confirms scaling factor has minimal impact when LoRA is properly initialized (B to zeros).
+<0.5%p 변동은 LoRA가 적절히 초기화될 때(B를 0으로) 스케일링 팩터가 최소한의 영향을 미침을 확인한다.
 
-## D. WA Constraint Bounds Ablation
+## D. WA 제약 경계 절제
 
-| γ range | β range | P-AP | I-AUC | Note |
-|---------|---------|------|-------|------|
-| [0.5, 2.0] | [-2.0, 2.0] | **55.8%** | **98.0%** | Default |
-| [0.1, 5.0] | [-5.0, 5.0] | 53.2% | 97.6% | Unstable (3/5 seeds) |
-| [0.8, 1.2] | [-1.0, 1.0] | 54.1% | 97.9% | Too restrictive |
-| Unconstrained | Unconstrained | 51.8% | 97.2% | Divergence on 2 tasks |
+| γ 범위 | β 범위 | P-AP | I-AUC | 비고 |
+|--------|--------|------|-------|------|
+| [0.5, 2.0] | [-2.0, 2.0] | **55.8%** | **98.0%** | 기본값 |
+| [0.1, 5.0] | [-5.0, 5.0] | 53.2% | 97.6% | 불안정 (3/5 시드) |
+| [0.8, 1.2] | [-1.0, 1.0] | 54.1% | 97.9% | 너무 제한적 |
+| 무제약 | 무제약 | 51.8% | 97.2% | 2개 태스크에서 발산 |
 
-## E. TAL Top-k Ratio Ablation
+## E. TAL Top-k 비율 절제
 
-| k (%) | Patches/Image | P-AP | Note |
-|-------|---------------|------|------|
-| 0.5% | 1 | 54.2% | High variance |
+| k (%) | 이미지당 패치 | P-AP | 비고 |
+|-------|-------------|------|------|
+| 0.5% | 1 | 54.2% | 높은 분산 |
 | 1% | 2 | 55.3% | |
-| **2%** | 4 | **55.8%** | **Default** |
+| **2%** | 4 | **55.8%** | **기본값** |
 | 5% | 10 | 55.5% | |
-| 10% | 20 | 54.8% | Diluted focus |
+| 10% | 20 | 54.8% | 희석된 집중 |
 
-k ∈ [1%, 5%] yields similar performance; 2% balances focus and stability.
+k ∈ [1%, 5%]에서 유사한 성능; 2%가 집중과 안정성을 균형 있게 맞춘다.
 
-## F. Extended Ablation Results
+## F. 확장된 절제 결과
 
-### F.1 LoRA Rank Sensitivity
+### F.1 LoRA 순위 민감도
 
-| Rank | I-AUC | P-AP | LoRA Params | Per-Task (excl. DIA) |
-|------|-------|------|-------------|----------------------|
+| 순위 | I-AUC | P-AP | LoRA 파라미터 | 태스크당 (DIA 제외) |
+|------|-------|------|-------------|------------------|
 | 16 | 98.06 | 55.86 | 0.48M | 0.49M (5.6%) |
 | 32 | 98.04 | 55.89 | 0.96M | 0.97M (10.9%) |
 | **64** | **97.92** | **56.18** | **1.92M** | **1.93M (21.8%)** |
 | 128 | 98.04 | 55.80 | 3.83M | 3.85M (43.3%) |
 
-### F.2 Tail Weight Sensitivity
+### F.2 테일 가중치 민감도
 
 | λ_tail | I-AUC | P-AP |
 |--------|-------|------|
@@ -755,30 +752,30 @@ k ∈ [1%, 5%] yields similar performance; 2% balances focus and stability.
 | **0.7** | **98.05** | 55.80 |
 | 1.0 | 98.00 | **56.18** |
 
-### F.3 DIA Blocks
+### F.3 DIA 블록
 
-| DIA Blocks | Total Blocks | I-AUC | P-AP | Stability |
-|------------|--------------|-------|------|-----------|
-| 0 | 6 | ~93 | ~50 | Unstable |
-| **2** | **8** | **97.92** | **56.18** | **Stable** |
-| 4 | 10 | ~98 | ~55 | Stable |
+| DIA 블록 | 총 블록 | I-AUC | P-AP | 안정성 |
+|----------|--------|-------|------|-------|
+| 0 | 6 | ~93 | ~50 | 불안정 |
+| **2** | **8** | **97.92** | **56.18** | **안정** |
+| 4 | 10 | ~98 | ~55 | 안정 |
 
-## G. Task Order Sensitivity
+## G. 태스크 순서 민감도
 
-| Ordering | I-AUC | P-AP | Routing Acc |
-|----------|-------|------|-------------|
-| Alphabetical (default) | 98.03±0.19 | 55.78±0.73 | 100% |
-| Random 1 | 97.94±0.24 | 55.42±0.81 | 100% |
-| Random 2 | 98.01±0.21 | 55.61±0.69 | 100% |
-| Random 3 | 97.89±0.28 | 55.23±0.85 | 100% |
-| Random 4 | 97.96±0.22 | 55.54±0.77 | 100% |
+| 순서 | I-AUC | P-AP | 라우팅 정확도 |
+|------|-------|------|-------------|
+| 알파벳순 (기본값) | 98.03±0.19 | 55.78±0.73 | 100% |
+| 무작위 1 | 97.94±0.24 | 55.42±0.81 | 100% |
+| 무작위 2 | 98.01±0.21 | 55.61±0.69 | 100% |
+| 무작위 3 | 97.89±0.28 | 55.23±0.85 | 100% |
+| 무작위 4 | 97.96±0.22 | 55.54±0.77 | 100% |
 
-**Conclusion:** Variance across orderings (σ ≈ 0.05% I-AUC, 0.25% P-AP) is comparable to within-ordering variance, confirming MoLE-Flow is robust to task sequence.
+**결론:** 순서에 따른 분산 (σ ≈ 0.05% I-AUC, 0.25% P-AP)이 순서 내 분산과 유사하여, MoLE-Flow가 태스크 시퀀스에 강건함을 확인한다.
 
-## H. Per-Class Results
+## H. 클래스별 결과
 
-| Class | I-AUC | P-AP | | Class | I-AUC | P-AP |
-|-------|-------|------|-|-------|-------|------|
+| 클래스 | I-AUC | P-AP | | 클래스 | I-AUC | P-AP |
+|--------|-------|------|-|--------|-------|------|
 | bottle | 100.0 | 71.2 | | pill | 97.8 | 52.3 |
 | cable | 96.2 | 48.5 | | screw | 94.5 | 31.2 |
 | capsule | 98.1 | 42.8 | | tile | 99.2 | 68.4 |
@@ -786,70 +783,68 @@ k ∈ [1%, 5%] yields similar performance; 2% balances focus and stability.
 | grid | 99.8 | 47.3 | | transistor | 97.2 | 58.9 |
 | hazelnut | 99.1 | 54.2 | | wood | 98.7 | 51.8 |
 | leather | 100.0 | 58.4 | | zipper | 98.4 | 55.7 |
-| metal_nut | 99.3 | 67.8 | | **Average** | **98.05** | **55.80** |
+| metal_nut | 99.3 | 67.8 | | **평균** | **98.05** | **55.80** |
 
-## I. SVD Analysis of LoRA Weights
+## I. LoRA 가중치의 SVD 분석
 
-| Task | Eff. Rank (95%) | Eff. Rank (99%) | Energy @ r=64 |
-|------|-----------------|-----------------|---------------|
+| 태스크 | 유효 순위 (95%) | 유효 순위 (99%) | r=64에서 에너지 |
+|--------|---------------|---------------|---------------|
 | Task 0 (leather) | 14.5 ± 8.6 | 28.3 ± 12.1 | 100% |
 | Task 1 (grid) | 1.3 ± 0.7 | 3.8 ± 1.5 | 100% |
 | Task 2 (transistor) | 1.5 ± 1.2 | 4.2 ± 2.0 | 100% |
 
-**Interpretation:** Task 0 shows higher effective rank because base and LoRA are trained jointly. Subsequent tasks show extremely low effective rank (1-2), confirming task adaptation is intrinsically low-dimensional. Rank-64 is therefore over-provisioned, explaining the plateau in rank ablation.
+**해석:** Task 0은 베이스와 LoRA가 공동으로 학습되기 때문에 더 높은 유효 순위를 보인다. 이후 태스크들은 매우 낮은 유효 순위(1-2)를 보여, 태스크 적응이 본질적으로 저차원임을 확인한다. 따라서 rank-64는 과다 할당되어, 순위 절제에서의 정체를 설명한다.
 
-## J. Resolution Analysis for ViSA
+## J. ViSA를 위한 해상도 분석
 
-| Resolution | P-AP | Per-Task Params | Inference Time |
-|------------|------|-----------------|----------------|
-| 14×14 (default) | 26.6% | 3.71M | 8.9ms |
+| 해상도 | P-AP | 태스크당 파라미터 | 추론 시간 |
+|--------|------|-----------------|----------|
+| 14×14 (기본값) | 26.6% | 3.71M | 8.9ms |
 | 28×28 | 34.2% | 14.8M | 32ms |
 
-Higher resolution improves localization but increases parameter cost 4×. For applications prioritizing zero forgetting, the default resolution represents a reasonable trade-off.
+더 높은 해상도는 위치화를 개선하지만 파라미터 비용이 4배 증가한다. 완전 망각 제로를 우선시하는 애플리케이션의 경우, 기본 해상도가 합리적인 트레이드오프를 나타낸다.
 
-## K. Statistical Analysis Protocol
+## K. 통계 분석 프로토콜
 
-### K.1 ANOVA Methodology
+### K.1 ANOVA 방법론
 
-**Design:** 2 (Base: Frozen/Unfrozen) × 2 (Component: Present/Absent) factorial design.
+**설계:** 2 (베이스: 고정/비고정) × 2 (구성요소: 있음/없음) 요인 설계.
 
-**Procedure:**
-1. 5 seeds per condition (20 runs per component analysis)
-2. Metric: Pixel AP on MVTec-AD (15 classes)
-3. Two-way ANOVA using statsmodels.stats.anova_lm
-4. Bonferroni correction for 5 components (α = 0.01)
-5. Effect size: partial η²
+**절차:**
+1. 조건당 5개 시드 (구성요소 분석당 20회 실행)
+2. 지표: MVTec-AD (15개 클래스)의 Pixel AP
+3. statsmodels.stats.anova_lm을 사용한 이원 ANOVA
+4. 5개 구성요소에 대한 Bonferroni 보정 (α = 0.01)
+5. 효과 크기: 부분 η²
 
-**Interpretation Guidelines:**
-- p < 0.05: Significant interaction (component shows amplified benefits)
-- p ≥ 0.05: No interaction (component provides uniform benefits)
-- Partial η² > 0.14: Large effect size
+**해석 가이드라인:**
+- p < 0.05: 유의한 상호작용 (구성요소가 증폭된 이점을 보임)
+- p ≥ 0.05: 상호작용 없음 (구성요소가 균일한 이점을 제공)
+- 부분 η² > 0.14: 큰 효과 크기
 
-### K.2 Pairwise Comparisons
+### K.2 쌍별 비교
 
-Paired t-tests with Cohen's d for effect size:
-- d < 0.2: Negligible
-- 0.2 ≤ d < 0.5: Small
-- 0.5 ≤ d < 0.8: Medium
-- d ≥ 0.8: Large
+효과 크기에 대한 Cohen's d를 포함한 쌍체 t-검정:
+- d < 0.2: 무시 가능
+- 0.2 ≤ d < 0.5: 작음
+- 0.5 ≤ d < 0.8: 중간
+- d ≥ 0.8: 큼
 
-All MoLE-Flow vs. baseline comparisons show d > 0.8 (large effect).
+모든 MoLE-Flow vs. 베이스라인 비교는 d > 0.8 (큰 효과)을 보인다.
 
-## L. Failure Case Analysis
+## L. 실패 사례 분석
 
-**High Inter-Task Feature Overlap:**
-When task feature distributions overlap significantly (e.g., ViSA PCB categories, cosine similarity 0.78), routing accuracy drops to 89-92%. Mitigation: Top-2 ensemble routing achieves 98.5% accuracy.
+**높은 태스크 간 특징 중첩:**
+태스크 특징 분포가 상당히 중첩될 때 (예: ViSA PCB 카테고리, 코사인 유사도 0.78), 라우팅 정확도가 89-92%로 떨어진다. 완화: Top-2 앙상블 라우팅으로 98.5% 정확도 달성.
 
-**Extreme Distribution Shift:**
-Tasks with features >5σ from Task 0 distribution hit WA constraint bounds, degrading P-AP by 3-5%p. Mitigation: Expand bounds (trades stability).
+**극심한 분포 이동:**
+Task 0 분포에서 >5σ인 특징을 가진 태스크는 WA 제약 경계에 도달하여, P-AP가 3-5%p 저하된다. 완화: 경계 확장 (안정성 트레이드).
 
-**Very Small Anomalies:**
-Anomalies <5 pixels (<0.5% area) yield low P-AP (<40%) due to 14×14 spatial resolution. Mitigation: Higher resolution (28×28) at 4× parameter cost.
+**매우 작은 이상:**
+<5 픽셀 (<0.5% 면적) 이상은 14×14 공간 해상도로 인해 낮은 P-AP (<40%)를 보인다. 완화: 4배 파라미터 비용으로 더 높은 해상도 (28×28).
 
-**Performance Lower Bounds:**
-Based on failure analysis, MoLE-Flow guarantees:
+**성능 하한:**
+실패 분석을 바탕으로, MoLE-Flow는 테스트된 모든 구성에서 다음을 보장한다:
 - I-AUC ≥ 94%
 - P-AP ≥ 45% (MVTec-AD)
-- Routing Acc ≥ 89% (high-overlap scenarios)
-
-across all tested configurations.
+- 라우팅 정확도 ≥ 89% (고중첩 시나리오)
