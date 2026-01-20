@@ -3,47 +3,69 @@ Capacity: max_strings=200000, hash_size=200000, hash_prime=170003
 The top-level auxiliary file: main.aux
 The style file: elsarticle-harv.bst
 Database file #1: Reference.bib
+Warning--I didn't find a database entry for "rezende2015variational"
+Warning--I didn't find a database entry for "mallya2018packnet"
+Warning--I didn't find a database entry for "rusu2016progressive"
+Warning--I didn't find a database entry for "sakurada2014anomaly"
+Warning--I didn't find a database entry for "an2015variational"
+Warning--I didn't find a database entry for "gong2019memorizing"
+Warning--I didn't find a database entry for "cohen2020spade"
+Warning--I didn't find a database entry for "defard2021padim"
+Warning--I didn't find a database entry for "rudolph2021differnet"
+Warning--I didn't find a database entry for "yu2021fastflow"
+Warning--I didn't find a database entry for "rebuffi2017icarl"
+Warning--I didn't find a database entry for "lopez2017gem"
+Warning--I didn't find a database entry for "jacobs1991adaptive"
+Warning--I didn't find a database entry for "cadic2024"
+Warning--I didn't find a database entry for "iuf2023"
+Warning--I didn't find a database entry for "dne2023"
+Warning--I didn't find a database entry for "ucad2024"
+Warning--I didn't find a database entry for "dfm2024"
 Reallocated singl_function (elt_size=4) to 100 items from 50.
-Warning--empty pages in li2022dne
-You've used 7 entries,
+Warning--empty pages in dinh2016realnvp
+Warning--empty pages in howard2017mobilenets
+Warning--empty pages in hu2022lora
+Warning--empty pages in lee2018mahalanobis
+Warning--empty pages in perez2018film
+You've used 12 entries,
             2990 wiz_defined-function locations,
-            669 strings with 6801 characters,
-and the built_in function-call counts, 6275 in all, are:
-= -- 469
-> -- 326
-< -- 5
-+ -- 124
-- -- 117
-* -- 706
-:= -- 897
-add.period$ -- 16
-call.type$ -- 7
-change.case$ -- 72
-chr.to.int$ -- 7
-cite$ -- 8
-duplicate$ -- 432
-empty$ -- 405
-format.name$ -- 140
-if$ -- 1190
+            709 strings with 8149 characters,
+and the built_in function-call counts, 10158 in all, are:
+= -- 761
+> -- 512
+< -- 8
++ -- 197
+- -- 183
+* -- 1135
+:= -- 1452
+add.period$ -- 25
+call.type$ -- 12
+change.case$ -- 120
+chr.to.int$ -- 12
+cite$ -- 17
+duplicate$ -- 718
+empty$ -- 671
+format.name$ -- 223
+if$ -- 1929
 int.to.chr$ -- 1
 int.to.str$ -- 1
-missing$ -- 85
-newline$ -- 45
-num.names$ -- 28
-pop$ -- 158
+missing$ -- 140
+newline$ -- 64
+num.names$ -- 48
+pop$ -- 283
 preamble$ -- 1
-purify$ -- 65
+purify$ -- 108
 quote$ -- 0
-skip$ -- 162
+skip$ -- 267
 stack$ -- 0
-substring$ -- 252
-swap$ -- 346
-text.length$ -- 4
+substring$ -- 376
+swap$ -- 551
+text.length$ -- 6
 text.prefix$ -- 0
 top$ -- 0
-type$ -- 63
-warning$ -- 1
-while$ -- 35
+type$ -- 108
+warning$ -- 5
+while$ -- 56
 width$ -- 0
-write$ -- 107
-(There was 1 warning)
+write$ -- 168
+(There were 23 warnings)

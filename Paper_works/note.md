@@ -152,3 +152,6 @@ DIA는 Task-Specific한 모듈이므로, 데이터가 적은(Few-shot) 상황에
 > "DIA는 Base Flow가 완전히 제거하지 못한 Task-specific한 비선형 분포 차이(Distributional Shift)를 보정하기 위해 설계되었다. 여기서 **2개의 Affine Coupling Block**을 사용하는 것은 경험적 선택이 아닌 구조적 필연성이다.
 > 단일 Coupling Layer는 입력 차원의 절반을 항등 매핑(Identity Mapping)하므로 전체 차원 간의 상호 의존성(Full Dependency)을 모델링할 수 없다. 이를 해소하기 위해 채널 순서를 반전(Reverse)시킨 두 번째 블록을 결합함으로써, **모든 입력 차원이 최소 1회 이상 변환(Transformation)**되도록 보장한다.
 > 결과적으로  설정은 전체 특징 공간(Feature Space)에 대한 **완전한 수용장(Full Receptive Field)을 확보하는 최소한의 구조적 단위**이며, 동시에 적은 파라미터로 과적합을 방지하며 효율적인 미세 조정(Fine-tuning)을 가능하게 한다."
+
+
+이유: LoRA는 도구일 뿐입니다. 논문의 진짜 기여는 NF를 분해해도 된다는 **'구조적 발견(Structural Decomposition)'**에 있습니다. 이 제목이 더 "Theoretical Contribution"이 있어 보입니다. (LoRA는 Abstract에서 언급하면 됩니다.)
