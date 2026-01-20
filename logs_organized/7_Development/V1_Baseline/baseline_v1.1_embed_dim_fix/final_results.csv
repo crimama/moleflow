@@ -1,0 +1,5 @@
+Task ID,Class Name,Routing Acc (%),Image AUC,Pixel AUC,Image AP,Pixel AP
+0,leather,100.00,0.9983,0.9507,0.9994,0.0955
+1,grid,100.00,0.8079,0.8801,0.9243,0.0904
+2,transistor,100.00,0.7729,0.9124,0.7907,0.4776
+Mean,Overall,100.00,0.8597*,0.9144*,0.9048*,0.2211*
