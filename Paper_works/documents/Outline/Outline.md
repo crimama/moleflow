@@ -458,6 +458,118 @@ $$
 
 ## 4. Experiments
 
+## 4. Experiments
+
 ### 4.1. Experiments Setup
 
-(To be continued...)
+이 섹션에서는 제안하는 프레임워크, DeCoFlow의 핵심 가설을 뒷받침하고 정량적 성능을 객관적으로 평가하기 위해 설계된 실험 셋업을 상세히 기술한다.
+
+#### Datasets and Protocols
+
+제안하는 DecoFlow의 유효성을 검증하기 위해 산업용 이상 탐지의 표준 벤치마크인 MVTec-AD [Bergmann et al., 2019]와 복잡한 결함 구조를 가진 ViSA [Zou et al., 2022] 데이터셋을 활용한다.
+
+실험은 현실적인 공정 환경을 반영하여 각 클래스를 순차적으로 학습하는 1-Class-Per-Task (1×1) 시나리오하에 수행된다. 이때, 이전 태스크의 데이터를 저장하지 않는 Zero-Replay 조건과 추론 시 태스크 ID가 제공되지 않는 Task-Agnostic 설정을 엄격히 준수하여 모델의 적응력과 라우팅 성능을 평가한다.
+
+#### Evaluation Metrics
+
+DecoFlow의 우수성을 입증하기 위해, 우리는 기존의 정규화(EWC), 리허설(Replay), 아키텍처 격리(PackNet) 기반의 방법론뿐만 아니라, 최신 PEFT 기반 연속 학습 기법(L2P, DualPrompt) 및 이상 탐지 특화 모델(CADIC, ReplayCAD)들을 포괄하는 광범위한 베이스라인과 비교를 수행한다. 성능 평가는 탐지의 정확성을 측정하는 I-AUC/P-AUC와 국소화의 정밀도를 대변하는 **P-AP (Pixel Average Precision)**를 기본으로 하며, 연속 학습 시스템의 안정성을 검증하기 위해 **망각 지표(Forgetting Measure, FM)**와 라우팅 정확도를 핵심 척도로 활용한다.
+
+#### Baseline
+
+(내용 추가 예정)
+
+#### Implementation Details
+
+모든 실험에서 백본 네트워크는 ImageNet으로 사전 학습된 WideResNet-50-2를 동결하여 사용한다. 핵심 아키텍처는 6개의 DCS (Decomposed Coupling Subnet) 블록과 2개의 ACL (Task-Specific Affine Coupling Layer) 블록으로 구성되며, 어댑터의 LoRA 랭크는 64로 설정하여 효율성과 표현력의 균형을 맞췄다. 학습은 두 단계로 진행되는데, 첫 번째 태스크에서 베이스 구조를 학습한 후 이를 동결하고, 이후 태스크에서는 오직 어댑터 파라미터만을 AdamP 옵티마이저(LR=$2\times10^{-4}$)를 통해 60 에폭 동안 최적화한다.
+
+### 4.2. Main Results
+
+#### MVTecAD
+
+본 실험은 MVTec-AD의 15개 Task 순차 학습 환경에서, 제안하는 DeCoFlow가 기존 방법론 대비 우월한 탐지 성능과 안정성을 확보했는지 검증하는 것을 목표로 한다.
+
+(결과)
+
+(분석)
+
+#### ViSA
+
+(결과)
+
+(분석)
+
+#### Verification of Zero Forgetting
+
+제안하는 구조적 분해(Structural Decomposition) 전략, 즉 동결된 베이스와 독립된 어댑터의 조합이 실제 긴 시퀀스의 학습 과정에서 이론적 의도대로 작동하는지 확인한다. 학습이 진행됨에 따라 초기 태스크의 지식이 보존되는지 추적하여, 파라미터 격리의 효용성을 시각적으로 검증하는 데 목적이 있다.
+
+(결과, HeatMap 또는 line Figure 형태)
+
+5개 태스크 진행에 따른 성능 변화를 시각화한 Figure 3의 히트맵(Heatmap)과 Table 3의 BWT 지표를 분석한 결과, 대조군인 Fine-tuning 모델은 새로운 태스크를 학습할 때마다 초기 태스크(Task 0)의 성능이 급격히 하락하여 최종적으로 약 70%p의 성능 손실을 겪었다. 반면, DeCoFlow는 15번째 태스크 학습이 끝난 시점에서도 Task 0의 성능을 초기 상태(100%) 그대로 유지하였으며, 이에 따라 후방 전이(BWT) 0.0%를 기록하였다.
+
+### 4.3. Ablation Study
+
+#### 4.3.1. Effectivness of Components
+
+DecoFlow 프레임워크를 구성하는 세 가지 핵심 보완 요소인 TSA (Task-Specific Alignment), TAL (Tail-Aware Loss), 그리고 ACL (Task-Specific Affine Coupling Layer)이 전체 성능에 미치는 개별적 기여도를 정량화한다. 이를 위해 전체 모델(Full Model)에서 각 컴포넌트를 하나씩 제거(Leave-one-out)하며 성능 변화를 측정한다.
+
+(결과)
+
+(분석)
+
+#### 4.3.2. Structural Necessity
+
+제안하는 컴포넌트(TAL, ACL)들이 단순히 일반적인 성능 향상 기법인지, 아니면 동결된 베이스(Frozen Base)가 야기하는 '구조적 경직성(Structural Rigidity)'을 보상하기 위해 특화된 필수 요소인지를 규명한다. 이를 위해 베이스 모델의 상태(Frozen vs Trainable)와 컴포넌트의 유무(Absent vs Present)를 요인으로 하는 2×2 요인 설계(Factorial Design) 실험을 수행하고 상호작용 효과를 분석한다.
+
+(결과)
+
+(분석)
+
+#### 4.3.3. LoRA Rank Sensitivity
+
+"태스크 적응(Task Adaptation)은 본질적으로 저차원(Low-Rank) 영역에서 이루어진다"는 가설을 검증한다. LoRA의 랭크(Rank)를 16에서 128까지 변화시키며 모델의 성능 민감도를 측정함으로써, 과도한 파라미터 없이도 효율적인 적응이 가능함을 확인하고자 한다.
+
+(결과)
+
+(분석)
+
+#### 4.3.4. Architecture Depth and Stability
+
+Flow 블록의 깊이(Depth)가 성능과 학습 안정성에 미치는 영향을 분석하고, 특히 ACL(Affine Coupling Layer)이 깊은 네트워크에서의 학습 안정성에 기여하는지 검증한다.
+
+(결과)
+
+(분석)
+
+#### 4.3.5. Task 0 Selection Sensitivity
+
+DecoFlow는 첫 번째 태스크(Task 0) 학습 후 베이스 파라미터를 영구적으로 동결하는 전략을 취한다. 따라서, "초기 태스크의 선택이 전체 모델의 성능을 좌우하는 편향(Bias)을 초래하는가?"는 프레임워크의 범용성을 검증하는 데 있어 필수적인 질문이다. 본 실험에서는 서로 다른 구조적 특성(단순 객체, 복잡한 텍스처, 세밀 구조 등)을 가진 5가지 클래스(Bottle, Wood, Transistor, Carpet, Metal Nut)를 각각 Task 0로 설정하여 15개 태스크 전체를 학습시키고, 이에 따른 최종 성능의 민감도를 분석한다.
+
+### 4.4. Analysis
+
+#### 4.4.1. Why Normoalizing Flow?
+
+본 연구가 다른 생성 모델(VAE, AE)이나 지식 증류(Teacher-Student) 모델 대신 Normalizing Flow(NF)를 기반으로 구조적 분해를 수행한 이론적 타당성을 검증한다. 동일한 백본과 CL 프로토콜 하에서 각 아키텍처의 핵심 모듈에 LoRA를 적용했을 때의 성능과 학습 안정성을 비교한다.
+
+#### 4.4.2. Coupling-level vs. Feature-level Adaptation
+
+어댑터를 배치하는 위치에 따른 성능 차이를 분석하여, 왜 NF 내부(Coupling-level)에 어댑터를 두는 것이 입력단(Feature-level)에 두는 것보다 우수한지 규명한다. 기존의 프롬프트 튜닝 방식(Feature-level)이 NF의 밀도 매니폴드를 교란한다는 가설을 검증한다.
+
+#### 4.4.3. SVD Analysis of Weight Updates
+
+태스크 적응에 필요한 가중치 변화량($\Delta W$)이 실제로 저차원(Low-Rank) 특성을 갖는지 SVD(Singular Value Decomposition)를 통해 분석하고, LoRA Rank 64의 적절성을 검증
+
+#### 4.4.4. Gradient Redistribution by Tail-Aware Loss
+
+TAL(Tail-Aware Loss)이 성능 향상에 기여하는 메커니즘을 규명하기 위해, 학습 중 발생하는 그래디언트(Gradient)의 분포를 분석한다.
+
+#### 4.4.5. ACL Transformation Analysis
+
+ACL(Task-Specific Affine Coupling Layer)이 단순히 선형적인 스케일링을 수행하는지, 아니면 질적으로 다른 비선형 보정을 수행하는지 분석한다.
+
+#### 4.4.6. Routing Accuracy and Confusion Analysis
+
+프로토타입 기반 라우터가 100%에 가까운 정확도를 달성한 원인을 분석하고, 잠재적인 오류 가능성(Confusion Risk)을 진단한다.
+
+#### 4.4.7. Computational Cost
+
+DecoFlow가 달성한 'Zero Forgetting'의 대가(Computational Overhead)가 실제 운영 환경에서 수용 가능한 수준인지 정량적으로 평가한다.
