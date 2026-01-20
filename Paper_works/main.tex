@@ -39,7 +39,7 @@
 
 %% Title, authors and addresses
 
-\title{MoLE-Flow: Parameter-Isolated yet Efficient Continual Anomaly Detection}
+\title{DecoFlow: Parameter-Isolated yet Efficient Continual Anomaly Detection}
 
 % --- 저자 및 주소 수정 ---
 \author[a]{Author Name\fnref{fn1}}
@@ -70,7 +70,7 @@
 세 가지 핵심 구성요소---분포 정렬 어댑터, 테일 인식 손실, 심층 가역 어댑터---를 도입하며,
 각각은 범용적 성능 향상 요소가 아닌 동결 베이스 조건에서 특별히 필요한 것으로 검증되었다.
 
-MVTec-AD (15개 클래스, 5회 실행)에서 MoLE-Flow는 제로 망각과 함께 $98.03\pm0.19$\% 이미지 수준
+MVTec-AD (15개 클래스, 5회 실행)에서 DecoFlow는 제로 망각과 함께 $98.03\pm0.19$\% 이미지 수준
 AUROC와 $53.78\pm0.73$\% 픽셀 수준 AP를 달성하며, 단일 작업 성능의 98.7\%를 유지한다.
 \end{abstract}
 
@@ -169,7 +169,7 @@ Fine-tune & 60.2\% & 38.3\% & 0\% & $\times$ \\
 EWC & 87.4\% & 4.8\% & 0\% & $\times$ \\
 Replay (1K samples) & 91.2\% & 1.9\% & +15MB & $\times$ \\
 \midrule
-\textbf{MoLE-Flow (Ours)} & \textbf{98.1\%} & \textbf{0\%} & \textbf{+8\%} & \checkmark \\
+\textbf{DecoFlow (Ours)} & \textbf{98.1\%} & \textbf{0\%} & \textbf{+8\%} & \checkmark \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -192,13 +192,13 @@ Replay (1K samples) & 91.2\% & 1.9\% & +15MB & $\times$ \\
 % 1.4 제안 방법론의 핵심 아이디어
 %=========================================================================================================
 
-본 논문에서는 이러한 문제들을 해결하기 위해 \textbf{MoLE-Flow (Mixture of LoRA Experts for Normalizing Flow)}를 제안한다.
+본 논문에서는 이러한 문제들을 해결하기 위해 \textbf{DecoFlow (Mixture of LoRA Experts for Normalizing Flow)}를 제안한다.
 핵심 아이디어는 \textbf{Parameter Isolation}을 통한 완벽한 망각 방지와 \textbf{One-stage Task-agnostic 추론}이다.
 
 \paragraph{핵심 통찰 1: 공유 Base + 분리된 Adapter}
 \begin{itemize}
     \item Normalizing Flow의 기본 가중치(Base)는 첫 번째 작업(Task 0)에서 학습 후 \textbf{완전히 동결}
-    \item 이후 작업들은 경량 어댑터(LoRA, WhiteningAdapter, DIA)만 학습
+    \item 이후 작업들은 경량 어댑터(LoRA, WhiteningAdapter, ACL)만 학습
     \item 작업별 어댑터가 완전히 분리되어 있으므로 작업 간 간섭이 \textbf{원천적으로 차단}
 \end{itemize}
 
@@ -210,10 +210,10 @@ Replay (1K samples) & 91.2\% & 1.9\% & +15MB & $\times$ \\
     \item \textbf{별도의 Task ID 예측 단계 없이} 단일 추론으로 라우팅과 이상 탐지를 동시 수행
 \end{itemize}
 
-\paragraph{핵심 통찰 3: 비선형 매니폴드 적응 (DIA)}
+\paragraph{핵심 통찰 3: 비선형 매니폴드 적응 (ACL)}
 \begin{itemize}
     \item 선형 LoRA는 저차원 부분공간에서의 적응만 가능하여 복잡한 분포 차이를 표현하기 어려움
-    \item Deep Invertible Adapter (DIA)는 가역적 비선형 변환을 통해 작업별 매니폴드를 정밀하게 보정
+    \item Affine Coupling Layer (ACL)는 가역적 비선형 변환을 통해 작업별 매니폴드를 정밀하게 보정
     \item Normalizing Flow의 밀도 추정 속성을 보존하면서 작업 특화 적응 달성
 \end{itemize}
 
@@ -226,11 +226,11 @@ Replay (1K samples) & 91.2\% & 1.9\% & +15MB & $\times$ \\
 \begin{enumerate}
     \item \textbf{격리-효율성 해결을 위한 구조적 연결}: Normalizing Flow 커플링 레이어의 임의 함수 특성(Arbitrary Function Property)---서브넷 파라미터화와 무관하게 가역성이 보장되는 특성---이 지속 학습에서 파라미터 분해를 위한 고유한 구조적 기반을 제공함을 확립하였다. 이 통찰을 통해 작업당 8\%의 오버헤드만으로 완전한 파라미터 격리가 가능하다.
 
-    \item \textbf{MoLE-Flow 프레임워크}: 이 통찰을 바탕으로, 커플링 서브넷을 동결된 공유 베이스와 작업별 저차원 어댑터로 분해하는 MoLE-Flow (Mixture of LoRA Experts for Normalizing Flow)를 제안한다. 이를 통해 정규화나 리플레이가 아닌 설계 자체로 완전한 망각 방지를 달성한다.
+    \item \textbf{DecoFlow 프레임워크}: 이 통찰을 바탕으로, 커플링 서브넷을 동결된 공유 베이스와 작업별 저차원 어댑터로 분해하는 DecoFlow (Mixture of LoRA Experts for Normalizing Flow)를 제안한다. 이를 통해 정규화나 리플레이가 아닌 설계 자체로 완전한 망각 방지를 달성한다.
 
-    \item \textbf{상호작용 효과 검증을 통한 핵심 구성요소}: Whitening Adapter (WA), Tail-Aware Loss (TAL), Deep Invertible Adapter (DIA)의 세 가지 구성요소를 도입하며, 각각 상호작용 효과 분석(Interaction Effect Analysis)을 통해 일반적인 성능 향상 요소가 아닌 동결 베이스 조건에서 특별히 필요한 핵심 요소임을 검증하였다. 이 방법론적 프레임워크는 핵심 구성요소와 선택적 개선 요소를 구분한다.
+    \item \textbf{상호작용 효과 검증을 통한 핵심 구성요소}: General Distribution Adaptation (GDA), Tail-Aware Loss (TAL), Affine Coupling Layer (ACL)의 세 가지 구성요소를 도입하며, 각각 상호작용 효과 분석(Interaction Effect Analysis)을 통해 일반적인 성능 향상 요소가 아닌 동결 베이스 조건에서 특별히 필요한 핵심 요소임을 검증하였다. 이 방법론적 프레임워크는 핵심 구성요소와 선택적 개선 요소를 구분한다.
 
-    \item \textbf{포괄적 실험 검증}: MVTec-AD (15개 클래스, 5회 독립 실행)에서 MoLE-Flow는 망각 없이 $98.03\pm0.19$\% 이미지 수준 AUROC와 $53.78\pm0.73$\% 픽셀 수준 AP를 달성하며, 100\% 라우팅 정확도로 단일 작업 오라클 성능의 98.7\%를 유지한다.
+    \item \textbf{포괄적 실험 검증}: MVTec-AD (15개 클래스, 5회 독립 실행)에서 DecoFlow는 망각 없이 $98.03\pm0.19$\% 이미지 수준 AUROC와 $53.78\pm0.73$\% 픽셀 수준 AP를 달성하며, 100\% 라우팅 정확도로 단일 작업 오라클 성능의 98.7\%를 유지한다.
 \end{enumerate}
 
 %=========================================================================================================
@@ -239,7 +239,7 @@ Replay (1K samples) & 91.2\% & 1.9\% & +15MB & $\times$ \\
 
 본 논문의 구성은 다음과 같다.
 Section~\ref{sec:related_work}에서는 이상 탐지, 지속 학습, Normalizing Flow에 대한 관련 연구를 검토한다.
-Section~\ref{sec:method}에서는 파라미터 분해에 대한 핵심 통찰로 시작하여 아키텍처와 핵심 구성요소를 설명하는 MoLE-Flow 프레임워크를 제시한다.
+Section~\ref{sec:method}에서는 파라미터 분해에 대한 핵심 통찰로 시작하여 아키텍처와 핵심 구성요소를 설명하는 DecoFlow 프레임워크를 제시한다.
 Section~\ref{sec:experiments}에서는 실험 설정, 주요 결과, 상호작용 효과 분석 및 절제 연구(Ablation Study)를 제공한다.
 Section~\ref{sec:conclusion}에서는 논의와 향후 연구 방향으로 결론을 맺는다.
 
@@ -374,18 +374,18 @@ Mixture of Experts~\cite{jacobs1991adaptive}는 다수의 전문가 네트워크
 \begin{figure}[t]
     \centering
     \includegraphics[width=\textwidth]{figures/main2.png}
-    \caption{산업 이미지에 대한 지속적 이상 탐지를 위한 제안된 \textbf{MoLE-Flow} 프레임워크 개요. 순차적 작업이 주어지면, 베이스 normalizing flow 백본은 첫 번째 작업에서 학습된 후 동결된다. 각 새로운 작업에 대해 경량의 작업별 어댑터(WhiteningAdapter, LoRA, DIA)만 학습된다. 추론 시, 프로토타입 기반 Mahalanobis 라우터가 Task ID 없이 각 샘플을 가장 관련성 높은 전문가에게 할당한다.}
+    \caption{산업 이미지에 대한 지속적 이상 탐지를 위한 제안된 \textbf{DecoFlow} 프레임워크 개요. 순차적 작업이 주어지면, 베이스 normalizing flow 백본은 첫 번째 작업에서 학습된 후 동결된다. 각 새로운 작업에 대해 경량의 작업별 어댑터(WhiteningAdapter, LoRA, ACL)만 학습된다. 추론 시, 프로토타입 기반 Mahalanobis 라우터가 Task ID 없이 각 샘플을 가장 관련성 높은 전문가에게 할당한다.}
     \label{fig:main_figure}
 \end{figure}
 
 %=========================================================================================================
-% 3.1 MoLE-Flow Architecture Overview
+% 3.1 DecoFlow Architecture Overview
 %=========================================================================================================
 
-\subsection{MoLE-Flow 아키텍처}
+\subsection{DecoFlow 아키텍처}
 \label{sec:architecture}
 
-원리~\ref{principle:dilemma}를 기반으로, MoLE-Flow (Mixture of LoRA Experts for Normalizing Flow)는 지속적 이상 탐지를 위한 파라미터 분해를 구현한다. 프레임워크는 특징 추출기, MoLE 기반 Normalizing Flow, 작업별 어댑터, 그리고 프로토타입 기반 라우터로 구성된다.
+원리~\ref{principle:dilemma}를 기반으로, DecoFlow (Mixture of LoRA Experts for Normalizing Flow)는 지속적 이상 탐지를 위한 파라미터 분해를 구현한다. 프레임워크는 특징 추출기, MoLE 기반 Normalizing Flow, 작업별 어댑터, 그리고 프로토타입 기반 라우터로 구성된다.
 
 Section~\ref{sec:introduction}에서 확립한 바와 같이, NF 커플링 레이어의 임의 함수 특성은 서브넷을 다음과 같이 분해할 수 있게 한다:
 \begin{equation}
@@ -397,7 +397,7 @@ Section~\ref{sec:introduction}에서 확립한 바와 같이, NF 커플링 레�
 \begin{enumerate}
 \item 백본에서 특징 추출 및 패치 임베딩 생성
 \item 패치 임베딩에 위치 인코딩 추가
-\item Whitening Adapter를 통한 분포 정렬
+\item General Distribution Adaptation를 통한 분포 정렬
 \item 지역 이웃 정보를 위한 공간 문맥 혼합
 \item LoRA를 적용한 Normalizing Flow를 통한 확률 분포 추정
 \item 우도 기반 이상 점수 산출
@@ -406,7 +406,7 @@ Section~\ref{sec:introduction}에서 확립한 바와 같이, NF 커플링 레�
 수식으로 표현하면:
 \begin{equation}
 \label{eq:pipeline}
-\mathbf{x} \xrightarrow{\text{Backbone}} \mathbf{F} \xrightarrow{\text{PE}} \mathbf{F}' \xrightarrow{\text{Whitening}} \hat{\mathbf{F}} \xrightarrow{\text{SCM}} \tilde{\mathbf{F}} \xrightarrow{\text{NF+LoRA}} \mathbf{z}' \xrightarrow{\text{DIA}} (\mathbf{z}, \log|\det \mathbf{J}|)
+\mathbf{x} \xrightarrow{\text{Backbone}} \mathbf{F} \xrightarrow{\text{PE}} \mathbf{F}' \xrightarrow{\text{Whitening}} \hat{\mathbf{F}} \xrightarrow{\text{SCM}} \tilde{\mathbf{F}} \xrightarrow{\text{NF+LoRA}} \mathbf{z}' \xrightarrow{\text{ACL}} (\mathbf{z}, \log|\det \mathbf{J}|)
 \end{equation}
 
 \paragraph{표기법.}
@@ -415,7 +415,7 @@ $\mathbf{x}_{u,v} \in \mathbb{R}^D$는 위치 $(u,v)$의 개별 패치 벡터를
 $t \in \{0, 1, \ldots, T-1\}$는 작업 인덱스이고, $\mathbf{J}_f$는 함수 $f$의 야코비안 행렬을 나타낸다.
 $\lambda_{\text{tail}}$은 Tail-Aware Loss의 가중치이고, $\lambda_{\text{reg}}$는 공분산 정규화 항이다.
 
-Task 0에서는 기본 Normalizing Flow와 작업별 구성요소(LoRA, Whitening Adapter, DIA)가 함께 학습된다. Task 0 완료 후 기본 파라미터는 동결되고, 이후 작업들은 작업별 어댑터만 학습한다.
+Task 0에서는 기본 Normalizing Flow와 작업별 구성요소(LoRA, General Distribution Adaptation, ACL)가 함께 학습된다. Task 0 완료 후 기본 파라미터는 동결되고, 이후 작업들은 작업별 어댑터만 학습한다.
 
 \subsection{Feature Extraction \& Preprocessing}
 \label{sec:feature_extraction}
@@ -446,14 +446,14 @@ Task 0에서는 기본 Normalizing Flow와 작업별 구성요소(LoRA, Whitenin
 \label{sec:integral_components}
 %=========================================================================================================
 
-동결 베이스 설계는 완전한 망각 방지를 달성하지만 구조적 경직성을 도입한다. 우리는 세 가지 \textbf{핵심 구성요소}---Whitening Adapter (WA), Tail-Aware Loss (TAL), Deep Invertible Adapter (DIA)---를 식별하며, 이들은 일반적인 성능 향상 요소가 아닌 동결 베이스 패러다임의 특정 결과에 대한 \emph{필수적인 보상}이다. Section~\ref{sec:interaction_effect}에서 상호작용 효과 분석을 통해 이 구분을 검증한다.
+동결 베이스 설계는 완전한 망각 방지를 달성하지만 구조적 경직성을 도입한다. 우리는 세 가지 \textbf{핵심 구성요소}---General Distribution Adaptation (GDA), Tail-Aware Loss (TAL), Affine Coupling Layer (ACL)---를 식별하며, 이들은 일반적인 성능 향상 요소가 아닌 동결 베이스 패러다임의 특정 결과에 대한 \emph{필수적인 보상}이다. Section~\ref{sec:interaction_effect}에서 상호작용 효과 분석을 통해 이 구분을 검증한다.
 
-\subsubsection{Whitening Adapter (분포 정렬)}
+\subsubsection{General Distribution Adaptation (분포 정렬)}
 \label{sec:adapters}
 
 \paragraph{문제: 입력 인터페이스 불일치.}
 \begin{itemize}
-\item MoLE-Flow는 첫 번째 작업 학습 이후 Base Flow의 파라미터를 동결(Freeze)
+\item DecoFlow는 첫 번째 작업 학습 이후 Base Flow의 파라미터를 동결(Freeze)
 \item 이는 모델이 초기 학습 데이터의 분포 통계량에 피팅됨을 의미
 \item 새로운 작업의 입력 분포가 이와 크게 다를 경우(Covariate Shift), 다음과 같은 문제 발생:
     \begin{itemize}
@@ -464,7 +464,7 @@ Task 0에서는 기본 Normalizing Flow와 작업별 구성요소(LoRA, Whitenin
 \end{itemize}
 
 \paragraph{해결책: 분포 정렬.}
-Whitening Adapter는 입력 분포를 동결된 베이스의 예상 입력 범위에 정렬한다:
+General Distribution Adaptation는 입력 분포를 동결된 베이스의 예상 입력 범위에 정렬한다:
 \begin{itemize}
     \item 입력 데이터를 강제로 표준 정규 분포로 정렬(Alignment)
     \item 고정된 Base Flow가 항상 일관된 스케일의 입력을 처리하도록 보장
@@ -472,7 +472,7 @@ Whitening Adapter는 입력 분포를 동결된 베이스의 예상 입력 범�
     \item 파라미터 분리 구조 하에서 학습 효율성과 안정성 극대화
 \end{itemize}
 
-\textbf{Whitening Adapter는 Whitening과 De-whitening의 두 단계로 구성됨.}
+\textbf{General Distribution Adaptation는 Whitening과 De-whitening의 두 단계로 구성됨.}
 
 \subsubsection{\textbf{Task-Agnostic Whitening}} 
 \begin{itemize}
@@ -530,7 +530,7 @@ De-whitening에서 아핀 변환(Affine Transformation, $\mathbf{y} = \gamma \od
 
 \item \textbf{역할 분담 (Division of Labor):}
     \begin{itemize}
-    \item MoLE-Flow 전체 구조에서 Adapter는 서로 다른 도메인(가죽, 나사)의 \textbf{시작점(Start Point)을 맞춰주는 역할}로, 가장 기초적인 1차 모멘트(평균)와 2차 모멘트(분산)만 빠르고 정확하게 맞추면 된다.
+    \item DecoFlow 전체 구조에서 Adapter는 서로 다른 도메인(가죽, 나사)의 \textbf{시작점(Start Point)을 맞춰주는 역할}로, 가장 기초적인 1차 모멘트(평균)와 2차 모멘트(분산)만 빠르고 정확하게 맞추면 된다.
     \item 실제 데이터의 복잡하고 비선형적인 분포 모델링은 Base Flow와 LoRA가 담당한다.
     \item Adapter가 굳이 복잡한 비선형 변환을 수행하여 연산량을 늘리고 최적화를 어렵게 만들 필요가 없으며, 이는 Batch Normalization~\cite{ioffe2015batchnorm}이 학습 가능한 파라미터 $\gamma$, $\beta$를 두어 표현력을 복원하는 원리와 동일하다.
     \item 또한, 본 접근법은 FiLM(Feature-wise Linear Modulation)~\cite{perez2018film}의 조건부 아핀 변환과 개념적으로 연결되며, 이를 지속 학습 환경의 도메인 적응에 특화시킨 것으로 볼 수 있다.
@@ -539,7 +539,7 @@ De-whitening에서 아핀 변환(Affine Transformation, $\mathbf{y} = \gamma \od
 
 결론적으로, Affine transformation은 \textbf{데이터의 본질은 건드리지 않으면서, 모델이 편식하지 않게 통계적 특성만 맞춰주는 가장 안전하고 효율적인 방법}이다.
 
-\noindent 결과적으로 Whitening Adapter는:
+\noindent 결과적으로 General Distribution Adaptation는:
 \begin{itemize}
 \item Whitening을 통해 불필요한 분포 격차를 제거
 \item De-whitening을 통해 필요한 작업 고유의 특성을 학습된 형태로 복원
@@ -614,11 +614,11 @@ De-whitening에서 아핀 변환(Affine Transformation, $\mathbf{y} = \gamma \od
 \end{itemize}
 
 %=========================================================================================================
-\subsection{\textbf{MoLE-Flow Architecture}}
+\subsection{\textbf{DecoFlow Architecture}}
 \label{sec:moleflow}
 %=========================================================================================================
 \begin{itemize}
-    \item{MoLE-Flow는 Feature Extractor로부터 추출된 패치 임베딩을 잠재 공간(Latent Space)의 가우시안 분포로 매핑하여 정상 데이터의 확률 밀도를 추정하는 생성 모델.}
+    \item{DecoFlow는 Feature Extractor로부터 추출된 패치 임베딩을 잠재 공간(Latent Space)의 가우시안 분포로 매핑하여 정상 데이터의 확률 밀도를 추정하는 생성 모델.}
     \item{본 모델은 RealNVP~\cite{dinh2016realnvp} 기반의 가역적 구조를 따르며, 연속 학습 환경에서 파멸적 망각을 방지하고 이상 탐지 성능을 극대화하기 위해 다음과 같은 핵심 요소들로 구성된다.}
 \end{itemize}
 
@@ -629,7 +629,7 @@ De-whitening에서 아핀 변환(Affine Transformation, $\mathbf{y} = \gamma \od
         \item 단순한 MLP 대신 공간적 문맥(Spatial Context)을 고려하도록 설계되어, 이상 탐지의 핵심인 `국소적 대조(Local Contrast)' 정보를 스케일링 변환에 반영한다.
         \item Base weight를 Task 0에서만 학습 후 freeze 함으로써 anchor로 활용하며, LoRA Adapter를 활용해 작업별 분포 차이(Distribution Shift)를 저비용으로 학습한다.         
     \end{itemize}
-    \item \textbf{Deep Invertible Adapter (DIA)}:
+    \item \textbf{Affine Coupling Layer (ACL)}:
     \begin{itemize}
         \item NF의 출력단에 위치하여 선형 LoRA가 표현하기 어려운 작업 특화 비선형 매니폴드를 학습하는 가역적 어댑터
         \item 완전히 독립적인 작업별 파라미터를 사용하여 작업 간 간섭 없이 정밀한 분포 보정 수행
@@ -708,7 +708,7 @@ LoRA는 subnet 내부의 선형 레이어에만 적용되며, 이는 Jacobian �
 \end{itemize}
 
 
-\subsubsection{Deep Invertible Adapter (비선형 매니폴드 보정)}
+\subsubsection{Affine Coupling Layer (비선형 매니폴드 보정)}
 \label{sec:dia}
 
 \paragraph{문제: 전역 변환의 경직성.}
@@ -716,11 +716,11 @@ LoRA는 subnet 내부의 선형 레이어에만 적용되며, 이는 Jacobian �
 
 \paragraph{해결책: 작업별 가역 보정.}
 \begin{itemize}
-    \item DIA는 Normalizing Flow 출력단에 위치하며, MoLEContextSubnet이 처리하지 못한 작업 특화 비선형 매니폴드를 정밀 보정한다.
+    \item ACL은 Normalizing Flow 출력단에 위치하며, MoLEContextSubnet이 처리하지 못한 작업 특화 비선형 매니폴드를 정밀 보정한다.
     \item Affine Coupling Block으로 구성되며, 각 작업별로 독립적인 파라미터가 분리되어 있다.
     \item 수학적으로, 전체 변환과 밀도 추정은 다음과 같이 표현된다:
     \begin{equation}
-        \mathbf{z}_{\text{final}} = f_{\text{DIA}}^{(t)}(\mathbf{z}_{\text{base}}), \quad \log p(\mathbf{x}) = \log p(\mathbf{z}_{\text{final}}) + \log|\det \mathbf{J}_{\text{base}}| + \log|\det \mathbf{J}_{\text{DIA}}|
+        \mathbf{z}_{\text{final}} = f_{\text{ACL}}^{(t)}(\mathbf{z}_{\text{base}}), \quad \log p(\mathbf{x}) = \log p(\mathbf{z}_{\text{final}}) + \log|\det \mathbf{J}_{\text{base}}| + \log|\det \mathbf{J}_{\text{ACL}}|
     \end{equation}
     \item 각 AffineCouplingBlock의 변환:
     \begin{align}
@@ -733,7 +733,7 @@ LoRA는 subnet 내부의 선형 레이어에만 적용되며, 이는 Jacobian �
 
 
 \begin{itemize}
-    \item \textbf{DIA의 핵심 장점}:
+    \item \textbf{ACL의 핵심 장점}:
     \begin{itemize}
         \item \textbf{비선형 매니폴드 적응}: 선형 LoRA가 표현할 수 없는 복잡한 분포 변환을 학습한다.
         \item \textbf{가역성 보장}: 정규화 흐름의 밀도 추정 속성이 유지되므로, 이상 점수의 확률적 해석이 보존된다.
@@ -745,13 +745,13 @@ LoRA는 subnet 내부의 선형 레이어에만 적용되며, 이는 Jacobian �
 \begin{itemize}
     \item \textbf{MoLEContextSubnet과의 차이}:
     \begin{itemize}
-        \item MoLEContextSubnet과 DIA는 모두 Affine Coupling 구조를 기반으로 하지만, 서로 다른 설계 철학을 따른다.
+        \item MoLEContextSubnet과 ACL은 모두 Affine Coupling 구조를 기반으로 하지만, 서로 다른 설계 철학을 따른다.
         \item \textbf{MoLEContextSubnet}은 ``\textit{공간 인지형 범용 변환기(Spatially-Aware Universal Transformer)}''로서, 고정된 Base weights를 anchor로 삼아 범용 변환 능력을 보존하면서 LoRA를 통해 작업별 적응을 수행한다.
         \item Spatial context conditioning을 통해 국소적 이상 패턴에 민감하게 반응하며, 모든 작업에서 공유되는 ``정상 $\rightarrow$ 표준 정규분포'' 변환의 뼈대를 제공한다.
-        \item 반면 \textbf{DIA}는 ``\textit{작업 특화 분포 보정기(Task-Specific Distribution Corrector)}''로서, 작업별로 완전히 독립적인 파라미터를 사용하여 작업 고유의 분포를 정밀 보정한다.
+        \item 반면 \textbf{ACL}는 ``\textit{작업 특화 분포 보정기(Task-Specific Distribution Corrector)}''로서, 작업별로 완전히 독립적인 파라미터를 사용하여 작업 고유의 분포를 정밀 보정한다.
         \item DIA가 spatial context를 사용하지 않는 이유는 세 가지다:
         \begin{itemize}
-            \item (1) DIA는 잠재 공간에서 동작하며, 이 시점에서 공간 정보는 이미 MoLEContextSubnet을 통해 인코딩되어 있다.
+            \item (1) ACL은 잠재 공간에서 동작하며, 이 시점에서 공간 정보는 이미 MoLEContextSubnet을 통해 인코딩되어 있다.
             \item (2) MoLEContextSubnet이 ``공간 인지 변환''을, DIA가 ``분포 정밀 보정''을 담당하는 명확한 역할 분리가 효율적이다.
             \item (3) 작업별 독립 파라미터를 사용하는 DIA에 추가 context 모듈은 파라미터 오버헤드를 증가시킨다.
         \end{itemize}
@@ -773,12 +773,12 @@ LoRA는 subnet 내부의 선형 레이어에만 적용되며, 이는 Jacobian �
     \item 입력 $\mathbf{x}$는 Task Adapter, Spatial Mixer, MoLEContextSubnet, DIA를 순차적으로 통과하며 최종 잠재 벡터 $\mathbf{z}$로 변환된다.    
     \item Flow와 DIA를 거치는 동안 발생된 log determinant Jacobian 값들이 합산된다:
         \begin{equation}
-            \log|\det \mathbf{J}_{\text{total}}| = \log|\det \mathbf{J}_{\text{flow}}| + \log|\det \mathbf{J}_{\text{DIA}}|
+            \log|\det \mathbf{J}_{\text{total}}| = \log|\det \mathbf{J}_{\text{flow}}| + \log|\det \mathbf{J}_{\text{ACL}}|
         \end{equation}
         
     \item \textbf{Log-Determinant 계산:}
         \begin{itemize}
-            \item MoLEContextSubnet과 DIA 모두 Affine Coupling 구조를 사용하며, 동일한 방식으로 log-determinant를 계산한다.
+            \item MoLEContextSubnet과 ACL 모두 Affine Coupling 구조를 사용하며, 동일한 방식으로 log-determinant를 계산한다.
             \item 각 Affine Coupling Block은 입력을 두 부분 $\mathbf{x}_1, \mathbf{x}_2$로 분할하고, scale과 translation 파라미터를 생성한다.
             \item 수치 안정성을 위해 soft-clamping이 적용된 변환을 수행한다:
             \begin{equation}
@@ -788,10 +788,10 @@ LoRA는 subnet 내부의 선형 레이어에만 적용되며, 이는 Jacobian �
             \begin{equation}
                 \log|\det \mathbf{J}_{\text{layer}}| = \sum_{i=1}^{D/2} \tilde{s}_i = \sum_{i=1}^{D/2} \alpha_{\text{clamp}} \cdot \tanh(s_i/\alpha_{\text{clamp}})
             \end{equation}
-            \item MoLEContextSubnet의 $M$개 블록과 DIA의 $N$개 블록의 log-determinant가 각각 누적되어:
+            \item MoLEContextSubnet의 $M$개 블록과 ACL의 $N$개 블록의 log-determinant가 각각 누적되어:
             \begin{equation}
                 \log|\det \mathbf{J}_{\text{flow}}| = \sum_{k=1}^{M} \log|\det \mathbf{J}_{\text{layer}_k}|, \quad
-                \log|\det \mathbf{J}_{\text{DIA}}| = \sum_{j=1}^{N} \log|\det \mathbf{J}_{\text{block}_j}|
+                \log|\det \mathbf{J}_{\text{ACL}}| = \sum_{j=1}^{N} \log|\det \mathbf{J}_{\text{block}_j}|
             \end{equation}
             \item 최종적으로 두 값이 합산되어 전체 변환의 부피 변화율을 나타낸다.
         \end{itemize}
@@ -833,7 +833,7 @@ LoRA는 subnet 내부의 선형 레이어에만 적용되며, 이는 Jacobian �
 \begin{itemize}
     \item Class-Incremental Learning (CIL) 환경에서는 추론 시 입력 이미지가 어느 task에 속하는지 사전 정보가 주어지지 않는다.
     \item 예를 들어, Task 0에서 \{bottle, cable, capsule\}을 학습하고 Task 1에서 \{carpet, grid\}를 학습한 경우, 추론 시 입력 이미지가 어느 task의 클래스인지 알 수 없다.
-    \item 따라서 모델은 입력 이미지를 보고 자동으로 적절한 task를 선택하고, 해당 task의 adapters (LoRA, Input Adapter, DIA)를 활성화해야 한다.
+    \item 따라서 모델은 입력 이미지를 보고 자동으로 적절한 task를 선택하고, 해당 task의 adapters (LoRA, Input Adapter, ACL)를 활성화해야 한다.
     \item 이는 CIL의 핵심 과제로, 잘못된 task 선택은 부적절한 파라미터 활성화로 이어져 이상 탐지 성능을 크게 저하시킨다.
 \end{itemize}
 
@@ -866,7 +866,7 @@ LoRA는 subnet 내부의 선형 레이어에만 적용되며, 이는 Jacobian �
         \begin{itemize}
             \item \textbf{LoRA Adapters}: MoLE Flow의 각 coupling layer에서 task $t^*$의 LoRA 가중치 $\{\mathbf{A}_{t^*}, \mathbf{B}_{t^*}\}$를 활성화
             \item \textbf{Input Adapter}: Task $t^*$의 Whitening 파라미터 (평균 $\boldsymbol{\mu}_{t^*}^{\text{white}}$, 표준편차 $\boldsymbol{\sigma}_{t^*}^{\text{white}}$)를 적용
-            \item \textbf{DIA}: Task $t^*$의 Deep Invertible Adapter 네트워크를 활성화
+            \item \textbf{ACL}: Task $t^*$의 Affine Coupling Layer 네트워크를 활성화
         \end{itemize}
     \end{itemize}
 \end{itemize}
@@ -907,7 +907,7 @@ LoRA는 subnet 내부의 선형 레이어에만 적용되며, 이는 Jacobian �
         \item \textbf{Input Adapter (Whitening)}: Task 0의 통계량을 기준으로 분포를 정규화
         \item \textbf{Spatial Mixer}: Depthwise convolution으로 인접 패치 간 정보 교환
         \item \textbf{MoLE Flow}: 8개의 LoRA-equipped Affine Coupling Layer를 통과하여 잠재 변수 $\mathbf{z}$로 변환
-        \item \textbf{DIA}: 6개의 Affine Coupling Block으로 task-specific 비선형 manifold 적응
+        \item \textbf{ACL}: 6개의 Affine Coupling Block으로 task-specific 비선형 manifold 적응
     \end{enumerate}
     \item 각 단계에서 log-determinant를 누적하여 전체 변환의 부피 변화율 $\log|\det \mathbf{J}_{\text{total}}|$을 계산한다.
 \end{itemize}
@@ -933,7 +933,7 @@ LoRA는 subnet 내부의 선형 레이어에만 적용되며, 이는 Jacobian �
 \section{실험}
 \label{sec:experiments}
 
-MoLE-Flow를 표준 지속적 이상 탐지 벤치마크에서 평가하기 위해 포괄적인 실험을 수행한다. 본 실험은 다음 연구 질문들을 다룬다: (1) MoLE-Flow는 탐지 성능과 망각 저항성 측면에서 최신 방법들과 어떻게 비교되는가? (2) 제안된 각 구성요소의 기여도는 얼마인가? (3) 하이퍼파라미터 선택에 대한 민감도는 어느 정도인가?
+DecoFlow를 표준 지속적 이상 탐지 벤치마크에서 평가하기 위해 포괄적인 실험을 수행한다. 본 실험은 다음 연구 질문들을 다룬다: (1) DecoFlow는 탐지 성능과 망각 저항성 측면에서 최신 방법들과 어떻게 비교되는가? (2) 제안된 각 구성요소의 기여도는 얼마인가? (3) 하이퍼파라미터 선택에 대한 민감도는 어느 정도인가?
 
 %==============================================================================
 \subsection{실험 설정}
@@ -990,11 +990,11 @@ MoLE-Flow를 표준 지속적 이상 탐지 벤치마크에서 평가하기 위�
 
 \subsubsection{구현 세부사항}
 
-표~\ref{tab:config}에 구성을 요약하였다. ImageNet에서 사전 학습된 WideResNet50-2를 특징 백본으로 사용한다. Normalizing flow는 6개의 MoLE 블록과 2개의 DIA 블록으로 구성된다. 각 MoLE 블록은 랭크 64의 LoRA 어댑터를 포함한다. 학습은 작업당 60 에포크 동안 Adam 옵티마이저(학습률 $3\times10^{-4}$, 배치 크기 16)로 진행된다. Tail-Aware Loss는 $\lambda_{\text{tail}}=0.7$과 top-$k$ 비율 2\%를 사용한다. 모든 실험은 단일 NVIDIA RTX 3090 GPU에서 실행된다.
+표~\ref{tab:config}에 구성을 요약하였다. ImageNet에서 사전 학습된 WideResNet50-2를 특징 백본으로 사용한다. Normalizing flow는 6개의 MoLE 블록과 2개의 ACL 블록으로 구성된다. 각 MoLE 블록은 랭크 64의 LoRA 어댑터를 포함한다. 학습은 작업당 60 에포크 동안 Adam 옵티마이저(학습률 $3\times10^{-4}$, 배치 크기 16)로 진행된다. Tail-Aware Loss는 $\lambda_{\text{tail}}=0.7$과 top-$k$ 비율 2\%를 사용한다. 모든 실험은 단일 NVIDIA RTX 3090 GPU에서 실행된다.
 
 \begin{table}[t]
 \centering
-\caption{MoLE-Flow 구성 (MoLE6-DIA2).}
+\caption{DecoFlow 구성 (MoLE6-DIA2).}
 \label{tab:config}
 \begin{tabular}{ll}
 \toprule
@@ -1002,7 +1002,7 @@ MoLE-Flow를 표준 지속적 이상 탐지 벤치마크에서 평가하기 위�
 \midrule
 Backbone & WideResNet50-2 \\
 MoLE Blocks & 6 \\
-DIA Blocks & 2 \\
+ACL Blocks & 2 \\
 LoRA Rank & 64 \\
 Learning Rate & $3 \times 10^{-4}$ \\
 Epochs per Task & 60 \\
@@ -1096,13 +1096,13 @@ CADIC & 1.000 & 0.982 & 0.877 & 0.996 & 0.983 & 0.994 & 1.000 & 1.000 & 0.942 & 
 \textbf{주요 관찰 결과:}
 
 \begin{itemize}
-\item \textbf{제로 망각과 함께 최신 성능 달성}: MoLE-Flow는 MVTec AD에서 0.979 Image AUROC와 0.562 Pixel AP를 달성하면서 \textbf{제로 망각}(FM=0)을 유지한다. 이는 일반적으로 0.01--0.12의 FM 값을 보이는 기존 CL 방법들에 비해 상당한 개선을 나타낸다.
+\item \textbf{제로 망각과 함께 최신 성능 달성}: DecoFlow는 MVTec AD에서 0.979 Image AUROC와 0.562 Pixel AP를 달성하면서 \textbf{제로 망각}(FM=0)을 유지한다. 이는 일반적으로 0.01--0.12의 FM 값을 보이는 기존 CL 방법들에 비해 상당한 개선을 나타낸다.
 
 \item \textbf{Joint 학습과 경쟁}: 제안 방법은 훨씬 더 어려운 지속 학습 환경에서 동작하면서도 joint 학습 상한선과 거의 일치한다 (0.979 vs. Joint\_PatchCore의 0.978).
 
-\item \textbf{파인튜닝 대비 극적인 개선}: 파인튜닝 방법들은 최대 0.42의 FM 값과 평균 I-AUC가 0.60--0.70으로 하락하는 파멸적 망각을 겪는다. MoLE-Flow의 파라미터 격리 전략은 이 문제를 완전히 제거한다.
+\item \textbf{파인튜닝 대비 극적인 개선}: 파인튜닝 방법들은 최대 0.42의 FM 값과 평균 I-AUC가 0.60--0.70으로 하락하는 파멸적 망각을 겪는다. DecoFlow의 파라미터 격리 전략은 이 문제를 완전히 제거한다.
 
-\item \textbf{일관된 카테고리별 성능}: MoLE-Flow는 텍스처(leather: 1.000, tile: 1.000)와 객체(metal\_nut: 1.000, pill: 0.989)를 포함한 다양한 카테고리에서 강력한 결과를 달성한다.
+\item \textbf{일관된 카테고리별 성능}: DecoFlow는 텍스처(leather: 1.000, tile: 1.000)와 객체(metal\_nut: 1.000, pill: 0.989)를 포함한 다양한 카테고리에서 강력한 결과를 달성한다.
 \end{itemize}
 
 \subsubsection{VisA 데이터셋 결과}
@@ -1169,7 +1169,7 @@ CADIC & 1.000 & 0.982 & 0.877 & 0.996 & 0.983 & 0.994 & 1.000 & 1.000 & 0.942 & 
     }
 \end{table*}
 
-VisA에서 MoLE-Flow는 제로 망각과 함께 0.900 Image AUROC를 달성하여, 더 어려운 도메인에서의 강력한 일반화를 보여준다. 낮은 Pixel AP (0.266)는 VisA의 미세하고 복잡한 이상 패턴의 본질적인 어려움을 반영하지만, 제안 방법은 여전히 완전한 망각 방지라는 핵심적인 이점을 유지한다.
+VisA에서 DecoFlow는 제로 망각과 함께 0.900 Image AUROC를 달성하여, 더 어려운 도메인에서의 강력한 일반화를 보여준다. 낮은 Pixel AP (0.266)는 VisA의 미세하고 복잡한 이상 패턴의 본질적인 어려움을 반영하지만, 제안 방법은 여전히 완전한 망각 방지라는 핵심적인 이점을 유지한다.
 
 %==============================================================================
 \subsection{절제 연구}
@@ -1192,7 +1192,7 @@ VisA에서 MoLE-Flow는 제로 망각과 함께 0.900 Image AUROC를 달성하�
 \textbf{Full Model (MoLE6+DIA2)} & \textbf{97.9} & \textbf{56.2} & - & - \\
 \midrule
 w/o Tail-Aware Loss & 95.0 & 48.6 & -2.9 & \textbf{-7.6} \\
-w/o Whitening Adapter & 97.9 & 48.8 & 0.0 & \textbf{-7.3} \\
+w/o General Distribution Adaptation & 97.9 & 48.8 & 0.0 & \textbf{-7.3} \\
 w/o LogDet Regularization & 98.1 & 51.9 & +0.1 & -4.3 \\
 w/o Spatial Context Mixer & 98.0 & 52.9 & +0.1 & -3.3 \\
 w/o Positional Embedding & 97.4 & 54.0 & -0.5 & -2.2 \\
@@ -1205,7 +1205,7 @@ w/o LoRA & 98.0 & 55.3 & +0.1 & -0.9 \\
 \textbf{구성요소 기여도 순위} (Pixel AP 영향 기준):
 \begin{enumerate}
 \item \textbf{Tail-Aware Loss}: +7.6\%p---정밀한 위치 추정을 위한 가장 핵심적인 구성요소
-\item \textbf{Whitening Adapter}: +7.3\%p---작업 간 분포 정렬에 필수적
+\item \textbf{General Distribution Adaptation}: +7.3\%p---작업 간 분포 정렬에 필수적
 \item \textbf{LogDet 정규화}: +4.3\%p---normalizing flow에서 스케일 붕괴 방지
 \item \textbf{Spatial Context Mixer}: +3.3\%p---결함을 나타내는 국소적 불연속성 포착
 \item \textbf{Positional Embedding}: +2.2\%p---공간 구조 정보 보존
@@ -1213,12 +1213,12 @@ w/o LoRA & 98.0 & 55.3 & +0.1 & -0.9 \\
 \item \textbf{LoRA}: +0.9\%p---직접적 영향은 최소이나 파라미터 효율성에 핵심
 \end{enumerate}
 
-특히 Tail-Aware Loss와 Whitening Adapter가 픽셀 수준 성능에 가장 크게 기여하여, 분포 경계 처리와 작업 간 정렬을 위한 설계 선택의 타당성을 검증한다.
+특히 Tail-Aware Loss와 General Distribution Adaptation가 픽셀 수준 성능에 가장 크게 기여하여, 분포 경계 처리와 작업 간 정렬을 위한 설계 선택의 타당성을 검증한다.
 
 \subsubsection{상호작용 효과 분석: 핵심 vs.\ 범용 구성요소}
 \label{sec:interaction_effect}
 
-핵심적인 방법론적 질문이 제기된다: \emph{제안된 구성요소들---Whitening Adapter (WA), Tail-Aware Loss (TAL), Deep Invertible Adapter (DIA)---은 동결 베이스 아키텍처에 필수적인가, 아니면 단순히 범용적인 성능 향상 요소인가?}
+핵심적인 방법론적 질문이 제기된다: \emph{제안된 구성요소들---General Distribution Adaptation (GDA), Tail-Aware Loss (TAL), Affine Coupling Layer (ACL)---은 동결 베이스 아키텍처에 필수적인가, 아니면 단순히 범용적인 성능 향상 요소인가?}
 
 이를 \textbf{상호작용 효과 분석}을 통해 다루며, 각 구성요소의 기여도가 동결 베이스 조건에 의존하는지 검토한다. 진정으로 필수적인 구성요소는 다음을 보여야 한다:
 \begin{itemize}
@@ -1238,9 +1238,9 @@ w/o LoRA & 98.0 & 55.3 & +0.1 & -0.9 \\
 \textbf{Component} & \multicolumn{2}{c|}{\textbf{Main Effect}} & \multicolumn{2}{c|}{\textbf{Interaction (Base$\times$Component)}} & \textbf{Type} \\
  & $F$-stat & $p$-value & $F$-stat & $p$-value & \\
 \midrule
-Whitening Adapter & 18.64 & $<0.001$ & 8.47 & 0.008* & Integral \\
+General Distribution Adaptation & 18.64 & $<0.001$ & 8.47 & 0.008* & Integral \\
 Tail-Aware Loss & 12.31 & 0.002 & 6.23 & 0.021* & Integral \\
-DIA & 9.87 & 0.005 & 5.12 & 0.034* & Integral \\
+ACL & 9.87 & 0.005 & 5.12 & 0.034* & Integral \\
 \midrule
 Scale Context & 4.21 & 0.052 & 0.89 & 0.356 & Generic \\
 Spatial Context & 5.63 & 0.028 & 1.24 & 0.278 & Generic \\
@@ -1251,23 +1251,23 @@ Spatial Context & 5.63 & 0.028 & 1.24 & 0.278 & Generic \\
 
 \paragraph{주요 발견.}
 \begin{itemize}
-    \item \textbf{WA, TAL, DIA는 핵심적}: 각각 유의미한 상호작용 효과($p < 0.05$)를 보여, 그 기여가 동결 베이스 조건에서 특별히 증폭됨을 나타낸다.
+    \item \textbf{GDA, TAL, ACL은 핵심적}: 각각 유의미한 상호작용 효과($p < 0.05$)를 보여, 그 기여가 동결 베이스 조건에서 특별히 증폭됨을 나타낸다.
     \item \textbf{문맥 모듈은 범용적}: Scale Context와 Spatial Context는 유의미한 상호작용을 보이지 않아, 베이스 학습 상태와 무관하게 일반적인 개선을 제공함을 시사한다.
 \end{itemize}
 
-이 분석은 우리의 프레이밍을 검증한다: WA는 베이스가 적응할 수 없을 때 분포 이동을 보상하고; TAL은 동결된 베이스가 최적화할 수 없는 결정 경계를 정제하며; DIA는 동결된 선형 레이어가 달성할 수 없는 비선형 표현력을 제공한다. 이러한 구성요소들은 선택적인 ``부가 기능''이 아니라 동결 베이스 패러다임에 \emph{구조적으로 필수}적이다.
+이 분석은 우리의 프레이밍을 검증한다: WA는 베이스가 적응할 수 없을 때 분포 이동을 보상하고; TAL은 동결된 베이스가 최적화할 수 없는 결정 경계를 정제하며; ACL은 동결된 선형 레이어가 달성할 수 없는 비선형 표현력을 제공한다. 이러한 구성요소들은 선택적인 ``부가 기능''이 아니라 동결 베이스 패러다임에 \emph{구조적으로 필수}적이다.
 
 \subsubsection{아키텍처 깊이 분석}
 
-표~\ref{tab:architecture}는 MoLE와 DIA 블록 간의 최적 균형을 탐색한다. 다음과 같은 발견이 있다:
+표~\ref{tab:architecture}는 MoLE와 ACL 블록 간의 최적 균형을 탐색한다. 다음과 같은 발견이 있다:
 
 \begin{table}[t]
 \centering
-\caption{아키텍처 깊이 분석: MoLE vs DIA 블록 조합.}
+\caption{아키텍처 깊이 분석: MoLE vs ACL 블록 조합.}
 \label{tab:architecture}
 \begin{tabular}{cc|c|cc|l}
 \toprule
-\textbf{MoLE} & \textbf{DIA} & \textbf{Total} & \textbf{I-AUC} & \textbf{P-AP} & \textbf{Note} \\
+\textbf{MoLE} & \textbf{ACL} & \textbf{Total} & \textbf{I-AUC} & \textbf{P-AP} & \textbf{Note} \\
 \midrule
 \textbf{6} & \textbf{2} & \textbf{8} & \textbf{97.9} & \textbf{56.2} & \textbf{Optimal} \\
 4 & 2 & 6 & 97.8 & 55.9 & \\
@@ -1281,15 +1281,15 @@ Spatial Context & 5.63 & 0.028 & 1.24 & 0.278 & Generic \\
 4 & 8 & 12 & 98.1 & 50.3 & \\
 \midrule
 8 & 0 & 8 & 92.7 & 50.1 & MoLE-only best \\
-0 & 4 & 4 & 98.1 & 53.3 & DIA-only best \\
+0 & 4 & 4 & 98.1 & 53.3 & ACL-only best \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \begin{itemize}
-\item \textbf{MoLE+DIA 시너지}: 6 MoLE + 2 DIA 블록 조합이 최적의 Pixel AP (0.562)를 달성하며, MoLE-only와 DIA-only 구성 모두를 능가한다.
+\item \textbf{MoLE+ACL 시너지}: 6 MoLE + 2 ACL 블록 조합이 최적의 Pixel AP (0.562)를 달성하며, MoLE-only와 ACL-only 구성 모두를 능가한다.
 \item \textbf{깊이 포화}: MoLE 블록을 10개 이상으로 증가시키면 학습 불안정성이 발생하며, 16개 블록에서 완전한 붕괴가 발생한다.
-\item \textbf{DIA 효율성}: 4개의 DIA 블록만으로도 강력한 I-AUC (0.981)를 달성하여, 작업별 적응에 대한 DIA의 효과성을 입증한다.
+\item \textbf{ACL 효율성}: 4개의 ACL 블록만으로도 강력한 I-AUC (0.981)를 달성하여, 작업별 적응에 대한 ACL의 효과성을 입증한다.
 \end{itemize}
 
 \subsubsection{하이퍼파라미터 민감도}
@@ -1404,7 +1404,7 @@ Complete Separated & 98.1 & 52.5 & +0.2 & -3.7 \\
 
 \subsubsection{망각 분석}
 
-표~\ref{tab:forgetting}은 파라미터 격리를 통한 MoLE-Flow의 파멸적 망각 완전 제거를 입증한다.
+표~\ref{tab:forgetting}은 파라미터 격리를 통한 DecoFlow의 파멸적 망각 완전 제거를 입증한다.
 
 \begin{table}[t]
 \centering
@@ -1425,7 +1425,7 @@ Complete Separated & 98.1 & 52.5 & +0.2 & -3.7 \\
 \end{tabular}
 \end{table}
 
-제로 망각 결과는 파라미터 격리 전략의 직접적인 결과이다: 베이스 normalizing flow 가중치는 Task 0 이후 동결되고, 이후 각 작업은 자체 LoRA 어댑터, Whitening 파라미터, DIA 블록만 학습한다. 이러한 작업별 파라미터들이 완전히 독립적이므로, 새로운 작업 학습이 이전에 학습한 지식을 간섭할 수 없다.
+제로 망각 결과는 파라미터 격리 전략의 직접적인 결과이다: 베이스 normalizing flow 가중치는 Task 0 이후 동결되고, 이후 각 작업은 자체 LoRA 어댑터, Whitening 파라미터, ACL 블록만 학습한다. 이러한 작업별 파라미터들이 완전히 독립적이므로, 새로운 작업 학습이 이전에 학습한 지식을 간섭할 수 없다.
 
 \subsubsection{라우팅 정확도}
 
@@ -1433,7 +1433,7 @@ Mahalanobis 거리 기반 프로토타입 라우터는 MVTec AD에서 \textbf{1.
 
 \subsubsection{데이터셋 간 요약}
 
-표~\ref{tab:dataset_summary}는 두 벤치마크에서의 MoLE-Flow 성능을 요약한다.
+표~\ref{tab:dataset_summary}는 두 벤치마크에서의 DecoFlow 성능을 요약한다.
 
 \begin{table}[t]
 \centering
@@ -1449,18 +1449,18 @@ Mahalanobis 거리 기반 프로토타입 라우터는 MVTec AD에서 \textbf{1.
 \end{tabular}
 \end{table}
 
-MVTec AD와 VisA 간의 성능 차이 (특히 Pixel AP: 0.562 vs 0.266)는 VisA의 본질적인 어려움을 반영한다: 더 복잡한 구조, 더 작은 결함, 더 낮은 대비의 이상을 특징으로 한다. 그럼에도 불구하고, MoLE-Flow는 두 데이터셋 모두에서 제로 망각을 유지하여, 다양한 산업 시나리오에서 접근법의 강건성을 입증한다.
+MVTec AD와 VisA 간의 성능 차이 (특히 Pixel AP: 0.562 vs 0.266)는 VisA의 본질적인 어려움을 반영한다: 더 복잡한 구조, 더 작은 결함, 더 낮은 대비의 이상을 특징으로 한다. 그럼에도 불구하고, DecoFlow는 두 데이터셋 모두에서 제로 망각을 유지하여, 다양한 산업 시나리오에서 접근법의 강건성을 입증한다.
 
 \section{결론}
 \label{sec:conclusion}
 
-본 논문에서는 산업 환경에서의 지속적 이상 탐지(Continual Anomaly Detection)를 위한 MoLE-Flow 프레임워크를 제안하였다.
+본 논문에서는 산업 환경에서의 지속적 이상 탐지(Continual Anomaly Detection)를 위한 DecoFlow 프레임워크를 제안하였다.
 핵심 기여는 다음과 같다:
 
 \begin{enumerate}
-\item \textbf{Parameter Isolation 기반 지속 학습}: Base Normalizing Flow 가중치를 공유/고정하고 작업별 경량 어댑터(LoRA, WhiteningAdapter, DIA)만 학습하는 전략을 제안하여, 파멸적 망각을 효과적으로 방지하면서도 파라미터 효율성을 확보하였다.
+\item \textbf{Parameter Isolation 기반 지속 학습}: Base Normalizing Flow 가중치를 공유/고정하고 작업별 경량 어댑터(LoRA, WhiteningAdapter, ACL)만 학습하는 전략을 제안하여, 파멸적 망각을 효과적으로 방지하면서도 파라미터 효율성을 확보하였다.
 
-\item \textbf{Deep Invertible Adapter (DIA)}: 선형 LoRA의 한계를 극복하는 비선형 가역 적응 모듈을 제안하였다. DIA는 작업별 복잡한 매니폴드 차이를 보정하며, Ablation study에서 가장 중요한 구성 요소로 확인되었다 (제거 시 Image AUROC 0.03+ 하락).
+\item \textbf{Affine Coupling Layer (ACL)}: 선형 LoRA의 한계를 극복하는 비선형 가역 적응 모듈을 제안하였다. ACL은 작업별 복잡한 매니폴드 차이를 보정하며, Ablation study에서 가장 중요한 구성 요소로 확인되었다 (제거 시 Image AUROC 0.03+ 하락).
 
 \item \textbf{One-stage Task-agnostic 추론}: Mahalanobis 거리 기반 프로토타입 라우터를 통해 Task ID 없이 단일 추론으로 라우팅과 이상 탐지를 동시에 수행한다. 이는 기존 방법들의 two-stage 추론 대비 효율적이며, 라우팅 정확도 1.000으로 신뢰성을 검증하였다.
 

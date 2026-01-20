@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MoLE-Flow (Mixture of LoRA Experts for Normalizing Flow) is a continual anomaly detection framework. It uses Normalizing Flows with LoRA (Low-Rank Adaptation) to learn anomaly detection across multiple tasks (product classes) sequentially without catastrophic forgetting.
+DecoFlow (Structural Decomposition of Normalizing Flows) is a continual anomaly detection framework. It uses Normalizing Flows with LoRA (Low-Rank Adaptation) to learn anomaly detection across multiple tasks (product classes) sequentially without catastrophic forgetting.
 
 **Key Problem**: Learn anomaly detection for Task 0 (e.g., leather), then Task 1 (e.g., grid), then Task 2 (e.g., transistor), while maintaining performance on all previous tasks. At inference time, the task ID is unknown - a router predicts which LoRA expert to use.
 
@@ -46,9 +46,9 @@ pip install -r requirements.txt
 
 ## Default Configuration (MAIN)
 
-**Reference Experiment**: `MVTec-MoLE6-DIA2`
+**Reference Experiment**: `MVTec-MoLE6-ACL2`
 
-MoLE6 + DIA2 configuration. Best Pixel AP with stable training.
+MoLE6 + ACL2 configuration. Best Pixel AP with stable training.
 
 ### Hyperparameters
 ```python
@@ -56,7 +56,7 @@ MoLE6 + DIA2 configuration. Best Pixel AP with stable training.
 backbone_name = "wide_resnet50_2"
 lora_rank = 64
 num_coupling_layers = 6  # MoLE blocks
-dia_n_blocks = 2         # DIA blocks (total: 8 blocks)
+dia_n_blocks = 2         # ACL blocks (total: 8 blocks)
 
 # Training
 num_epochs = 60
@@ -75,7 +75,7 @@ spatial_context_kernel = 3
 
 # Modules
 use_lora = True
-use_dia = True           # DIA enabled
+use_dia = True           # ACL enabled
 use_whitening_adapter = True
 use_router = True
 use_pos_embedding = True

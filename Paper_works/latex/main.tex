@@ -1,4 +1,4 @@
-% MoLE-Flow: Mixture of LoRA Experts for Continual Anomaly Detection
+% DecoFlow: Structural Decomposition of Normalizing Flows for Continual Anomaly Detection
 % Target Venue: ECCV 2026 (or similar top-tier CV venue)
 % Paper Type: Full Paper (8 pages + references + supplementary)
 % Revision: R2 - Addressing ECCV Reviewer Feedback (Round 2 Score: 7.0 -> Target: 8+)
@@ -24,7 +24,7 @@
 \newcommand{\eg}{\textit{e.g.}}
 \newcommand{\etal}{\textit{et al.}}
 \newcommand{\wrt}{w.r.t.}
-\newcommand{\method}{MoLE-Flow}
+\newcommand{\method}{DecoFlow}
 \newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
 \newcommand{\note}[1]{\textcolor{blue}{[NOTE: #1]}}
 \newcommand{\rebuttal}[1]{\textcolor{orange}{[R2: #1]}}
@@ -38,7 +38,7 @@
 % ============================================================================
 \begin{document}
 
-\title{\method{}: Mixture of LoRA Experts for \\Continual Anomaly Detection via \\Parameter-Efficient Density Isolation}
+\title{\method{}: Structural Decomposition of \\Normalizing Flows for \\Continual Anomaly Detection}
 
 \titlerunning{\method{}}
 
@@ -63,7 +63,7 @@ We observe that normalizing flows (NF) possess a unique \emph{Arbitrary Function
 Based on this insight, we propose \method{}, a framework that decomposes coupling layer subnets into frozen shared bases and task-specific low-rank adapters (LoRA), achieving complete parameter isolation with only 22-42\% additional parameters per task.
 
 % Integral Components
-To compensate for frozen base rigidity, we introduce three integral components validated through interaction effect analysis: Whitening Adapter for distribution alignment, Tail-Aware Loss for decision boundary focus, and Deep Invertible Adapter for nonlinear manifold correction.
+To compensate for frozen base rigidity, we introduce three integral components validated through interaction effect analysis: General Distribution Adaptation for distribution alignment, Tail-Aware Loss for decision boundary focus, and Affine Coupling Layer for nonlinear manifold correction.
 
 % Results
 On MVTec-AD with 15 sequential tasks, \method{} achieves 98.05\% Image-AUC and 55.80\% Pixel-AP with \emph{zero forgetting} (FM=0.0), establishing new state-of-the-art in replay-free continual anomaly detection.
@@ -170,7 +170,7 @@ Only NF provides a mathematical guarantee that subnet modification preserves mod
 We propose \textbf{M}ixture \textbf{o}f \textbf{L}oRA \textbf{E}xperts for Normalizing \textbf{Flow} (\method{}), which:
 \begin{itemize}
     \item Decomposes coupling layer subnets into a \emph{frozen shared base} (learned on Task 0) and \emph{task-specific LoRA adapters}, achieving complete parameter isolation with 22-42\% overhead per task.
-    \item Introduces three \textbf{integral components}---Whitening Adapter (WA), Tail-Aware Loss (TAL), and Deep Invertible Adapter (DIA)---that specifically compensate for frozen base rigidity, validated as providing significantly \emph{amplified benefits under the frozen constraint} via interaction effect analysis.
+    \item Introduces three \textbf{integral components}---General Distribution Adaptation (GDA), Tail-Aware Loss (TAL), and Affine Coupling Layer (ACL)---that specifically compensate for frozen base rigidity, validated as providing significantly \emph{amplified benefits under the frozen constraint} via interaction effect analysis.
     \item Employs prototype-based routing using Mahalanobis distance for task-agnostic inference, achieving 100\% routing accuracy on MVTec-AD and 95.8\% on ViSA (see \Cref{sec:exp:routing}).
 \end{itemize}
 
@@ -183,7 +183,7 @@ We propose \textbf{M}ixture \textbf{o}f \textbf{L}oRA \textbf{E}xperts for Norma
 
     \item \textbf{Parameter-Efficient Isolation Framework.} We propose \method{}, decomposing coupling subnets into frozen bases and task-specific LoRA, achieving zero forgetting with 22-42\% parameters per task---resolving the isolation-efficiency dilemma (\Cref{sec:method:mole}).
 
-    \item \textbf{Integral Components with Systematic Validation.} We introduce WA, TAL, and DIA as compensations for frozen base constraints, demonstrating their \emph{amplified effectiveness under freezing} (2-6$\times$ larger gains) through 2$\times$2 factorial interaction analysis (\Cref{sec:method:integral,sec:exp:structural}).
+    \item \textbf{Integral Components with Systematic Validation.} We introduce GDA, TAL, and ACL as compensations for frozen base constraints, demonstrating their \emph{amplified effectiveness under freezing} (2-6$\times$ larger gains) through 2$\times$2 factorial interaction analysis (\Cref{sec:method:integral,sec:exp:structural}).
 
     \item \textbf{State-of-the-Art Results.} On MVTec-AD (15 classes, 5 seeds), \method{} achieves \textbf{98.05$\pm$0.12\% I-AUC} and \textbf{55.80$\pm$0.35\% P-AP} with \textbf{zero forgetting}, outperforming replay-based methods without storing any data (\Cref{sec:exp:main}).
 \end{enumerate}
@@ -287,7 +287,7 @@ $\mathbf{x}_{\text{in}}$ & Input to coupling subnet (after split) & $D/2$ \\
 $t \in \{0, \ldots, T-1\}$ & Task index & scalar \\
 $\mathbf{A}_t, \mathbf{B}_t$ & LoRA down/up projection matrices & $r \times D/2$, $D/2 \times r$ \\
 $r$ & LoRA rank & 64 (default) \\
-$\gamma_t, \beta_t$ & Whitening Adapter parameters & $\mathbb{R}^D$ \\
+$\gamma_t, \beta_t$ & General Distribution Adaptation parameters & $\mathbb{R}^D$ \\
 $\boldsymbol{\mu}_t, \boldsymbol{\Sigma}_t$ & Task prototype mean/covariance & $\mathbb{R}^D$, $\mathbb{R}^{D \times D}$ \\
 $\lambda_{\text{tail}}$ & Tail-Aware Loss weight & 0.7 \\
 $k$ & Top-$k$\% ratio for TAL & 2\% \\
@@ -315,37 +315,37 @@ Given a sequence of $T$ tasks $\{\mathcal{D}_0, \mathcal{D}_1, \ldots, \mathcal{
 \paragraph{Architecture Overview.}
 \method{} processes inputs through the following pipeline (see \Cref{fig:architecture}):
 \begin{equation}
-\mathbf{x}_{\text{img}} \xrightarrow{\text{Backbone}} \mathbf{F}^{(0)} \xrightarrow{\text{PE+WA}} \mathbf{F}^{(1)} \xrightarrow{\text{SCM}} \mathbf{F}^{(2)} \xrightarrow{\text{MoLE-NF}} \mathbf{z} \xrightarrow{\text{DIA}} (\mathbf{z}', \log|\det \mathbf{J}|),
+\mathbf{x}_{\text{img}} \xrightarrow{\text{Backbone}} \mathbf{F}^{(0)} \xrightarrow{\text{PE+GDA}} \mathbf{F}^{(1)} \xrightarrow{\text{SCM}} \mathbf{F}^{(2)} \xrightarrow{\text{MoLE-NF}} \mathbf{z} \xrightarrow{\text{ACL}} (\mathbf{z}', \log|\det \mathbf{J}|),
 \end{equation}
-where PE is positional encoding, WA is Whitening Adapter, SCM is Spatial Context Mixer, MoLE-NF is our LoRA-equipped normalizing flow, and DIA is Deep Invertible Adapter.
+where PE is positional encoding, GDA is General Distribution Adaptation, SCM is Spatial Context Mixer, MoLE-NF is our LoRA-equipped normalizing flow, and ACL is Affine Coupling Layer.
 
 \begin{figure}[t]
 \centering
 % [Architecture Diagram Description]
 % Left panel: Full pipeline showing frozen WideResNet-50-2 backbone extracting multi-scale features,
-% followed by Positional Encoding and Whitening Adapter (task-specific), then Spatial Context Mixer.
+% followed by Positional Encoding and General Distribution Adaptation (task-specific), then Spatial Context Mixer.
 % Center panel: MoLE Block detail with shared frozen base subnet (gray blocks) and task-specific
 % LoRA adapters (colored blocks for different tasks: blue=Task0, orange=Task1, green=Task2).
 % The LoRA output is added to base output before exp/sigmoid activation.
 % Right panel: Prototype-based routing showing Mahalanobis distance computation between input
 % feature and task prototypes (mu_t, Sigma_t), with argmin selecting the appropriate expert.
-% Bottom: DIA blocks (2 coupling layers) for task-specific nonlinear correction.
+% Bottom: ACL blocks (2 coupling layers) for task-specific nonlinear correction.
 \fbox{\parbox{0.95\textwidth}{\centering
 \textbf{[FIGURE 1: Architecture Overview]}\\[1em]
 Left: Full pipeline from input image through frozen WideResNet-50-2 backbone,\\
-PE+WA preprocessing, Spatial Context Mixer, to MoLE-NF and DIA blocks.\\[0.5em]
+PE+GDA preprocessing, Spatial Context Mixer, to MoLE-NF and ACL blocks.\\[0.5em]
 Center: MoLE Block detail showing frozen base subnet (gray) with task-specific\\
 LoRA adapters (colored) computing $s(x) = s_{\text{base}}(x) + \mathbf{B}_t\mathbf{A}_t x$.\\[0.5em]
 Right: Prototype-based routing using Mahalanobis distance to select expert.
 }}
-\caption{Overview of \method{} architecture. Coupling layer subnets are decomposed into frozen shared bases and task-specific LoRA adapters, enabling complete parameter isolation. Integral components (WA, DIA) compensate for frozen base rigidity. The router selects the appropriate task expert based on Mahalanobis distance to learned prototypes.}
+\caption{Overview of \method{} architecture. Coupling layer subnets are decomposed into frozen shared bases and task-specific LoRA adapters, enabling complete parameter isolation. Integral components (GDA, ACL) compensate for frozen base rigidity. The router selects the appropriate task expert based on Mahalanobis distance to learned prototypes.}
 \label{fig:architecture}
 \end{figure}
 
 \paragraph{Training Strategy.}
 \begin{itemize}
-    \item \textbf{Task 0:} Train base NF weights $\Theta_{\text{base}}$ and task-specific components (LoRA$_0$, WA$_0$, DIA$_0$) jointly.
-    \item \textbf{Task $t \geq 1$:} Freeze $\Theta_{\text{base}}$; train only (LoRA$_t$, WA$_t$, DIA$_t$).
+    \item \textbf{Task 0:} Train base NF weights $\Theta_{\text{base}}$ and task-specific components (LoRA$_0$, GDA$_0$, ACL$_0$) jointly.
+    \item \textbf{Task $t \geq 1$:} Freeze $\Theta_{\text{base}}$; train only (LoRA$_t$, GDA$_t$, ACL$_t$).
 \end{itemize}
 This ensures $\frac{\partial \mathcal{L}_t}{\partial \Theta_{\text{base}}} = 0$ for $t \geq 1$, \emph{mathematically guaranteeing zero forgetting}.
 
@@ -403,14 +403,14 @@ Other architectures (VAE, AE, Teacher-Student) can use LoRA but achieve only \em
 The distinction is critical for long task sequences: even FM=2.1 per task accumulates to significant degradation over 50 tasks ($\sim$100\% cumulative forgetting), whereas FM=0.0 guarantees perfect preservation regardless of sequence length.
 
 % ----------------------------------------------------------------------------
-% Why Linear LoRA + DIA Instead of Nonlinear LoRA
+% Why Linear LoRA + ACL Instead of Nonlinear LoRA
 % ----------------------------------------------------------------------------
-\paragraph{Why Linear LoRA with DIA Instead of Nonlinear LoRA.}
+\paragraph{Why Linear LoRA with ACL Instead of Nonlinear LoRA.}
 An alternative to our design would be using nonlinear LoRA (e.g., with intermediate activations).
-We chose linear LoRA combined with DIA for three reasons:
+We chose linear LoRA combined with ACL for three reasons:
 (1) \textbf{Simplicity}: Linear LoRA has well-understood optimization dynamics and initialization strategies;
-(2) \textbf{Modularity}: Separating linear task adaptation (LoRA) from nonlinear correction (DIA) provides cleaner ablation and interpretability;
-(3) \textbf{Empirical effectiveness}: Our ablations show DIA provides +5.2\%p P-AP under frozen base, suggesting the nonlinear capacity is better placed after base transformation.
+(2) \textbf{Modularity}: Separating linear task adaptation (LoRA) from nonlinear correction (ACL) provides cleaner ablation and interpretability;
+(3) \textbf{Empirical effectiveness}: Our ablations show ACL provides +5.2\%p P-AP under frozen base, suggesting the nonlinear capacity is better placed after base transformation.
 Nonlinear LoRA variants~\cite{CITE:adalora} could be explored in future work, but our current design achieves state-of-the-art with simpler components.
 
 % ----------------------------------------------------------------------------
@@ -452,7 +452,7 @@ We provide theoretical and empirical justification:
 \emph{Empirical validation:} SVD analysis of full fine-tuning weight changes $\Delta\mathbf{W}^* = \mathbf{W}^*_t - \mathbf{W}_{\text{base}}$ reveals effective rank capturing 99\% variance is consistently $<64$ across all layers (see \Cref{sec:exp:svd}).
 
 \paragraph{Parameter Overhead.}
-Per-task parameters: LoRA ($2 \times r \times D$ per layer $\times$ 24 layers) + TaskBias + WA $\approx$ 1.93M (\textbf{21.8\%} of NF base), or 3.71M (\textbf{41.7\%}) including DIA.
+Per-task parameters: LoRA ($2 \times r \times D$ per layer $\times$ 24 layers) + TaskBias + GDA $\approx$ 1.93M (\textbf{21.8\%} of NF base), or 3.71M (\textbf{41.7\%}) including ACL.
 
 % ----------------------------------------------------------------------------
 % 3.4 Integral Components
@@ -466,7 +466,7 @@ We distinguish \emph{integral} components (showing statistically significant int
 Crucially, ``integral'' means components provide \emph{significantly amplified benefits under the frozen constraint} (2-6$\times$ larger gains), not that they are \emph{only} beneficial under freezing.
 These components may provide general improvements, but the key contribution is their disproportionate effectiveness when compensating for frozen base limitations.
 
-\subsubsection{Whitening Adapter (WA): Distribution Alignment}
+\subsubsection{General Distribution Adaptation (GDA): Distribution Alignment}
 \label{sec:method:wa}
 
 \paragraph{Problem.}
@@ -490,7 +490,7 @@ Ablation of constraint ranges is provided in \Cref{sec:supp:wa_bounds}.
 
 \paragraph{Integral Status.}
 Interaction effect: $F(1,16) = 8.47$, $p = 0.008$, partial $\eta^2 = 0.35$.
-WA provides +7.3\%p P-AP under frozen base vs. +1.2\%p unfrozen---a 6$\times$ amplification.
+GDA provides +7.3\%p P-AP under frozen base vs. +1.2\%p unfrozen---a 6$\times$ amplification.
 
 \subsubsection{Tail-Aware Loss (TAL): Gradient Redistribution}
 \label{sec:method:tal}
@@ -518,7 +518,7 @@ Sensitivity analysis in \Cref{sec:supp:tal_k} confirms $k \in [1\%, 5\%]$ yields
 Interaction effect: $F(1,16) = 6.23$, $p = 0.021$, partial $\eta^2 = 0.28$.
 TAL provides +7.6\%p P-AP under frozen base vs. +3.2\%p unfrozen.
 
-\subsubsection{Deep Invertible Adapter (DIA): Nonlinear Manifold Correction}
+\subsubsection{Affine Coupling Layer (ACL): Nonlinear Manifold Correction}
 \label{sec:method:dia}
 
 \paragraph{Problem.}
@@ -528,19 +528,19 @@ Complex inter-task manifold differences require nonlinear adaptation that frozen
 \paragraph{Solution.}
 Task-specific invertible blocks after base NF:
 \begin{equation}
-\mathbf{z}_{\text{final}} = f_{\text{DIA}}^{(t)}(\mathbf{z}_{\text{base}}), \quad \log p(\mathbf{x}) = \log p(\mathbf{z}_{\text{final}}) + \log|\det \mathbf{J}_{\text{base}}| + \log|\det \mathbf{J}_{\text{DIA}}|.
+\mathbf{z}_{\text{final}} = f_{\text{ACL}}^{(t)}(\mathbf{z}_{\text{base}}), \quad \log p(\mathbf{x}) = \log p(\mathbf{z}_{\text{final}}) + \log|\det \mathbf{J}_{\text{base}}| + \log|\det \mathbf{J}_{\text{ACL}}|.
 \end{equation}
 
-DIA uses 2 affine coupling blocks with fully task-specific parameters (no sharing), enabling nonlinear distribution normalization.
+ACL uses 2 affine coupling blocks with fully task-specific parameters (no sharing), enabling nonlinear distribution normalization.
 
 \paragraph{Placement Logic.}
-DIA is placed \emph{after} the base NF (not within coupling layers) for two reasons:
-(1) Base NF applies universal transformation first; DIA performs task-specific adjustment on the already-transformed latent space;
-(2) Placing DIA after allows complete task-specific parameters without interference with shared base weights.
+ACL is placed \emph{after} the base NF (not within coupling layers) for two reasons:
+(1) Base NF applies universal transformation first; ACL performs task-specific adjustment on the already-transformed latent space;
+(2) Placing ACL after allows complete task-specific parameters without interference with shared base weights.
 
 \paragraph{Integral Status.}
 Interaction effect: $F(1,16) = 5.12$, $p = 0.034$, partial $\eta^2 = 0.24$.
-DIA provides +5.2\%p P-AP under frozen base vs. +2.1\%p unfrozen.
+ACL provides +5.2\%p P-AP under frozen base vs. +2.1\%p unfrozen.
 
 \begin{figure}[t]
 \centering
@@ -549,19 +549,19 @@ DIA provides +5.2\%p P-AP under frozen base vs. +2.1\%p unfrozen.
 % X-axis: Base condition (Frozen vs. Unfrozen)
 % Y-axis: P-AP (%)
 % Two lines per panel: With component (solid) vs. Without component (dashed)
-% Panel (a) WA: Lines diverge significantly under Frozen condition (gap ~7.3%p) vs. minimal
+% Panel (a) GDA: Lines diverge significantly under Frozen condition (gap ~7.3%p) vs. minimal
 %   divergence under Unfrozen (~1.2%p). Interaction F=8.47, p=0.008.
 % Panel (b) TAL: Similar pattern with ~7.6%p gap under Frozen vs. ~3.2%p Unfrozen.
 %   Interaction F=6.23, p=0.021.
-% Panel (c) DIA: Gap of ~5.2%p under Frozen vs. ~2.1%p Unfrozen.
+% Panel (c) ACL: Gap of ~5.2%p under Frozen vs. ~2.1%p Unfrozen.
 %   Interaction F=5.12, p=0.034.
 % All panels show error bars (std over 5 seeds) and significance stars.
 \fbox{\parbox{0.95\textwidth}{\centering
 \textbf{[FIGURE 2: Interaction Effect Analysis]}\\[1em]
 Three panels showing P-AP vs. Base Condition (Frozen/Unfrozen) for each component.\\[0.5em]
-(a) WA: +7.3\%p under frozen vs. +1.2\%p unfrozen (6$\times$ amplification)\\
+(a) GDA: +7.3\%p under frozen vs. +1.2\%p unfrozen (6$\times$ amplification)\\
 (b) TAL: +7.6\%p under frozen vs. +3.2\%p unfrozen (2.4$\times$ amplification)\\
-(c) DIA: +5.2\%p under frozen vs. +2.1\%p unfrozen (2.5$\times$ amplification)\\[0.5em]
+(c) ACL: +5.2\%p under frozen vs. +2.1\%p unfrozen (2.5$\times$ amplification)\\[0.5em]
 Lines diverge under frozen condition, demonstrating amplified benefits.
 }}
 \caption{Interaction plots demonstrating integral component amplification under frozen base. All three components show significantly larger benefits when base is frozen (2-6$\times$ amplification), confirming they address specific rigidity-induced limitations. Note: components also provide smaller but non-zero improvements under unfrozen conditions.}
@@ -591,7 +591,7 @@ At inference, select task $t^*$ minimizing Mahalanobis distance:
 \begin{equation}
 t^* = \argmin_t \sqrt{(\mathbf{f} - \boldsymbol{\mu}_t)^\top \boldsymbol{\Sigma}_t^{-1} (\mathbf{f} - \boldsymbol{\mu}_t)},
 \end{equation}
-then activate corresponding LoRA$_{t^*}$, WA$_{t^*}$, DIA$_{t^*}$.
+then activate corresponding LoRA$_{t^*}$, GDA$_{t^*}$, ACL$_{t^*}$.
 
 \paragraph{Result.}
 100\% routing accuracy on MVTec-AD (15 classes) and 95.8\% on ViSA (12 classes).
@@ -644,7 +644,7 @@ Original paper implementations were also evaluated for reference, showing consis
 
 \paragraph{Implementation Details.}
 Backbone: WideResNet-50-2 (frozen).
-6 MoLE blocks + 2 DIA blocks.
+6 MoLE blocks + 2 ACL blocks.
 LoRA rank: 64.
 Training: 60 epochs, AdamP optimizer, lr=$3\times10^{-4}$, cosine annealing.
 $\lambda_{\text{tail}}=0.7$, tail ratio $k=2\%$.
@@ -756,8 +756,8 @@ For applications prioritizing localization, higher-resolution variants (28$\time
 Full (\method{}) & \textbf{97.92} & - & \textbf{56.18} & - & \textbf{0.0} \\
 \midrule
 w/o TAL & 94.97 & -2.95 & 48.61 & \textbf{-7.57} & 0.0 \\
-w/o WA & 97.90 & -0.02 & 48.84 & \textbf{-7.34} & 0.0 \\
-w/o DIA & 92.74 & \textbf{-5.18} & 50.06 & -6.12 & 0.0 \\
+w/o GDA & 97.90 & -0.02 & 48.84 & \textbf{-7.34} & 0.0 \\
+w/o ACL & 92.74 & \textbf{-5.18} & 50.06 & -6.12 & 0.0 \\
 w/o LoRA (base only) & 97.96 & +0.04 & 55.31 & -0.87 & \textbf{3.2} \\
 w/o Spatial Context & 97.41 & -0.51 & 53.25 & -2.93 & 0.0 \\
 w/o Positional Encoding & 96.84 & -1.08 & 51.92 & -4.26 & 0.0 \\
@@ -767,8 +767,8 @@ w/o Positional Encoding & 96.84 & -1.08 & 51.92 & -4.26 & 0.0 \\
 
 \paragraph{Key Findings.}
 (1) \textbf{TAL} provides the largest P-AP contribution (+7.57\%p), confirming tail focus is critical for pixel-level detection.
-(2) \textbf{WA} similarly contributes +7.34\%p P-AP by normalizing distribution shifts.
-(3) \textbf{DIA} is essential for I-AUC (+5.18\%p), providing training stability through nonlinear manifold correction.
+(2) \textbf{GDA} similarly contributes +7.34\%p P-AP by normalizing distribution shifts.
+(3) \textbf{ACL} is essential for I-AUC (+5.18\%p), providing training stability through nonlinear manifold correction.
 (4) \textbf{LoRA} shows minimal direct performance contribution (-0.87\%p) but \emph{enables zero forgetting}---its value is in \textbf{isolation, not accuracy}.
 
 % ----------------------------------------------------------------------------
@@ -807,7 +807,7 @@ Standard ablations show component contributions but not \emph{why} they matter.
 We employ 2$\times$2 factorial design to test whether components specifically compensate for frozen base constraints.
 
 \paragraph{Methodology.}
-For each component $C \in \{\text{WA}, \text{TAL}, \text{DIA}\}$:
+For each component $C \in \{\text{GDA}, \text{TAL}, \text{ACL}\}$:
 \begin{itemize}
     \item 2$\times$2 design: (Base: Frozen/Unfrozen) $\times$ ($C$: Present/Absent)
     \item 5 seeds per condition (20 runs total per component)
@@ -826,9 +826,9 @@ For each component $C \in \{\text{WA}, \text{TAL}, \text{DIA}\}$:
 \toprule
 \textbf{Component} & \textbf{Frozen} & \textbf{Unfrozen} & \textbf{Interaction $F$} & \textbf{$p$-value} & \textbf{Amplification} \\
 \midrule
-WA & +7.3\%p & +1.2\%p & $F(1,16)=8.47$ & 0.008* & 6.1$\times$ \\
+GDA & +7.3\%p & +1.2\%p & $F(1,16)=8.47$ & 0.008* & 6.1$\times$ \\
 TAL & +7.6\%p & +3.2\%p & $F(1,16)=6.23$ & 0.021* & 2.4$\times$ \\
-DIA & +5.2\%p & +2.1\%p & $F(1,16)=5.12$ & 0.034* & 2.5$\times$ \\
+ACL & +5.2\%p & +2.1\%p & $F(1,16)=5.12$ & 0.034* & 2.5$\times$ \\
 \midrule
 Spatial Context & +3.3\%p & +3.1\%p & $F(1,16)=0.89$ & 0.356 & 1.1$\times$ \\
 Scale Context & +1.7\%p & +1.5\%p & $F(1,16)=1.24$ & 0.278 & 1.1$\times$ \\
@@ -837,7 +837,7 @@ Scale Context & +1.7\%p & +1.5\%p & $F(1,16)=1.24$ & 0.278 & 1.1$\times$ \\
 \end{table}
 
 \paragraph{Interpretation.}
-All three integral components (WA, TAL, DIA) show statistically significant interactions ($p < 0.05$), with contributions amplified 2-6$\times$ under frozen base.
+All three integral components (GDA, TAL, ACL) show statistically significant interactions ($p < 0.05$), with contributions amplified 2-6$\times$ under frozen base.
 This confirms they address \emph{specific limitations} of the frozen base design.
 Note that components also provide benefits under unfrozen conditions (+1.2\% to +3.2\%p), but the key insight is the \emph{disproportionate amplification} under freezing.
 Spatial and Scale Context show no interaction---they benefit any AD system equally regardless of freezing.
@@ -1024,7 +1024,7 @@ CADIC & 8.5 GB & $\sim$2.5 min & 68 ms & +10\% \\
 
 \paragraph{Key Findings.}
 \method{} uses 3$\times$ less GPU memory, trains 3$\times$ faster per task (after Task 0), and infers 6$\times$ faster than replay methods.
-The 22-42\% per-task parameter overhead (depending on DIA inclusion) is higher than prompt-based methods but provides complete isolation guaranteeing zero forgetting.
+The 22-42\% per-task parameter overhead (depending on ACL inclusion) is higher than prompt-based methods but provides complete isolation guaranteeing zero forgetting.
 
 \paragraph{Scalability.}
 With rank-16 configuration, per-task overhead reduces to 6-26\% with minimal performance loss ($<$0.5\%p, see \Cref{sec:supp:rank}).
@@ -1051,7 +1051,7 @@ Performance variance across 5 random orderings is $<$0.3\% I-AUC, confirming rob
 
 We presented \method{}, a continual anomaly detection framework that resolves the isolation-efficiency dilemma through normalizing flow's unique structural properties.
 By identifying the Arbitrary Function Property as a theoretical foundation for safe parameter decomposition, we enabled complete task isolation with only 22-42\% parameter overhead per task.
-The three integral components---Whitening Adapter, Tail-Aware Loss, and Deep Invertible Adapter---were systematically validated as providing amplified benefits under frozen base constraints through interaction effect analysis.
+The three integral components---General Distribution Adaptation, Tail-Aware Loss, and Affine Coupling Layer---were systematically validated as providing amplified benefits under frozen base constraints through interaction effect analysis.
 
 \method{} achieves state-of-the-art performance (98.05\% I-AUC, 55.80\% P-AP) with \emph{zero forgetting} on MVTec-AD, outperforming replay-based methods without storing any data.
 
@@ -1146,7 +1146,7 @@ Multi-scale features extracted from layer2 ($28\times28\times512$) and layer3 ($
     \item Soft clamping: $\alpha_{\text{clamp}} = 1.9$
 \end{itemize}
 
-\paragraph{Deep Invertible Adapter.}
+\paragraph{Affine Coupling Layer.}
 \begin{itemize}
     \item 2 affine coupling blocks per task
     \item SimpleSubnet: Linear($D/2$, $D/2$) $\to$ ReLU $\to$ Linear($D/2$, $D$)
@@ -1174,8 +1174,8 @@ LoRA rank $r$ & 64 & \textbf{Low} (16-128 similar) \\
 $\lambda_{\text{tail}}$ & 0.7 & \textbf{High} \\
 Tail ratio $k$ & 0.02 & Low \\
 $\lambda_{\text{logdet}}$ & $1 \times 10^{-4}$ & \textbf{High} \\
-WA $\gamma$ range & [0.5, 2.0] & Medium \\
-WA $\beta$ range & [-2.0, 2.0] & Medium \\
+GDA $\gamma$ range & [0.5, 2.0] & Medium \\
+GDA $\beta$ range & [-2.0, 2.0] & Medium \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1236,14 +1236,14 @@ In practice, alphabetical order (bottle first) provides reasonable results.
 The $<$0.5\%p variation confirms scaling factor has minimal impact when LoRA is properly initialized (B to zeros).
 
 % ----------------------------------------------------------------------------
-% D. WA Constraint Bounds Ablation
+% D. GDA Constraint Bounds Ablation
 % ----------------------------------------------------------------------------
-\section{WA Constraint Bounds Ablation}
+\section{GDA Constraint Bounds Ablation}
 \label{sec:supp:wa_bounds}
 
 \begin{table}[h]
 \centering
-\caption{Whitening Adapter constraint range ablation.}
+\caption{General Distribution Adaptation constraint range ablation.}
 \small
 \begin{tabular}{ccccc}
 \toprule
@@ -1299,7 +1299,7 @@ $k \in [1\%, 5\%]$ yields similar performance; 2\% balances focus and stability.
 \small
 \begin{tabular}{lcccc}
 \toprule
-\textbf{Rank} & \textbf{I-AUC} & \textbf{P-AP} & \textbf{LoRA Params} & \textbf{Per-Task (excl. DIA)} \\
+\textbf{Rank} & \textbf{I-AUC} & \textbf{P-AP} & \textbf{LoRA Params} & \textbf{Per-Task (excl. ACL)} \\
 \midrule
 16 & 98.06 & 55.86 & 0.48M & 0.49M (5.6\%) \\
 32 & 98.04 & 55.89 & 0.96M & 0.97M (10.9\%) \\
@@ -1328,16 +1328,16 @@ $\lambda_{\text{tail}}$ & \textbf{I-AUC} & \textbf{P-AP} \\
 \end{tabular}
 \end{table}
 
-\subsection{DIA Blocks}
+\subsection{ACL Blocks}
 \label{sec:supp:dia}
 
 \begin{table}[h]
 \centering
-\caption{Number of DIA blocks ablation.}
+\caption{Number of ACL blocks ablation.}
 \small
 \begin{tabular}{lcccc}
 \toprule
-\textbf{DIA Blocks} & \textbf{Total Blocks} & \textbf{I-AUC} & \textbf{P-AP} & \textbf{Stability} \\
+\textbf{ACL Blocks} & \textbf{Total Blocks} & \textbf{I-AUC} & \textbf{P-AP} & \textbf{Stability} \\
 \midrule
 0 & 6 & $\sim$93 & $\sim$50 & Unstable \\
 \textbf{2} & \textbf{8} & \textbf{97.92} & \textbf{56.18} & \textbf{Stable} \\
@@ -1501,7 +1501,7 @@ When task feature distributions overlap significantly (e.g., ViSA PCB categories
 Mitigation: Top-2 ensemble routing achieves 98.5\% accuracy.
 
 \paragraph{Extreme Distribution Shift.}
-Tasks with features $>5\sigma$ from Task 0 distribution hit WA constraint bounds, degrading P-AP by 3-5\%p.
+Tasks with features $>5\sigma$ from Task 0 distribution hit GDA constraint bounds, degrading P-AP by 3-5\%p.
 Mitigation: Expand bounds (trades stability).
 
 \paragraph{Very Small Anomalies.}
