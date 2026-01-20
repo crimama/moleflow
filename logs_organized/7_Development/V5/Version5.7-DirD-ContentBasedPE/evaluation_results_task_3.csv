@@ -1,2 +1,0 @@
-timestamp,task_id,epoch,leather_img_auc,leather_pixel_auc,leather_routing_acc,grid_img_auc,grid_pixel_auc,grid_routing_acc,transistor_img_auc,transistor_pixel_auc,transistor_routing_acc,screw_img_auc,screw_pixel_auc,screw_routing_acc,mean_img_auc,mean_pixel_auc,mean_routing_acc
-2025-12-28 21:03:22,3,39,1.0,0.9808819325543081,1.0,0.8487886382623225,0.8828023891496078,1.0,0.7587499999999999,0.9125807040550741,1.0,0.4105349456855913,0.8908303098424037,1.0,0.7545183959869785,0.9167738339003484,1.0

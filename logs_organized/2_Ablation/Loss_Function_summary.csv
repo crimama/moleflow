@@ -1,5 +1,0 @@
-experiment_name,image_auc,pixel_auc,pixel_ap,routing_acc,backbone,num_epochs,lr,lora_rank,num_coupling_layers,dia_n_blocks,tail_weight,lambda_logdet,num_tasks
-TailTopK-0.01-TailW-1.0,0.9784,0.9777,0.9911,100.00,wide_resnet50_2,60,0.0003,64,6,N/A,N/A,N/A,15
-TailTopK-0.01-TailW-1.2,0.9783,0.9774,0.9910,100.00,wide_resnet50_2,60,0.0003,64,6,N/A,N/A,N/A,15
-TailTopK-0.02-TailW-1.0,0.9792,0.9781,0.9916,100.00,wide_resnet50_2,60,0.0003,64,6,N/A,N/A,N/A,15
-TailTopK-0.02-TailW-1.2,0.9789,0.9779,0.9912,100.00,wide_resnet50_2,60,0.0003,64,6,N/A,N/A,N/A,15
