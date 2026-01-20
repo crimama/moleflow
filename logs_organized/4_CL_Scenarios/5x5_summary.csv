@@ -1,0 +1,2 @@
+experiment_name,image_auc,pixel_auc,pixel_ap,routing_acc,backbone,num_epochs,lr,lora_rank,num_coupling_layers,dia_n_blocks,tail_weight,lambda_logdet,num_tasks
+MVTec-WRN50-CL-10x5,0.7430,0.6527,0.8688,99.24,wide_resnet50_2,60,0.0003,64,8,N/A,N/A,N/A,15

@@ -1,0 +1,8 @@
+experiment_name,image_auc,pixel_auc,pixel_ap,routing_acc,backbone,num_epochs,lr,lora_rank,num_coupling_layers,dia_n_blocks,tail_weight,lambda_logdet,num_tasks
+MoLE4-DIA2-LoRA128,0.9785,0.9780,0.9912,100.00,wide_resnet50_2,60,0.0003,128,4,N/A,N/A,N/A,15
+MoLE4-DIA2-LoRA16,0.9784,0.9780,0.9912,100.00,wide_resnet50_2,60,0.0003,16,4,N/A,N/A,N/A,15
+MoLE4-DIA2-LoRA32,0.9784,0.9779,0.9912,100.00,wide_resnet50_2,60,0.0003,32,4,N/A,N/A,N/A,15
+MoLE6-DIA2-LoRA128,0.9804,0.9782,0.9925,100.00,wide_resnet50_2,60,0.0003,128,6,N/A,N/A,N/A,15
+MoLE6-DIA2-LoRA16,0.9806,0.9782,0.9926,100.00,wide_resnet50_2,60,0.0003,16,6,N/A,N/A,N/A,15
+MoLE6-DIA2-LoRA32,0.9804,0.9782,0.9925,100.00,wide_resnet50_2,60,0.0003,32,6,N/A,N/A,N/A,15
+MoLE8-DIA4-LoRA16,N/A,N/A,N/A,N/A,wide_resnet50_2,60,0.0003,16,8,N/A,N/A,N/A,15
