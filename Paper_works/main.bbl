@@ -1,4 +1,4 @@
-\begin{thebibliography}{7}
+\begin{thebibliography}{12}
 \expandafter\ifx\csname natexlab\endcsname\relax\def\natexlab#1{#1}\fi
 \providecommand{\url}[1]{\texttt{#1}}
 \providecommand{\href}[2]{#2}
@@ -21,15 +21,50 @@
   unsupervised anomaly detection}, in: \bibinfo{booktitle}{Proceedings of the
   IEEE/CVF conference on computer vision and pattern recognition}, pp.
   \bibinfo{pages}{9592--9600}.
-%Type = Article
-\bibitem[{Je{\v{z}}ek et~al.(2021)Je{\v{z}}ek, Jonak, Burget, Dutta
-  et~al.}]{jezek2021deep}
-\bibinfo{author}{Je{\v{z}}ek, S.}, \bibinfo{author}{Jonak, M.},
-  \bibinfo{author}{Burget, R.}, \bibinfo{author}{Dutta, M.K.}, et~al.,
-  \bibinfo{year}{2021}.
-\newblock \bibinfo{title}{Deep learning-based defect detection of metal parts:
-  Evaluating current methods in complex conditions}.
-\newblock \bibinfo{journal}{arXiv preprint arXiv:2110.11768} .
+%Type = Inproceedings
+\bibitem[{Dinh et~al.(2017)Dinh, Sohl-Dickstein and Bengio}]{dinh2016realnvp}
+\bibinfo{author}{Dinh, L.}, \bibinfo{author}{Sohl-Dickstein, J.},
+  \bibinfo{author}{Bengio, S.}, \bibinfo{year}{2017}.
+\newblock \bibinfo{title}{Density estimation using real-nvp}, in:
+  \bibinfo{booktitle}{International Conference on Learning Representations}.
+%Type = Inproceedings
+\bibitem[{Gudovskiy et~al.(2022)Gudovskiy, Ishizaka and
+  Kozuka}]{gudovskiy2022cflow}
+\bibinfo{author}{Gudovskiy, D.}, \bibinfo{author}{Ishizaka, S.},
+  \bibinfo{author}{Kozuka, K.}, \bibinfo{year}{2022}.
+\newblock \bibinfo{title}{Cflow-ad: Real-time unsupervised anomaly detection
+  with localization via conditional normalizing flows}, in:
+  \bibinfo{booktitle}{Proceedings of the IEEE/CVF Winter Conference on
+  Applications of Computer Vision}, pp. \bibinfo{pages}{98--107}.
+%Type = Inproceedings
+\bibitem[{Howard et~al.(2017)Howard, Zhu, Chen, Kalenichenko, Wang, Weyand,
+  Andreetto and Adam}]{howard2017mobilenets}
+\bibinfo{author}{Howard, A.G.}, \bibinfo{author}{Zhu, M.},
+  \bibinfo{author}{Chen, B.}, \bibinfo{author}{Kalenichenko, D.},
+  \bibinfo{author}{Wang, W.}, \bibinfo{author}{Weyand, T.},
+  \bibinfo{author}{Andreetto, M.}, \bibinfo{author}{Adam, H.},
+  \bibinfo{year}{2017}.
+\newblock \bibinfo{title}{Mobilenets: Efficient convolutional neural networks
+  for mobile vision applications}, in: \bibinfo{booktitle}{arXiv preprint
+  arXiv:1704.04861}.
+%Type = Inproceedings
+\bibitem[{Hu et~al.(2022)Hu, Shen, Wallis, Allen-Zhu, Li, Wang, Wang and
+  Chen}]{hu2022lora}
+\bibinfo{author}{Hu, E.J.}, \bibinfo{author}{Shen, Y.},
+  \bibinfo{author}{Wallis, P.}, \bibinfo{author}{Allen-Zhu, Z.},
+  \bibinfo{author}{Li, Y.}, \bibinfo{author}{Wang, S.}, \bibinfo{author}{Wang,
+  L.}, \bibinfo{author}{Chen, W.}, \bibinfo{year}{2022}.
+\newblock \bibinfo{title}{Lora: Low-rank adaptation of large language models},
+  in: \bibinfo{booktitle}{International Conference on Learning
+  Representations}.
+%Type = Inproceedings
+\bibitem[{Ioffe and Szegedy(2015)}]{ioffe2015batchnorm}
+\bibinfo{author}{Ioffe, S.}, \bibinfo{author}{Szegedy, C.},
+  \bibinfo{year}{2015}.
+\newblock \bibinfo{title}{Batch normalization: Accelerating deep network
+  training by reducing internal covariate shift}, in:
+  \bibinfo{booktitle}{International Conference on Machine Learning}, pp.
+  \bibinfo{pages}{448--456}.
 %Type = Article
 \bibitem[{Kirkpatrick et~al.(2017)Kirkpatrick, Pascanu, Rabinowitz, Veness,
   Desjardins, Rusu, Milan, Quan, Ramalho, Grabska-Barwinska
@@ -45,13 +80,12 @@
 \newblock \bibinfo{journal}{Proceedings of the national academy of sciences}
   \bibinfo{volume}{114}, \bibinfo{pages}{3521--3526}.
 %Type = Inproceedings
-\bibitem[{Li et~al.(2022)Li, Lin, Tsai, Lin, Yang and Kira}]{li2022dne}
-\bibinfo{author}{Li, C.L.}, \bibinfo{author}{Lin, T.H.}, \bibinfo{author}{Tsai,
-  Y.Y.}, \bibinfo{author}{Lin, Y.C.}, \bibinfo{author}{Yang, M.H.},
-  \bibinfo{author}{Kira, Z.}, \bibinfo{year}{2022}.
-\newblock \bibinfo{title}{Towards continual adaptation in industrial anomaly
-  detection}, in: \bibinfo{booktitle}{Proceedings of the IEEE/CVF Conference on
-  Computer Vision and Pattern Recognition}.
+\bibitem[{Lee et~al.(2018)Lee, Lee, Lee and Shin}]{lee2018mahalanobis}
+\bibinfo{author}{Lee, K.}, \bibinfo{author}{Lee, K.}, \bibinfo{author}{Lee,
+  H.}, \bibinfo{author}{Shin, J.}, \bibinfo{year}{2018}.
+\newblock \bibinfo{title}{A simple unified framework for detecting
+  out-of-distribution samples and adversarial attacks}, in:
+  \bibinfo{booktitle}{Advances in Neural Information Processing Systems}.
 %Type = Inproceedings
 \bibitem[{Li and Hoiem(2017)}]{li2017lwf}
 \bibinfo{author}{Li, Z.}, \bibinfo{author}{Hoiem, D.}, \bibinfo{year}{2017}.
@@ -59,13 +93,24 @@
   \bibinfo{booktitle}{European conference on computer vision},
   \bibinfo{organization}{Springer}. pp. \bibinfo{pages}{614--629}.
 %Type = Inproceedings
-\bibitem[{Lu et~al.(2024)Lu, Xie, Wang, Zhang, Dai and Wang}]{lu2024ucad}
-\bibinfo{author}{Lu, J.}, \bibinfo{author}{Xie, E.}, \bibinfo{author}{Wang,
-  W.}, \bibinfo{author}{Zhang, W.}, \bibinfo{author}{Dai, J.},
-  \bibinfo{author}{Wang, L.}, \bibinfo{year}{2024}.
-\newblock \bibinfo{title}{Ucad: A unified framework for continual anomaly
-  detection}, in: \bibinfo{booktitle}{Proceedings of the AAAI Conference on
-  Artificial Intelligence}, pp. \bibinfo{pages}{3850--3858}.
+\bibitem[{Perez et~al.(2018)Perez, Strub, De~Vries, Dumoulin and
+  Courville}]{perez2018film}
+\bibinfo{author}{Perez, E.}, \bibinfo{author}{Strub, F.},
+  \bibinfo{author}{De~Vries, H.}, \bibinfo{author}{Dumoulin, V.},
+  \bibinfo{author}{Courville, A.}, \bibinfo{year}{2018}.
+\newblock \bibinfo{title}{Film: Visual reasoning with a general conditioning
+  layer}, in: \bibinfo{booktitle}{Proceedings of the AAAI Conference on
+  Artificial Intelligence}.
+%Type = Inproceedings
+\bibitem[{Roth et~al.(2022)Roth, Pemula, Zepeda, Sch{\"o}lkopf, Brox and
+  Gehler}]{roth2022patchcore}
+\bibinfo{author}{Roth, K.}, \bibinfo{author}{Pemula, L.},
+  \bibinfo{author}{Zepeda, J.}, \bibinfo{author}{Sch{\"o}lkopf, B.},
+  \bibinfo{author}{Brox, T.}, \bibinfo{author}{Gehler, P.},
+  \bibinfo{year}{2022}.
+\newblock \bibinfo{title}{Towards total recall in industrial anomaly
+  detection}, in: \bibinfo{booktitle}{Proceedings of the IEEE/CVF Conference on
+  Computer Vision and Pattern Recognition}, pp. \bibinfo{pages}{14318--14328}.
 %Type = Inproceedings
 \bibitem[{Zou et~al.(2022)Zou, Jeong, Pemula, Zhang and Dabeer}]{zou2022spot}
 \bibinfo{author}{Zou, Y.}, \bibinfo{author}{Jeong, J.},

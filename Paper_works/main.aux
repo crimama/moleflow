@@ -2,193 +2,202 @@
 \emailauthor{author@example.com}{Author Name\fnref {fn1}}
 \emailauthor{author@example.com}{Author Name\fnref {fn1}}
 \emailauthor{corresponding@example.com}{Corresponding Author\corref {cor1}}
+\citation{rezende2015variational}
+\citation{roth2022patchcore}
 \providecommand \oddpage@label [2]{}
 \Newlabel{a}{a}
 \Newlabel{b}{b}
 \Newlabel{cor1}{1}
 \Newlabel{fn1}{1}
 \@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {2}Related Work}{1}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Image captioning}{1}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Scene graph generation for Image captioning}{1}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Data augmentation for Image captioning}{1}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {3}Proposed Method}{1}{}\protected@file@percent }
-\newlabel{sec:method}{{3}{1}}
-\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Overview of the proposed \textbf  {MoLE-Flow} framework for continual anomaly detection on industrial images. Given sequential tasks, the base normalizing flow backbone is learned on the first task and then frozen. For each new task, only lightweight task-specific adapters (WhiteningAdapter, LoRA, DIA) are trained. At inference time, the prototype-based Mahalanobis router assigns each sample to the most relevant expert without requiring task ID.}}{2}{}\protected@file@percent }
-\newlabel{fig:main_figure}{{1}{2}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Overall Architecture}{2}{}\protected@file@percent }
-\newlabel{sec:overview}{{3.1}{2}}
-\newlabel{eq:pipeline}{{1}{2}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Feature Extraction \& Preprocessing}{3}{}\protected@file@percent }
-\newlabel{sec:feature_extraction}{{3.2}{3}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.2.1}Feature Extractor \& Patch Embedding}{3}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.2.2}Positional Encoding}{3}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Task Adapters (Whitening)}{3}{}\protected@file@percent }
-\newlabel{sec:adapters}{{3.3}{3}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.3.1}Task-Agnostic Whitening}{3}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.3.2}Task-Specific De-whitening}{4}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.3.3}Whitening Adapter의 역할}{4}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.4}MoLE-Flow}{4}{}\protected@file@percent }
-\newlabel{sec:moleflow}{{3.4}{4}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.4.1}Spatial Context Mixer}{4}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.4.2}MoLEContextSubnet}{5}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Spatial Structure Recovery:}{5}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Context Extraction \& Adaptive Gating:}{5}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Channel Splitting:}{5}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{LoRA-based Coupling Layer:}{5}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Context-Aware s-network (Scale Prediction):}{6}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Context-Free t-network (Translation Prediction):}{6}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.4.3}Deep Invertible Adapter (DIA)}{6}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.5}Training Objective}{6}{}\protected@file@percent }
-\newlabel{sec:training_objective}{{3.5}{6}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.5.1}Likelihood Calculation}{6}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Transformation Flow:}{7}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Jacobian Accumulation:}{7}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Latent Probability:}{7}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Final Likelihood:}{7}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.5.2}Tail-Aware Loss}{7}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.6}Anomaly Scoring \& Inference}{7}{}\protected@file@percent }
-\newlabel{sec:inference}{{3.6}{7}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.6.1}Step 1: Feature Extraction \& Embedding}{7}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.6.2}Step 2: Task Routing \& Adapter Activation}{8}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.6.3}Step 3: Distribution Mapping via MoLE-Flow}{8}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.6.4}Step 4: Patch-wise Anomaly Scoring}{8}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.6.5}Step 5: Top-K Mean Aggregation}{8}{}\protected@file@percent }
+\newlabel{sec:introduction}{{1}{1}}
+\citation{kirkpatrick2017ewc}
+\citation{li2017lwf}
+\citation{mallya2018packnet}
+\citation{rusu2016progressive}
+\newlabel{eq:forgetting}{{1}{2}}
+\@writefile{toc}{\contentsline {paragraph}{정규화 기반 방법 (Regularization-based):}{2}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{리플레이 기반 방법 (Replay-based):}{2}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{아키텍처 기반 방법 (Architecture-based):}{2}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{격리-효율성 딜레마 (Isolation-Efficiency Dilemma).}{3}{}\protected@file@percent }
+\newlabel{principle:dilemma}{{1}{3}}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces 격리-효율성 딜레마: 기존 방법들은 실용적인 메모리 오버헤드로 완전한 망각 방지(FM=0)를 달성하지 못한다. MVTec-AD (5개 클래스) 파일럿 실험.}}{3}{}\protected@file@percent }
+\newlabel{tab:pilot_dilemma}{{1}{3}}
+\@writefile{toc}{\contentsline {paragraph}{기존 방법들이 완전한 망각 방지를 달성하지 못하는 이유.}{3}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{핵심 통찰: 구조적 특성을 통한 딜레마 해결.}{3}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{핵심 통찰 1: 공유 Base + 분리된 Adapter}{4}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{핵심 통찰 2: 프로토타입 기반 원스테이지 라우팅}{4}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{핵심 통찰 3: 비선형 매니폴드 적응 (DIA)}{4}{}\protected@file@percent }
+\citation{sakurada2014anomaly}
+\citation{an2015variational}
+\citation{gong2019memorizing}
+\citation{cohen2020spade}
+\citation{defard2021padim}
+\citation{roth2022patchcore}
+\citation{rudolph2021differnet}
+\citation{gudovskiy2022cflow}
+\@writefile{toc}{\contentsline {section}{\numberline {2}Related Work}{5}{}\protected@file@percent }
+\newlabel{sec:related_work}{{2}{5}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Anomaly Detection}{5}{}\protected@file@percent }
+\newlabel{sec:related_ad}{{2.1}{5}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {2.1.1}재구성 기반 방법 (Reconstruction-based)}{5}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {2.1.2}특징 임베딩 기반 방법 (Feature Embedding-based)}{5}{}\protected@file@percent }
+\citation{yu2021fastflow}
+\citation{kirkpatrick2017ewc}
+\citation{li2017lwf}
+\citation{rebuffi2017icarl}
+\citation{lopez2017gem}
+\citation{rusu2016progressive}
+\citation{mallya2018packnet}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {2.1.3}밀도 추정 기반 방법 (Density Estimation-based)}{6}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Continual Learning}{6}{}\protected@file@percent }
+\newlabel{sec:related_cl}{{2.2}{6}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {2.2.1}정규화 기반 방법 (Regularization-based)}{6}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {2.2.2}리플레이 기반 방법 (Replay-based)}{6}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {2.2.3}아키텍처 기반 방법 (Architecture-based)}{6}{}\protected@file@percent }
+\citation{hu2022lora}
+\citation{rezende2015variational}
+\citation{jacobs1991adaptive}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {2.2.4}Parameter-Efficient Fine-Tuning (PEFT)}{7}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Normalizing Flows for Anomaly Detection}{7}{}\protected@file@percent }
+\newlabel{sec:related_nf}{{2.3}{7}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.4}Mixture of Experts (MoE)}{7}{}\protected@file@percent }
+\newlabel{sec:related_moe}{{2.4}{7}}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces 산업 이미지에 대한 지속적 이상 탐지를 위한 제안된 \textbf  {MoLE-Flow} 프레임워크 개요. 순차적 작업이 주어지면, 베이스 normalizing flow 백본은 첫 번째 작업에서 학습된 후 동결된다. 각 새로운 작업에 대해 경량의 작업별 어댑터(WhiteningAdapter, LoRA, DIA)만 학습된다. 추론 시, 프로토타입 기반 Mahalanobis 라우터가 Task ID 없이 각 샘플을 가장 관련성 높은 전문가에게 할당한다.}}{8}{}\protected@file@percent }
+\newlabel{fig:main_figure}{{1}{8}}
+\@writefile{toc}{\contentsline {section}{\numberline {3}Proposed Method}{8}{}\protected@file@percent }
+\newlabel{sec:method}{{3}{8}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}MoLE-Flow 아키텍처}{8}{}\protected@file@percent }
+\newlabel{sec:architecture}{{3.1}{8}}
+\newlabel{eq:pipeline}{{6}{9}}
+\@writefile{toc}{\contentsline {paragraph}{표기법.}{9}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Feature Extraction \& Preprocessing}{9}{}\protected@file@percent }
+\newlabel{sec:feature_extraction}{{3.2}{9}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.2.1}Feature Extractor \& Patch Embedding}{9}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.2.2}Positional Encoding}{9}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}핵심 구성요소: 동결 베이스의 경직성 보상}{9}{}\protected@file@percent }
+\newlabel{sec:integral_components}{{3.3}{9}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.3.1}Whitening Adapter (분포 정렬)}{10}{}\protected@file@percent }
+\newlabel{sec:adapters}{{3.3.1}{10}}
+\@writefile{toc}{\contentsline {paragraph}{문제: 입력 인터페이스 불일치.}{10}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{해결책: 분포 정렬.}{10}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.3.2}\textbf  {Task-Agnostic Whitening}}{10}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.3.3}\textbf  {Task-Specific De-whitening}}{11}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{아핀 변환을 사용하는 이유:}{11}{}\protected@file@percent }
+\citation{ioffe2015batchnorm}
+\citation{perez2018film}
+\citation{howard2017mobilenets}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.4}\textbf  {Spatial Context Mixer}}{13}{}\protected@file@percent }
+\newlabel{sec:spatial_mixer}{{3.4}{13}}
+\@writefile{toc}{\contentsline {paragraph}{\textbf  {Mechanism: Gated Depthwise Aggregation}}{13}{}\protected@file@percent }
+\citation{dinh2016realnvp}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.5}\textbf  {MoLE-Flow Architecture}}{14}{}\protected@file@percent }
+\newlabel{sec:moleflow}{{3.5}{14}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.5.1}\textbf  {MoLEContextSubnet: Context-Aware \& Task-Adaptive Design}}{15}{}\protected@file@percent }
+\newlabel{sec:molesubnet}{{3.5.1}{15}}
+\@writefile{toc}{\contentsline {paragraph}{가역성 보장.}{16}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.5.2}Deep Invertible Adapter (비선형 매니폴드 보정)}{17}{}\protected@file@percent }
+\newlabel{sec:dia}{{3.5.2}{17}}
+\@writefile{toc}{\contentsline {paragraph}{문제: 전역 변환의 경직성.}{17}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{해결책: 작업별 가역 보정.}{17}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.6}\textbf  {Training Objective}}{18}{}\protected@file@percent }
+\newlabel{sec:training_objective}{{3.6}{18}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.6.1}\textbf  {Likelihood Calculation}}{18}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.6.2}Tail-Aware Loss (그래디언트 재분배)}{19}{}\protected@file@percent }
+\newlabel{sec:tal}{{3.6.2}{19}}
+\@writefile{toc}{\contentsline {paragraph}{문제: 벌크 영역에서의 그래디언트 집중.}{19}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{해결책: 테일 집중 학습.}{19}{}\protected@file@percent }
+\citation{lee2018mahalanobis}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.7}\textbf  {Task Routing \& Adapter Activation}}{20}{}\protected@file@percent }
+\newlabel{sec:task_routing}{{3.7}{20}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.7.1}\textbf  {Prototype-Based Task Routing}}{20}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{왜 Mahalanobis 거리를 사용하는가?}{21}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.8}\textbf  {Anomaly Scoring \& Inference}}{21}{}\protected@file@percent }
+\newlabel{sec:inference}{{3.8}{21}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.8.1}\textbf  {Step 1: Feature Extraction}}{21}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.8.2}\textbf  {Step 2: Normalizing Flow Transformation}}{21}{}\protected@file@percent }
 \citation{bergmann2019mvtec}
 \citation{zou2022spot}
-\citation{jezek2021deep}
-\@writefile{toc}{\contentsline {paragraph}{Flatten \& Sort:}{9}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Top-K Selection:}{9}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Averaging:}{9}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {4}Experiments}{9}{}\protected@file@percent }
-\newlabel{sec:experiments}{{4}{9}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Experimental Setup}{9}{}\protected@file@percent }
-\newlabel{sec:exp_setup}{{4.1}{9}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.1}Datasets}{9}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.2}Evaluation Metrics}{10}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Detection Metrics:}{10}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Localization Metrics:}{10}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Continual Learning Metrics:}{10}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.3}Continual Learning Scenarios}{10}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Scenario A: Standard 5-Task Protocol}{10}{}\protected@file@percent }
-\citation{li2022dne}
-\citation{lu2024ucad}
-\citation{kirkpatrick2017ewc}
-\citation{li2017lwf}
-\@writefile{toc}{\contentsline {paragraph}{Scenario B: Long Sequence (15-Task)}{11}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Scenario C: Class Order Sensitivity}{11}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Scenario D: Task 0 Dependency Analysis (Critical)}{11}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.4}Baseline Methods}{11}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Continual Anomaly Detection Methods:}{11}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Continual Learning + AD Adaptation:}{11}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Upper/Lower Bounds:}{11}{}\protected@file@percent }
-\citation{kirkpatrick2017ewc}
-\citation{li2017lwf}
-\citation{li2022dne}
-\citation{lu2024ucad}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.5}Implementation Details}{12}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Network Configuration:}{12}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Training Configuration:}{12}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Main Results}{12}{}\protected@file@percent }
-\newlabel{sec:main_results}{{4.2}{12}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.2.1}Comparison with State-of-the-Art Methods}{12}{}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces MVTec AD에서의 주요 방법론 비교 (5-Task Protocol). $\uparrow $: 높을수록 좋음, $\downarrow $: 낮을수록 좋음. 최고 성능은 \textbf  {굵게}, 차선은 \underline  {밑줄}로 표시.}}{13}{}\protected@file@percent }
-\newlabel{tab:main_comparison}{{1}{13}}
-\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces 작업별 Image AUROC 성능 변화. 각 행은 해당 Task까지 학습 후 성능을 나타냄.}}{13}{}\protected@file@percent }
-\newlabel{tab:per_task}{{2}{13}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.2.2}Per-Task Performance Analysis}{13}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.2.3}Cross-Dataset Evaluation}{13}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.2.4}Task-Aware vs. Task-Agnostic Inference}{13}{}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Cross-Dataset 평가 결과}}{14}{}\protected@file@percent }
-\newlabel{tab:cross_dataset}{{3}{14}}
-\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Task-Aware (Oracle) vs. Task-Agnostic (Router) 성능 비교}}{14}{}\protected@file@percent }
-\newlabel{tab:task_aware}{{4}{14}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.2.5}Storage Efficiency Analysis}{14}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Ablation Study}{14}{}\protected@file@percent }
-\newlabel{sec:ablation}{{4.3}{14}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.3.1}Incremental Component Analysis}{14}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.3.2}Component Removal Ablation}{14}{}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Storage Efficiency 비교 (15 Tasks 기준)}}{15}{}\protected@file@percent }
-\newlabel{tab:storage}{{5}{15}}
-\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces Incremental Component Analysis. Config 토글과 1:1 매핑.}}{15}{}\protected@file@percent }
-\newlabel{tab:ablation_incremental}{{6}{15}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.3.3}DIA vs. LoRA Rank Trade-off}{15}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.3.4}Module Design Choice Ablation}{15}{}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces Component Removal Ablation. $\Delta $는 Full Model 대비 변화량.}}{16}{}\protected@file@percent }
-\newlabel{tab:ablation_component}{{7}{16}}
-\@writefile{lot}{\contentsline {table}{\numberline {8}{\ignorespaces DIA vs. LoRA Rank: 동일 파라미터 예산 하 비교}}{16}{}\protected@file@percent }
-\newlabel{tab:dia_vs_lora}{{8}{16}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.3.5}Hyperparameter Sensitivity Analysis}{16}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{(a) DIA Blocks:}{16}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{(b) LoRA Rank:}{16}{}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {9}{\ignorespaces 모듈 설계 선택 비교}}{17}{}\protected@file@percent }
-\newlabel{tab:ablation_design}{{9}{17}}
-\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Hyperparameter Sensitivity Analysis. (a) DIA 블록 수, (b) LoRA Rank, (c) Tail-Aware Loss 가중치, (d) Coupling Layer 수.}}{17}{}\protected@file@percent }
-\newlabel{fig:hyperparam}{{2}{17}}
-\@writefile{toc}{\contentsline {paragraph}{(c) Tail-Aware Loss Weight ($\lambda $):}{17}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{(d) Coupling Layers:}{17}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.4}Continual Learning Analysis}{17}{}\protected@file@percent }
-\newlabel{sec:cl_analysis}{{4.4}{17}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.4.1}Forgetting Analysis}{17}{}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Forgetting Analysis. (a) Task 0의 성능이 후속 작업 학습에 따라 변화하는 양상. (b) 작업 간 거리에 따른 평균 망각 정도.}}{18}{}\protected@file@percent }
-\newlabel{fig:forgetting}{{3}{18}}
-\@writefile{lot}{\contentsline {table}{\numberline {10}{\ignorespaces Transfer Analysis 결과}}{18}{}\protected@file@percent }
-\newlabel{tab:transfer}{{10}{18}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.4.2}Forward/Backward Transfer Analysis}{18}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.4.3}Router Performance Analysis}{18}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.4.4}Performance Drop by Router Accuracy}{18}{}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {11}{\ignorespaces Router Performance Analysis}}{19}{}\protected@file@percent }
-\newlabel{tab:router}{{11}{19}}
-\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Performance vs. Number of Tasks. X축: Task 개수 (1$\sim $15), Y축: Image AUROC. Line 1: Ideal (Task ID Given, Oracle), Line 2: MoLE-Flow (With Router). Gap이 작을수록 Router가 견고함을 의미.}}{19}{}\protected@file@percent }
-\newlabel{fig:router_scalability}{{4}{19}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.4.5}Class Order Sensitivity}{19}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.5}Representation Analysis}{19}{}\protected@file@percent }
-\newlabel{sec:representation}{{4.5}{19}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.5.1}Router Decision Boundary Visualization}{19}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.5.2}Latent Space Visualization}{19}{}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {12}{\ignorespaces Class Order Sensitivity (5개 Random Seed)}}{20}{}\protected@file@percent }
-\newlabel{tab:order}{{12}{20}}
-\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Router decision boundary evolution. 각 Task의 prototype (centroid)과 decision boundary (Mahalanobis ellipse)를 시각화. 색상은 Task ID를 나타냄.}}{20}{}\protected@file@percent }
-\newlabel{fig:router_boundary}{{5}{20}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.5.3}Latent Distribution Stability (Forgetting Visualization)}{20}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.5.4}Distribution Quality Analysis}{20}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.6}Qualitative Results}{20}{}\protected@file@percent }
-\newlabel{sec:qualitative}{{4.6}{20}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.6.1}Anomaly Localization Visualization}{20}{}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces Latent space ($\mathbf  {z}$) t-SNE visualization. 색상은 작업을, 마커 모양은 정상(원)/이상(삼각형)을 구분.}}{21}{}\protected@file@percent }
-\newlabel{fig:tsne}{{6}{21}}
-\@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces Latent distribution stability for Task 0. (a) Task 0 학습 직후의 $\mathbf  {z}$ 분포. (b) Task 14까지 학습 후 Task 0 데이터의 $\mathbf  {z}$ 분포. 두 분포가 유사하면 Forgetting이 없음을 의미.}}{21}{}\protected@file@percent }
-\newlabel{fig:latent_stability}{{7}{21}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.6.2}Task-Aware vs. Task-Agnostic Anomaly Map Comparison}{21}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.6.3}Component Effect Visualization}{21}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.6.4}Failure Case Analysis}{21}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.7}Computational Efficiency}{21}{}\protected@file@percent }
-\newlabel{sec:efficiency}{{4.7}{21}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.8.3}\textbf  {Step 3: Anomaly Score Computation}}{22}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4}실험}{22}{}\protected@file@percent }
+\newlabel{sec:experiments}{{4}{22}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}실험 설정}{22}{}\protected@file@percent }
+\newlabel{sec:exp_setup}{{4.1}{22}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.1}데이터셋}{22}{}\protected@file@percent }
+\citation{roth2022patchcore}
+\citation{cadic2024}
+\citation{iuf2023}
+\citation{dne2023}
+\citation{ucad2024}
+\citation{dfm2024}
+\citation{cadic2024}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.2}평가 지표}{23}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.3}비교 방법}{23}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.4}구현 세부사항}{23}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces MoLE-Flow 구성 (MoLE6-DIA2).}}{24}{}\protected@file@percent }
+\newlabel{tab:config}{{2}{24}}
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces MVTec AD에서의 Image AUROC 비교 (15개 카테고리, 1$\times $1 CL 시나리오). Joint 방법은 상한선 역할을 한다 (설계상 망각 없음). FT 방법들은 파멸적 망각을 보여준다. 최고 CL 방법 결과는 \textbf  {굵게} 표시. FM: 망각 측정치 (낮을수록 좋음).}}{24}{}\protected@file@percent }
+\newlabel{tab:mvtec_iauc}{{3}{24}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}주요 결과}{24}{}\protected@file@percent }
+\newlabel{sec:main_results}{{4.2}{24}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.2.1}MVTec-AD 결과}{24}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces MVTec AD에서의 Pixel AP 비교 (15개 카테고리, 1$\times $1 CL 시나리오). Pixel AP는 심한 클래스 불균형에서 위치 추정 품질을 더 잘 반영한다. 최고 CL 방법 결과는 \textbf  {굵게} 표시.}}{25}{}\protected@file@percent }
+\newlabel{tab:mvtec_pap}{{4}{25}}
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces VisA에서의 Image AUROC 비교 (12개 카테고리, 1$\times $1 CL 시나리오). Joint 방법은 상한선 역할을 한다. FT 방법들은 파멸적 망각을 보여준다. 최고 CL 방법 결과는 \textbf  {굵게} 표시.}}{25}{}\protected@file@percent }
+\newlabel{tab:visa_iauc}{{5}{25}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.2.2}VisA 데이터셋 결과}{25}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}절제 연구}{25}{}\protected@file@percent }
+\newlabel{sec:ablation}{{4.3}{25}}
+\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces VisA에서의 Pixel AP 비교 (12개 카테고리, 1$\times $1 CL 시나리오). 최고 CL 방법 결과는 \textbf  {굵게} 표시.}}{26}{}\protected@file@percent }
+\newlabel{tab:visa_pap}{{6}{26}}
+\@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces 구성요소 절제 연구 (MoLE6+DIA2 기준). $\Delta $는 전체 모델로부터의 변화를 나타낸다.}}{26}{}\protected@file@percent }
+\newlabel{tab:ablation_component}{{7}{26}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.3.1}구성요소 절제}{26}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.3.2}상호작용 효과 분석: 핵심 vs.\ 범용 구성요소}{26}{}\protected@file@percent }
+\newlabel{sec:interaction_effect}{{4.3.2}{26}}
+\@writefile{lot}{\contentsline {table}{\numberline {8}{\ignorespaces 상호작용 효과 분석: 이원 ANOVA 결과. \emph  {핵심} 구성요소는 동결 베이스 조건과 유의미한 상호작용($p < 0.05$)을 보인다.}}{27}{}\protected@file@percent }
+\newlabel{tab:interaction_effect}{{8}{27}}
+\@writefile{toc}{\contentsline {paragraph}{주요 발견.}{27}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.3.3}아키텍처 깊이 분석}{27}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {9}{\ignorespaces 아키텍처 깊이 분석: MoLE vs DIA 블록 조합.}}{28}{}\protected@file@percent }
+\newlabel{tab:architecture}{{9}{28}}
+\@writefile{lot}{\contentsline {table}{\numberline {10}{\ignorespaces 하이퍼파라미터 민감도 요약.}}{28}{}\protected@file@percent }
+\newlabel{tab:hyperparam_summary}{{10}{28}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.3.4}하이퍼파라미터 민감도}{28}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.3.5}학습 전략 절제}{28}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {11}{\ignorespaces Tail-Aware Loss 가중치 ($\lambda _{\text  {tail}}$) 민감도.}}{29}{}\protected@file@percent }
+\newlabel{tab:tail_weight}{{11}{29}}
+\@writefile{lot}{\contentsline {table}{\numberline {12}{\ignorespaces Tail top-k 비율 민감도. 0.02에서 최적; 높은 비율은 성능 저하.}}{29}{}\protected@file@percent }
+\newlabel{tab:tail_topk}{{12}{29}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.4}지속 학습 분석}{29}{}\protected@file@percent }
+\newlabel{sec:cl_analysis}{{4.4}{29}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.4.1}망각 분석}{29}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.4.2}라우팅 정확도}{29}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.4.3}데이터셋 간 요약}{29}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {13}{\ignorespaces Spatial context 커널 크기 민감도. 큰 커널은 심각한 성능 저하를 유발.}}{30}{}\protected@file@percent }
+\newlabel{tab:spatial_kernel}{{13}{30}}
+\@writefile{lot}{\contentsline {table}{\numberline {14}{\ignorespaces 학습 전략 비교. Base Frozen: Task 0 이후 베이스 가중치 동결. Sequential: 동결 없음. Complete Separated: 작업당 완전히 독립적인 모델.}}{30}{}\protected@file@percent }
+\newlabel{tab:training_strategy}{{14}{30}}
+\@writefile{toc}{\contentsline {section}{\numberline {5}결론}{30}{}\protected@file@percent }
+\newlabel{sec:conclusion}{{5}{30}}
 \bibstyle{elsarticle-harv}
 \bibdata{Reference}
 \bibcite{bergmann2019mvtec}{{1}{2019}{{Bergmann et~al.}}{{Bergmann, Fauser, Sattlegger and Steger}}}
-\@writefile{lot}{\contentsline {table}{\numberline {13}{\ignorespaces Latent Distribution Quality Analysis}}{22}{}\protected@file@percent }
-\newlabel{tab:distribution}{{13}{22}}
-\@writefile{lof}{\contentsline {figure}{\numberline {8}{\ignorespaces Qualitative anomaly localization results. 각 행: 입력 이미지, Ground Truth, MoLE-Flow 히트맵, DNE 히트맵, UCAD 히트맵. 결함 유형: (a) Scratch (Screw), (b) Structural defect (Transistor), (c) Surface defect (Leather), (d) Texture anomaly (Carpet).}}{22}{}\protected@file@percent }
-\newlabel{fig:heatmap}{{8}{22}}
-\@writefile{toc}{\contentsline {section}{\numberline {5}Conclusion}{22}{}\protected@file@percent }
-\newlabel{sec:conclusion}{{5}{22}}
-\@writefile{toc}{\contentsline {paragraph}{Limitations and Future Work:}{22}{}\protected@file@percent }
-\bibcite{jezek2021deep}{{2}{2021}{{Je{\v {z}}ek et~al.}}{{Je{\v {z}}ek, Jonak, Burget, Dutta et~al.}}}
-\bibcite{kirkpatrick2017ewc}{{3}{2017}{{Kirkpatrick et~al.}}{{Kirkpatrick, Pascanu, Rabinowitz, Veness, Desjardins, Rusu, Milan, Quan, Ramalho, Grabska-Barwinska et~al.}}}
-\bibcite{li2022dne}{{4}{2022}{{Li et~al.}}{{Li, Lin, Tsai, Lin, Yang and Kira}}}
-\bibcite{li2017lwf}{{5}{2017}{{Li and Hoiem}}{{}}}
-\bibcite{lu2024ucad}{{6}{2024}{{Lu et~al.}}{{Lu, Xie, Wang, Zhang, Dai and Wang}}}
-\bibcite{zou2022spot}{{7}{2022}{{Zou et~al.}}{{Zou, Jeong, Pemula, Zhang and Dabeer}}}
-\@writefile{lof}{\contentsline {figure}{\numberline {9}{\ignorespaces Task-Aware vs. Task-Agnostic anomaly maps. (a) Input, (b) GT, (c) Oracle (correct task), (d) Router prediction, (e) Wrong task (worst case). Router가 올바른 전문가를 선택하면 Oracle과 거의 동일한 결과를 보임.}}{23}{}\protected@file@percent }
-\newlabel{fig:task_aware_compare}{{9}{23}}
-\@writefile{lof}{\contentsline {figure}{\numberline {10}{\ignorespaces Component ablation visualization. (a) Full Model, (b) w/o DIA, (c) w/o WhiteningAdapter, (d) w/o Spatial Context.}}{23}{}\protected@file@percent }
-\newlabel{fig:component_effect}{{10}{23}}
-\@writefile{toc}{\contentsline {section}{\numberline {6}Appendix}{23}{}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {11}{\ignorespaces Failure case analysis. (a) 저대비 미세 결함 미탐지, (b) 정상 변이를 이상으로 오탐지, (c) 회전 변형에 민감한 탐지.}}{24}{}\protected@file@percent }
-\newlabel{fig:failure}{{11}{24}}
-\@writefile{lot}{\contentsline {table}{\numberline {14}{\ignorespaces Failure Case 분류 및 원인 분석}}{24}{}\protected@file@percent }
-\newlabel{tab:failure}{{14}{24}}
-\@writefile{lot}{\contentsline {table}{\numberline {15}{\ignorespaces Computational Efficiency 비교}}{24}{}\protected@file@percent }
-\newlabel{tab:efficiency}{{15}{24}}
-\gdef \@abspage@last{24}
+\bibcite{dinh2016realnvp}{{2}{2017}{{Dinh et~al.}}{{Dinh, Sohl-Dickstein and Bengio}}}
+\bibcite{gudovskiy2022cflow}{{3}{2022}{{Gudovskiy et~al.}}{{Gudovskiy, Ishizaka and Kozuka}}}
+\bibcite{howard2017mobilenets}{{4}{2017}{{Howard et~al.}}{{Howard, Zhu, Chen, Kalenichenko, Wang, Weyand, Andreetto and Adam}}}
+\bibcite{hu2022lora}{{5}{2022}{{Hu et~al.}}{{Hu, Shen, Wallis, Allen-Zhu, Li, Wang, Wang and Chen}}}
+\bibcite{ioffe2015batchnorm}{{6}{2015}{{Ioffe and Szegedy}}{{}}}
+\bibcite{kirkpatrick2017ewc}{{7}{2017}{{Kirkpatrick et~al.}}{{Kirkpatrick, Pascanu, Rabinowitz, Veness, Desjardins, Rusu, Milan, Quan, Ramalho, Grabska-Barwinska et~al.}}}
+\@writefile{lot}{\contentsline {table}{\numberline {15}{\ignorespaces MVTec AD에서의 망각 분석. 성능은 각 작업 학습 직후와 15개 작업 전체 완료 후 측정됨.}}{31}{}\protected@file@percent }
+\newlabel{tab:forgetting}{{15}{31}}
+\@writefile{lot}{\contentsline {table}{\numberline {16}{\ignorespaces 데이터셋별 성능 요약.}}{31}{}\protected@file@percent }
+\newlabel{tab:dataset_summary}{{16}{31}}
+\@writefile{toc}{\contentsline {paragraph}{Limitations and Future Work:}{31}{}\protected@file@percent }
+\bibcite{lee2018mahalanobis}{{8}{2018}{{Lee et~al.}}{{Lee, Lee, Lee and Shin}}}
+\bibcite{li2017lwf}{{9}{2017}{{Li and Hoiem}}{{}}}
+\bibcite{perez2018film}{{10}{2018}{{Perez et~al.}}{{Perez, Strub, De~Vries, Dumoulin and Courville}}}
+\bibcite{roth2022patchcore}{{11}{2022}{{Roth et~al.}}{{Roth, Pemula, Zepeda, Sch{\"o}lkopf, Brox and Gehler}}}
+\bibcite{zou2022spot}{{12}{2022}{{Zou et~al.}}{{Zou, Jeong, Pemula, Zhang and Dabeer}}}
+\@writefile{toc}{\contentsline {section}{\numberline {6}Appendix}{32}{}\protected@file@percent }
+\gdef \@abspage@last{32}
