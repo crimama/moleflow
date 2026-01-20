@@ -1,4 +1,0 @@
-class_name,task_id,img_auc,pixel_auc,is_current_task,routing_accuracy
-screw,0,0.4722279155564665,0.875489976448245,True,1.0
-Average,,0.4722279155564665,0.875489976448245,,1.0
-Task_0_Average,0,0.4722279155564665,0.875489976448245,,1.0

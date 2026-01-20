@@ -1,8 +1,0 @@
-Task ID,Class Name,Routing Acc (%),Image AUC,Pixel AUC,Image AP,Pixel AP
-0,bracket_black,100.00,0.7427,0.9362,0.8296,0.0108
-1,bracket_brown,98.70,1.0000,0.8466,1.0000,0.0133
-2,bracket_white,90.00,0.7844,0.9250,0.8199,0.0020
-3,connector,100.00,0.9929,0.9880,0.9846,0.2948
-4,metal_plate,100.00,1.0000,0.9872,1.0000,0.9003
-5,tubes,100.00,0.8913,0.9916,0.9609,0.5127
-Mean,Overall,98.12,0.9019*,0.9458*,0.9325*,0.2890*

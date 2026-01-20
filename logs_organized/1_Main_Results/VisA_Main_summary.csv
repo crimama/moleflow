@@ -1,9 +1,0 @@
-experiment_name,image_auc,pixel_auc,pixel_ap,routing_acc,backbone,num_epochs,lr,lora_rank,num_coupling_layers,dia_n_blocks,tail_weight,lambda_logdet,num_tasks
-VISA-A1-ViT-DIA10-C14-LoRA128-160ep,0.8597,0.8775,0.8841,99.89,vit_base_patch16_224.augreg2_in21k_ft_in1k,160,7e-05,128,14,N/A,N/A,N/A,12
-VISA-A2-ViT-TopK5-DIA8-C12-180ep,0.9052,0.9433,0.9131,99.89,vit_base_patch16_224.augreg2_in21k_ft_in1k,180,6e-05,128,12,N/A,N/A,N/A,12
-VISA-A3-ViT-LoRA192-DIA8-C12,0.8781,0.9522,0.8923,99.89,vit_base_patch16_224.augreg2_in21k_ft_in1k,120,8e-05,192,12,N/A,N/A,N/A,12
-VISA-A4-ViT-DIA9-C13-lr9e-5,0.8603,0.8774,0.8849,99.89,vit_base_patch16_224.augreg2_in21k_ft_in1k,130,9e-05,128,13,N/A,N/A,N/A,12
-VISA-B1-ViT-LogDet2e-4-ScaleK7-TailW0.6-DIA4,0.9000,0.9238,0.9087,99.89,vit_base_patch16_224.augreg2_in21k_ft_in1k,100,0.0001,64,8,N/A,N/A,N/A,12
-VISA-B2-WRN50-140ep-LoRA128-LogDet2e-4-ScaleK7,0.8512,0.9065,0.8655,100.00,wide_resnet50_2,140,0.0002,128,8,N/A,N/A,N/A,12
-VISA-B3-WRN50-TailW0.5-TailTopK0.01-ScaleK8,N/A,N/A,N/A,N/A,wide_resnet50_2,100,0.0002,64,8,N/A,N/A,N/A,12
-VISA-B4-WRN50-DIA6-MoLE10-LogDet2e-4-ScaleK7,0.8714,0.9278,0.8805,99.94,wide_resnet50_2,100,0.0002,64,10,N/A,N/A,N/A,12

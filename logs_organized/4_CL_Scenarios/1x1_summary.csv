@@ -1,4 +1,0 @@
-experiment_name,image_auc,pixel_auc,pixel_ap,routing_acc,backbone,num_epochs,lr,lora_rank,num_coupling_layers,dia_n_blocks,tail_weight,lambda_logdet,num_tasks
-MVTec-WRN50-CL-1x1-Seed0,0.9810,0.9779,0.9921,100.00,wide_resnet50_2,60,0.0003,64,8,N/A,N/A,N/A,15
-MVTec-WRN50-CL-1x1-Seed123,0.9816,0.9786,0.9923,100.00,wide_resnet50_2,60,0.0003,64,8,N/A,N/A,N/A,15
-MVTec-WRN50-CL-1x1-Seed42,0.9822,0.9781,0.9925,100.00,wide_resnet50_2,60,0.0003,64,8,N/A,N/A,N/A,15

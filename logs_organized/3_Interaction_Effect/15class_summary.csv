@@ -1,9 +1,0 @@
-experiment_name,image_auc,pixel_auc,pixel_ap,routing_acc,backbone,num_epochs,lr,lora_rank,num_coupling_layers,dia_n_blocks,tail_weight,lambda_logdet,num_tasks
-IE15_Frozen_Baseline,0.8412,0.9094,0.9271,100.00,wide_resnet50_2,60,0.0003,64,6,N/A,N/A,N/A,15
-IE15_Frozen_DIA,0.9564,0.9727,0.9829,100.00,wide_resnet50_2,60,0.0003,64,6,N/A,N/A,N/A,15
-IE15_Frozen_TAL,0.9716,0.9712,0.9887,100.00,wide_resnet50_2,60,0.0003,64,6,N/A,N/A,N/A,15
-IE15_Frozen_WA,0.8293,0.8833,0.9215,100.00,wide_resnet50_2,60,0.0003,64,6,N/A,N/A,N/A,15
-IE15_Trainable_Baseline,0.6813,0.6408,0.8341,100.00,wide_resnet50_2,60,0.0003,64,6,N/A,N/A,N/A,15
-IE15_Trainable_DIA,0.7506,0.6354,0.8753,100.00,wide_resnet50_2,60,0.0003,64,6,N/A,N/A,N/A,15
-IE15_Trainable_TAL,0.6691,0.7634,0.8354,100.00,wide_resnet50_2,60,0.0003,64,6,N/A,N/A,N/A,15
-IE15_Trainable_WA,0.5179,0.5795,0.7506,100.00,wide_resnet50_2,60,0.0003,64,6,N/A,N/A,N/A,15

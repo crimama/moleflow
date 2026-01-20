@@ -7509,3 +7509,65 @@ Energy at r=64: < 90%
 - 분석 스크립트: `/Volume/MoLeFlow/scripts/analyze_svd_full_finetune.py`
 - 기존 LoRA 분석: `/Volume/MoLeFlow/scripts/analyze_lora_rank.py` (학습된 LoRA 가중치 분석)
 
+
+---
+
+## BWT 검증 실험 완료 (2026-01-20)
+
+### 실험 목적
+MoLE-Flow의 "완전 망각 제로" 주장을 Fine-tune 및 EWC 베이스라인과 비교하여 검증
+
+### 실험 구성
+- **태스크**: MVTec-AD 15개 클래스 전체 (알파벳순)
+- **에폭**: 60 에폭/태스크
+- **백본**: WideResNet-50-2 (고정)
+- **평가**: 각 태스크 학습 후 모든 이전 태스크 성능 측정
+
+### 결과 요약
+
+| 방법 | Final I-AUC | BWT (I-AUC) | FM (I-AUC) | 해석 |
+|------|-------------|------------|------------|------|
+| **MoLE-Flow** | **98.05%** | **0.00%** | **0.00%** | 완전 망각 제로 |
+| Fine-tune | 63.39% | -17.30% | 21.33% | 파국적 망각 |
+| EWC | 63.67% | -9.25% | 16.26% | 부분적 완화 |
+
+### Fine-tune 상세 결과
+- 최악의 망각: leather (94.16% → 34.14%, BWT = -60.02%)
+- bottle: 97.62% → 66.19% (BWT = -31.43%)
+- tile: 99.39% → 58.12% (BWT = -41.27%)
+
+### EWC 상세 결과
+- 최악의 망각: bottle (97.62% → 27.46%, BWT = -70.16%)
+- hazelnut: 95.11% → 85.07% (BWT = -10.04%)
+- 긍정적 전이: wood (96.84% → 98.42%, BWT = +1.58%)
+
+### 핵심 발견
+1. **MoLE-Flow의 BWT = 0.0000** 확인 (구조적 보장)
+2. **Fine-tune**: 심각한 파국적 망각 (평균 -17.30%)
+3. **EWC**: Fine-tune보다 나으나 여전히 상당한 망각 (-9.25%)
+4. **EWC 특이 현상**: 일부 태스크에서 Fine-tune보다 심한 망각 (bottle: -70.16% vs -31.43%)
+
+### 6-task Architecture 비교 (확장)
+
+| 아키텍처 | Final I-AUC | Avg FM | 라우팅 |
+|----------|-------------|--------|--------|
+| **NF (MoLE-Flow)** | **98.62%** | **0.00%** | 100% |
+| VAE | 67.39% | -0.89% | N/A |
+| AE | 64.75% | +0.58% | N/A |
+| T-S | 54.54% | **+24.08%** | N/A |
+
+### T-S의 파국적 망각 상세
+- leather: 99.25% → 34.34% (FM = +64.91%)
+- bottle: 91.51% → 47.14% (FM = +44.37%)
+
+### 결론
+실험 결과는 MoLE-Flow의 핵심 주장을 검증:
+1. **C1 (AFP)**: NF만이 파라미터 분해를 통한 완전 망각 제로 달성
+2. **C2 (구조적 필요성)**: 다른 아키텍처(T-S, AE, VAE)는 분해 전략 적용 시 실패
+
+### 로그 파일 위치
+- Fine-tune: `logs/finetune_baseline.log`
+- EWC: `logs/ewc_baseline.log`
+- 6-task 비교: `logs/6tasks_arch_comparison.log`
+- NF 참조: `logs/PilotExperiment/6tasks_architecture_comparison_*/NF_reference/`
+

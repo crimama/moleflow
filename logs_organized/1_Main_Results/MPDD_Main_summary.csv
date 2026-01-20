@@ -1,2 +1,0 @@
-experiment_name,image_auc,pixel_auc,pixel_ap,routing_acc,backbone,num_epochs,lr,lora_rank,num_coupling_layers,dia_n_blocks,tail_weight,lambda_logdet,num_tasks
-MPDD-WRN50-60ep-lr2e4-dia4,0.9019,0.9458,0.9325,98.12,wide_resnet50_2,60,0.0002,64,8,N/A,N/A,N/A,6
