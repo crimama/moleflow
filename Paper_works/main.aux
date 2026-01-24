@@ -27,7 +27,7 @@
 \@writefile{toc}{\contentsline {paragraph}{핵심 통찰: 구조적 특성을 통한 딜레마 해결.}{3}{}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{핵심 통찰 1: 공유 Base + 분리된 Adapter}{4}{}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{핵심 통찰 2: 프로토타입 기반 원스테이지 라우팅}{4}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{핵심 통찰 3: 비선형 매니폴드 적응 (DIA)}{4}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{핵심 통찰 3: 비선형 매니폴드 적응 (ACL)}{4}{}\protected@file@percent }
 \citation{sakurada2014anomaly}
 \citation{an2015variational}
 \citation{gong2019memorizing}
@@ -63,11 +63,11 @@
 \newlabel{sec:related_nf}{{2.3}{7}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {2.4}Mixture of Experts (MoE)}{7}{}\protected@file@percent }
 \newlabel{sec:related_moe}{{2.4}{7}}
-\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces 산업 이미지에 대한 지속적 이상 탐지를 위한 제안된 \textbf  {MoLE-Flow} 프레임워크 개요. 순차적 작업이 주어지면, 베이스 normalizing flow 백본은 첫 번째 작업에서 학습된 후 동결된다. 각 새로운 작업에 대해 경량의 작업별 어댑터(WhiteningAdapter, LoRA, DIA)만 학습된다. 추론 시, 프로토타입 기반 Mahalanobis 라우터가 Task ID 없이 각 샘플을 가장 관련성 높은 전문가에게 할당한다.}}{8}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces 산업 이미지에 대한 지속적 이상 탐지를 위한 제안된 \textbf  {DecoFlow} 프레임워크 개요. 순차적 작업이 주어지면, 베이스 normalizing flow 백본은 첫 번째 작업에서 학습된 후 동결된다. 각 새로운 작업에 대해 경량의 작업별 어댑터(WhiteningAdapter, LoRA, ACL)만 학습된다. 추론 시, 프로토타입 기반 Mahalanobis 라우터가 Task ID 없이 각 샘플을 가장 관련성 높은 전문가에게 할당한다.}}{8}{}\protected@file@percent }
 \newlabel{fig:main_figure}{{1}{8}}
 \@writefile{toc}{\contentsline {section}{\numberline {3}Proposed Method}{8}{}\protected@file@percent }
 \newlabel{sec:method}{{3}{8}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}MoLE-Flow 아키텍처}{8}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}DecoFlow 아키텍처}{8}{}\protected@file@percent }
 \newlabel{sec:architecture}{{3.1}{8}}
 \newlabel{eq:pipeline}{{6}{9}}
 \@writefile{toc}{\contentsline {paragraph}{표기법.}{9}{}\protected@file@percent }
@@ -77,7 +77,7 @@
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {3.2.2}Positional Encoding}{9}{}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {3.3}핵심 구성요소: 동결 베이스의 경직성 보상}{9}{}\protected@file@percent }
 \newlabel{sec:integral_components}{{3.3}{9}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.3.1}Whitening Adapter (분포 정렬)}{10}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.3.1}General Distribution Adaptation (분포 정렬)}{10}{}\protected@file@percent }
 \newlabel{sec:adapters}{{3.3.1}{10}}
 \@writefile{toc}{\contentsline {paragraph}{문제: 입력 인터페이스 불일치.}{10}{}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{해결책: 분포 정렬.}{10}{}\protected@file@percent }
@@ -91,12 +91,12 @@
 \newlabel{sec:spatial_mixer}{{3.4}{13}}
 \@writefile{toc}{\contentsline {paragraph}{\textbf  {Mechanism: Gated Depthwise Aggregation}}{13}{}\protected@file@percent }
 \citation{dinh2016realnvp}
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.5}\textbf  {MoLE-Flow Architecture}}{14}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.5}\textbf  {DecoFlow Architecture}}{14}{}\protected@file@percent }
 \newlabel{sec:moleflow}{{3.5}{14}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {3.5.1}\textbf  {MoLEContextSubnet: Context-Aware \& Task-Adaptive Design}}{15}{}\protected@file@percent }
 \newlabel{sec:molesubnet}{{3.5.1}{15}}
 \@writefile{toc}{\contentsline {paragraph}{가역성 보장.}{16}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.5.2}Deep Invertible Adapter (비선형 매니폴드 보정)}{17}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.5.2}Affine Coupling Layer (비선형 매니폴드 보정)}{17}{}\protected@file@percent }
 \newlabel{sec:dia}{{3.5.2}{17}}
 \@writefile{toc}{\contentsline {paragraph}{문제: 전역 변환의 경직성.}{17}{}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{해결책: 작업별 가역 보정.}{17}{}\protected@file@percent }
@@ -134,7 +134,7 @@
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.2}평가 지표}{23}{}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.3}비교 방법}{23}{}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.4}구현 세부사항}{23}{}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces MoLE-Flow 구성 (MoLE6-DIA2).}}{24}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces DecoFlow 구성 (MoLE6-DIA2).}}{24}{}\protected@file@percent }
 \newlabel{tab:config}{{2}{24}}
 \@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces MVTec AD에서의 Image AUROC 비교 (15개 카테고리, 1$\times $1 CL 시나리오). Joint 방법은 상한선 역할을 한다 (설계상 망각 없음). FT 방법들은 파멸적 망각을 보여준다. 최고 CL 방법 결과는 \textbf  {굵게} 표시. FM: 망각 측정치 (낮을수록 좋음).}}{24}{}\protected@file@percent }
 \newlabel{tab:mvtec_iauc}{{3}{24}}
@@ -159,7 +159,7 @@
 \newlabel{tab:interaction_effect}{{8}{27}}
 \@writefile{toc}{\contentsline {paragraph}{주요 발견.}{27}{}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {4.3.3}아키텍처 깊이 분석}{27}{}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {9}{\ignorespaces 아키텍처 깊이 분석: MoLE vs DIA 블록 조합.}}{28}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {9}{\ignorespaces 아키텍처 깊이 분석: MoLE vs ACL 블록 조합.}}{28}{}\protected@file@percent }
 \newlabel{tab:architecture}{{9}{28}}
 \@writefile{lot}{\contentsline {table}{\numberline {10}{\ignorespaces 하이퍼파라미터 민감도 요약.}}{28}{}\protected@file@percent }
 \newlabel{tab:hyperparam_summary}{{10}{28}}

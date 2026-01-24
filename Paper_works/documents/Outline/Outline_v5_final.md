@@ -32,14 +32,14 @@
 
 ## Abstract
 
-Continual anomaly detection faces a critical challenge: Normalizing Flows (NF) must precisely model probability densities, making them highly sensitive to parameter interference from sequential task learning. We present **DeCoFlow**, a framework that achieves **mathematically guaranteed zero forgetting** by leveraging a novel reinterpretation of NF's Arbitrary Function Property (AFP). While AFP has traditionally been viewed as enabling expressive transformations, we demonstrate it provides a **structural foundation for parameter isolation**---coupling layer subnets can be decomposed into frozen base weights plus task-specific LoRA adapters without compromising invertibility or likelihood tractability.
+Continual anomaly detection faces a critical challenge: Normalizing Flows (NF) must precisely model probability densities, making them highly sensitive to parameter interference from sequential task learning. We present **DeCoFlow**, a framework that achieves **complete architectural parameter isolation** by leveraging a novel reinterpretation of NF's Arbitrary Function Property (AFP). While AFP has traditionally been viewed as enabling expressive transformations, we demonstrate it provides a **structural foundation for safe parameter decomposition**---coupling layer subnets can be decomposed into frozen base weights plus task-specific LoRA adapters without compromising invertibility or likelihood tractability.
 
 **Key Contributions**:
-1. DeCoFlow is the **first framework to enable exact zero forgetting** (FM=0.0%, BWT=0.0%) in continual anomaly detection through principled architectural decomposition---not forgetting *mitigation*, but forgetting *elimination*.
-2. We provide **formal theoretical guarantees** (Proposition 1) proving that parameter isolation under AFP ensures zero backward interference, elevating this from empirical observation to mathematical certainty.
-3. Comprehensive validation on **MVTec-AD and ViSA**, the definitive benchmarks covering 27 product categories spanning textures, objects, and complex PCB structures, demonstrates both the method's effectiveness and its generalization across industrial domains.
+1. **Novel Reinterpretation of AFP for Parameter Decomposition**: We reinterpret the Arbitrary Function Property as a structural foundation enabling safe parameter isolation in continual learning---the first principled approach to apply PEFT methods within density estimation models while preserving their mathematical integrity.
+2. **Architectural Forgetting Prevention**: DeCoFlow's coupling-level decomposition ensures that task-specific parameters are physically isolated, preventing any backward interference by design (Proposition 1). This architectural guarantee results in FM=0.0% and BWT=0.0% when samples are correctly routed to their corresponding experts.
+3. **Comprehensive Validation**: Experiments on MVTec-AD (15 classes) and ViSA (12 classes)---together covering 27 product categories and 151 defect types---demonstrate both effectiveness and generalization across industrial domains.
 
-DeCoFlow achieves 98.05% Image-AUC on MVTec-AD's 15-class sequential learning benchmark with **perfect stability** (FM=0.0%, BWT=0.0%) and 100% routing accuracy. Unlike replay-based methods requiring data storage, DeCoFlow adds only **22-42% parameters per task** while eliminating forgetting by design. We explicitly characterize the trade-off between guaranteed stability and fine-grained localization (P-AP 55.8%), demonstrating that the low-rank constraint acts as implicit regularization rather than capturing an intrinsically low-rank structure. Our framework establishes a **new paradigm** for continual density estimation where architectural properties, not heuristic constraints, guarantee stability---shifting the field from "how to reduce forgetting" to "how to eliminate it entirely."
+DeCoFlow achieves 98.05% Image-AUC on MVTec-AD's 15-class sequential learning benchmark with complete parameter isolation and 100% routing accuracy. Unlike replay-based methods requiring data storage, DeCoFlow adds only **22-42% parameters per task** while preventing forgetting through structural design. We explicitly characterize the trade-off between architectural isolation and fine-grained localization (P-AP 55.8%), demonstrating that the low-rank constraint acts as implicit regularization rather than capturing an intrinsically low-rank structure. Our framework establishes a **new paradigm** for continual density estimation where architectural properties provide the foundation for stability---shifting the methodology from heuristic forgetting mitigation to principled parameter decomposition.
 
 ---
 
@@ -114,22 +114,22 @@ DeCoFlow achieves 98.05% Image-AUC on MVTec-AD's 15-class sequential learning be
 
 ### 1.4. Contribution
 
-1. **Zero Forgetting Guarantee with Formal Proof**: First framework to achieve mathematically guaranteed zero forgetting (FM=0.0, BWT=0.0) in continual anomaly detection through complete parameter isolation. We provide **Proposition 1** with formal proof sketch demonstrating that AFP-enabled decomposition guarantees zero backward interference---elevating this from empirical observation to theoretical certainty.
+1. **Novel Reinterpretation of AFP for Parameter Decomposition**: We reinterpret the Arbitrary Function Property of Normalizing Flows as a structural foundation for safe parameter decomposition in continual learning. Unlike its traditional interpretation as "expressiveness freedom," we demonstrate AFP enables **coupling-level modification without compromising density estimation integrity**---a theoretical contribution enabling principled PEFT application to generative models.
 
-2. **Novel Reinterpretation of AFP**: We reinterpret the Arbitrary Function Property of Normalizing Flows as a structural foundation for parameter decomposition in continual learning, distinct from its traditional interpretation as expressiveness freedom. This theoretical contribution enables principled PEFT application to density estimation models.
+2. **DeCoFlow Framework with Architectural Forgetting Prevention**: Coupling-level LoRA adaptation achieving complete parameter isolation without data storage. The frozen base + task-specific adapter structure ensures that correctly routed samples experience zero backward interference (Proposition 1). This design achieves FM=0.0% and BWT=0.0% on MVTec-AD with 100% routing accuracy.
 
-3. **DeCoFlow Framework**: Coupling-level LoRA adaptation achieving practical parameter isolation without data storage. 22-42% parameter addition per task enables forgetting-free expansion with sublinear memory scaling.
+3. **Implicit Regularization Analysis**: We demonstrate that LoRA's effectiveness in continual AD stems from implicit regularization rather than low-rank approximation, providing novel insights for PEFT in density estimation models.
 
-4. **Implicit Regularization Analysis**: We demonstrate that LoRA's effectiveness in continual AD stems from implicit regularization rather than low-rank approximation, providing novel insights for PEFT in generative models.
+4. **Comprehensive Validation on Definitive Benchmarks**: Full 15-class experiments on MVTec-AD and 12-class on ViSA---together covering 27 product categories spanning textures (carpet, leather), objects (bottle, transistor), and complex structures (PCB1-4)---validate generalization across the full spectrum of industrial anomaly detection challenges.
 
-5. **Comprehensive Validation on Definitive Benchmarks**: Full 15-class experiments on MVTec-AD and 12-class on ViSA---together covering 27 product categories spanning textures (carpet, leather), objects (bottle, transistor), and complex structures (PCB1-4)---validate generalization across the full spectrum of industrial anomaly detection challenges.
+5. **Explicit Trade-off Characterization**: We provide transparent analysis of the design trade-off between architectural isolation (enabling zero backward interference) and fine-grained localization (P-AP), offering practitioners clear guidance for application-specific decisions.
 
-**Positioning Relative to Concurrent Work**: While recent ECCV 2026 submissions in continual learning focus on improved regularization [CITE] or sophisticated replay mechanisms [CITE], DeCoFlow takes a fundamentally different approach: leveraging architectural properties (AFP) to achieve *exact* zero forgetting rather than *approximate* forgetting reduction. This positions DeCoFlow as a **paradigm shift** from "forgetting mitigation" to "forgetting elimination"---a qualitative change in how the community should think about continual learning for density estimation.
+**Positioning Relative to Concurrent Work**: While recent ECCV 2026 submissions in continual learning focus on improved regularization [CITE] or sophisticated replay mechanisms [CITE], DeCoFlow takes a fundamentally different approach: leveraging architectural properties (AFP) to achieve parameter isolation that **prevents forgetting by design**. This positions DeCoFlow as a **paradigm shift** from heuristic forgetting mitigation to principled architectural decomposition---a qualitative change in methodology for continual learning in density estimation models.
 
 **Why This Paradigm Shift Matters**:
-- **For Research**: Demonstrates that forgetting is not an inevitable trade-off but a design choice. Future work can build on AFP-based isolation rather than competing regularization schemes.
-- **For Industry**: Enables certified inspection systems where historical task performance is *guaranteed* rather than probabilistically maintained. This is critical for safety-critical manufacturing (medical devices, aerospace components).
-- **For Methodology**: Establishes that architectural properties, not training tricks, should be the foundation for continual learning in generative models.
+- **For Research**: Demonstrates that forgetting prevention can be achieved through architectural design rather than competing regularization schemes. Future work can build on AFP-based decomposition as a principled foundation.
+- **For Industry**: Enables inspection systems where parameter isolation ensures consistent behavior across learned tasks. The architectural guarantee provides a foundation for reliable continual deployment.
+- **For Methodology**: Establishes that structural properties of generative models (like AFP) should be leveraged for continual learning, opening new research directions beyond traditional PEFT-CL approaches designed for discriminative models.
 
 ---
 
@@ -262,11 +262,11 @@ The framework consists of four key stages following the data processing flow:
 
 The data flow maintains tensor shapes preserving spatial information throughout each stage.
 
-#### 3.2.1. Theoretical Foundation: Zero Forgetting Guarantee
+#### 3.2.1. Theoretical Foundation: Architectural Parameter Isolation
 
-**[NEW - 9.0-5] Formal Proposition for Zero Forgetting**
+**[NEW - 9.0-5] Formal Proposition for Parameter Isolation Guarantee**
 
-We now provide formal theoretical justification for DeCoFlow's zero forgetting property. This elevates the contribution from empirical observation to mathematical guarantee.
+We provide formal theoretical justification for DeCoFlow's parameter isolation property. This establishes the architectural foundation that prevents backward interference by design.
 
 **Definition 1 (Parameter Isolation)**: A continual learning system exhibits *complete parameter isolation* if, for all tasks $t' > t$:
 $$\theta_t \cap \theta_{t'} = \emptyset \quad \text{or} \quad \theta_t \cap \theta_{t'} \subseteq \Theta_{\text{frozen}}$$
@@ -280,7 +280,7 @@ where $M_t^{(t')}$ denotes performance on task $t$ after training on task $t'$.
 
 ---
 
-**Proposition 1 (Zero Forgetting Guarantee under AFP-enabled Decomposition)**
+**Proposition 1 (Parameter Isolation Guarantee under AFP-enabled Decomposition)**
 
 Let $f_\theta: \mathbb{R}^D \to \mathbb{R}^D$ be a normalizing flow with affine coupling layers, where each coupling subnet is decomposed as:
 $$s(x) = s_{\text{base}}(x; \theta_{\text{base}}) + \Delta s_t(x; A_t, B_t)$$
@@ -294,8 +294,8 @@ $$\frac{\partial \mathcal{L}_{t'}}{\partial \theta_t} = 0 \implies \text{BWT}_t 
 
 where $\theta_t = \{A_t, B_t, \gamma_t, \beta_t, \theta_{\text{ACL},t}\}$ are task-$t$ specific parameters.
 
-3. **Forgetting Measure Bound**: Under complete parameter isolation:
-$$\text{FM}_t = 0 \quad \forall t \in \{0, 1, \ldots, T-1\}$$
+3. **Forgetting Prevention by Design**: Under complete parameter isolation, correctly routed samples experience zero performance degradation:
+$$M_t^{(t')} = M_t^{(t)} \quad \forall t' > t \text{ (when routed to expert } t \text{)}$$
 
 ---
 
@@ -340,23 +340,25 @@ $\square$
 
 ---
 
-**Corollary 1 (Task-Agnostic Inference Validity)**:
-Under Proposition 1, the only source of error in task-agnostic inference is routing accuracy $\text{Acc}_{\text{route}}$. The expected performance degradation is bounded by:
-$$\mathbb{E}[\text{Perf}] \geq \text{Acc}_{\text{route}} \cdot \text{Perf}_{\text{oracle}} + (1 - \text{Acc}_{\text{route}}) \cdot \text{Perf}_{\text{wrong}}$$
+**Corollary 1 (Overall Performance Decomposition)**:
+Under Proposition 1, the overall system performance decomposes into:
+$$\text{Perf}_{\text{overall}} = \text{Acc}_{\text{route}} \cdot \text{Perf}_{\text{isolated}} + (1 - \text{Acc}_{\text{route}}) \cdot \text{Perf}_{\text{misrouted}}$$
 
-where $\text{Perf}_{\text{oracle}}$ is performance with correct routing and $\text{Perf}_{\text{wrong}}$ is performance with incorrect routing.
+where $\text{Perf}_{\text{isolated}}$ is the preserved performance from parameter isolation and $\text{Perf}_{\text{misrouted}}$ accounts for routing errors. This decomposition clarifies that:
+- **Architectural contribution**: Parameter isolation guarantees $\text{Perf}_{\text{isolated}} = \text{Perf}_{\text{initial}}$ (no degradation for correctly routed samples)
+- **System performance**: Depends on routing accuracy, which is a separate engineering challenge
 
-**Empirical Validation**: With 100% routing accuracy on MVTec-AD, DeCoFlow achieves the theoretical upper bound.
+**Empirical Validation**: On MVTec-AD with 100% routing accuracy, the system achieves the full benefit of parameter isolation (FM=0.0%, BWT=0.0%).
 
 ---
 
 **Remark on Theoretical Contribution**:
-While parameter isolation for zero forgetting is conceptually straightforward, the key insight is that **not all architectures permit safe isolation**. DeCoFlow's contribution is identifying that NF's AFP uniquely enables decomposition that:
+While parameter isolation is conceptually straightforward, the key insight is that **not all architectures permit safe isolation**. DeCoFlow's contribution is identifying that NF's AFP uniquely enables decomposition that:
 1. Preserves density estimation validity (unlike AE/VAE decomposition)
 2. Maintains training stability (unlike Teacher-Student decomposition)
 3. Achieves efficient parameter scaling (unlike full model replication)
 
-This is validated empirically in Section 4.4.1, where we show that applying the same decomposition strategy to AE, VAE, and Teacher-Student architectures results in significant performance collapse.
+This structural property is what makes AFP a suitable foundation for parameter-efficient continual learning in density estimation---a novel reinterpretation distinct from AFP's traditional role as "expressiveness enabler." This is validated empirically in Section 4.4.1, where applying the same decomposition strategy to AE, VAE, and Teacher-Student architectures results in significant performance collapse.
 
 #### 3.2.2. Parameter Isolation Bounds
 
@@ -1103,35 +1105,35 @@ DeCoFlow achieves 3x memory reduction and 6x faster inference compared to replay
 
 ## 5. Conclusion
 
-We presented DeCoFlow, a novel framework for continual anomaly detection that achieves **mathematically guaranteed zero forgetting** through structural parameter decomposition in Normalizing Flows. Our key contribution is the reinterpretation of the Arbitrary Function Property (AFP) as a structural foundation for efficient isolation in continual learning, enabling coupling-level LoRA adaptation that preserves NF's density estimation integrity.
+We presented DeCoFlow, a novel framework for continual anomaly detection that achieves **complete architectural parameter isolation** through structural decomposition in Normalizing Flows. Our key contribution is the reinterpretation of the Arbitrary Function Property (AFP) as a structural foundation for safe parameter decomposition in continual learning, enabling coupling-level LoRA adaptation that preserves NF's density estimation integrity.
 
 **Key Results**:
-- **Zero Forgetting with Theoretical Guarantee**: FM=0.0%, BWT=0.0% across all configurations, backed by Proposition 1's formal proof---the first framework to achieve *exact* zero forgetting in continual AD with mathematical certainty
+- **Architectural Parameter Isolation**: DeCoFlow's coupling-level decomposition ensures that task-specific parameters are physically isolated, achieving FM=0.0% and BWT=0.0% on MVTec-AD where samples are correctly routed to their corresponding experts
 - **State-of-the-Art Performance**: 98.05% I-AUC on MVTec-AD, +3.35%p over CADIC without any replay
 - **Full-Scale Validation**: 15-class coupling vs. feature-level comparison shows coupling-level advantage amplifies with scale (+5.75%p I-AUC)
 - **Comprehensive Benchmark Coverage**: Validation on MVTec-AD (15 classes) and ViSA (12 classes) covering 27 product categories and 151 defect types---the definitive industrial AD benchmarks
 
-**Paradigm Shift: From Mitigation to Elimination**
+**Paradigm Shift: From Heuristic Mitigation to Principled Decomposition**
 
 DeCoFlow represents more than an incremental improvement---it establishes a **new paradigm** for continual learning in density estimation models:
 
-1. **Conceptual Shift**: Previous work asked "how to reduce forgetting?" DeCoFlow demonstrates that with proper architectural foundation (AFP), the question becomes "how to *eliminate* forgetting entirely."
+1. **Conceptual Shift**: Previous work focused on "how to mitigate forgetting through regularization or replay." DeCoFlow demonstrates that with proper architectural foundation (AFP), the methodology shifts to "how to achieve parameter isolation that prevents interference by design."
 
-2. **Methodological Shift**: Rather than competing on regularization strengths or replay strategies, we show that architectural properties can provide *mathematical guarantees* that no amount of tuning can match.
+2. **Methodological Shift**: Rather than competing on regularization strengths or replay strategies, we show that architectural properties of generative models can be leveraged for principled continual learning---opening new research directions beyond traditional PEFT-CL approaches.
 
-3. **Practical Shift**: For safety-critical applications (medical device inspection, aerospace manufacturing), probabilistic forgetting reduction is insufficient. DeCoFlow enables **certified** continual learning systems where historical performance is guaranteed.
+3. **Practical Shift**: DeCoFlow provides a foundation where architectural isolation guarantees consistent behavior across learned tasks, offering practitioners a principled approach to continual deployment.
 
 **Trade-offs and Limitations**
 
 DeCoFlow achieves these results with explicit, principled trade-offs:
-- The P-AP gap (55.8% vs CADIC's 58.4%) represents a design choice prioritizing guaranteed stability over marginal localization gains
+- The P-AP gap (55.8% vs CADIC's 58.4%) represents a design choice prioritizing architectural isolation over marginal localization gains
 - The ViSA P-AP gap (-14.9%p) stems from spatial resolution mismatch, addressed by multi-resolution adaptation (Section 6.1)
 
-For applications where long-term reliability matters more than fine-grained localization, DeCoFlow provides the optimal solution.
+For applications where consistent long-term behavior matters more than fine-grained localization, DeCoFlow provides the optimal solution.
 
 **Broader Impact**
 
-Our analysis reveals that LoRA's effectiveness in this context stems from implicit regularization rather than approximating an intrinsically low-rank structure, providing new insights for applying PEFT methods to density estimation models. The theoretical framework (Proposition 1) and empirical validation establish a foundation for future work on forgetting-free continual learning across generative model families.
+Our analysis reveals that LoRA's effectiveness in this context stems from implicit regularization rather than approximating an intrinsically low-rank structure, providing new insights for applying PEFT methods to density estimation models. The theoretical framework (Proposition 1) and empirical validation establish a foundation for future work on parameter-isolated continual learning across generative model families.
 
 ---
 

@@ -1,5 +1,52 @@
 # MoLE-Flow Update Notes
 
+
+## V9 - Experiment Section Ablation Restructure
+
+### 실험 결과
+| Task | Metric | Value |
+|------|--------|-------|
+| Paper outline update | Ablation structure | Claim-based grouping + synergy section |
+
+### 분석
+- 절삭 연구가 컴포넌트 나열 중심이라 핵심 주장(AFP 격리, 경직성 보상, 암묵적 정규화)의 논리적 연결이 약함
+- 구성 요소 결합 시너지가 명시되지 않아 설계 의도를 전달하기 어려움
+
+### 해결책
+- 변경 사항: 4.3 절삭 연구를 주장 기반 구조로 재편, 입력/출력 그룹 절삭(표 6B)과 시스템 성능 분해(4.3.4) 추가
+- 수정된 파일: Paper_works/documents/Outline/Outline_v5_final_KR.md
+
+## V9.1 - 2x2 (Frozen vs Trainable) 분해 검증 추가
+
+### 실험 결과
+| Task | Metric | Value |
+|------|--------|-------|
+| Paper outline update | New ablation design | Add 2x2 design to separate freeze vs decomposition effects |
+
+### 분석
+- 기존 4.3.1의 "Fine-tune -> Frozen base -> AFP-based decomposition" 진행만으로는 분해 자체의 효과와 동결 효과가 완전히 분리되지 않음
+- 리뷰어 관점에서 "FM=0이 단지 동결 때문"이라는 반론을 차단하려면 2x2 요인 설계가 더 명확함
+
+### 해결책
+- 변경 사항: 4.3.1에 "Frozen vs Trainable 2x2" 추가 실험(표 6A-1)과 해석 가이드(A vs B, A vs C 등) 삽입
+- 수정된 파일: Paper_works/documents/Outline/Outline_v5_final_KR.md
+
+## V9.2 - 4.3.2 구조적 필요성(Interaction) 재설계
+
+### 실험 결과
+| Task | Metric | Value |
+|------|--------|-------|
+| Paper outline update | Interaction section | Replace ANOVA claims with descriptive DiD using actual Pixel AP source |
+
+### 분석
+- 기존 4.3.2.3은 2x2 ANOVA의 F/p-value를 제시했으나, 저장된 `logs/3_Interaction_Effect/15class/`는 단일 시드(seed=0)로 보이며 통계적 유의성 주장을 뒷받침하기 어려움
+- `logs/3_Interaction_Effect/15class_summary.csv`의 `pixel_ap` 컬럼이 Pixel AP가 아니라 Image AP(`final_average_img_ap`)에 대응하는 것으로 확인됨
+- "Frozen vs Trainable"이라는 용어가 현재 로그에서는 엄밀히 base trainable을 의미하지 않고, 실질적으로는 LoRA ON/OFF 조건 차이를 반영함
+
+### 해결책
+- 변경 사항: 4.3.2.3을 Pixel AP(`final_average_pixel_ap`) 기반 기술통계 DiD 표로 교체하고, 통계 검정을 위한 추가 실험(베이스 trainable + 다중 seed) 필요조건을 명시
+- 수정된 파일: Paper_works/documents/Outline/Outline_v5_final_KR.md
+
 ## Version History
 
 ---
@@ -7571,3 +7618,18 @@ MoLE-Flow의 "완전 망각 제로" 주장을 Fine-tune 및 EWC 베이스라인�
 - 6-task 비교: `logs/6tasks_arch_comparison.log`
 - NF 참조: `logs/PilotExperiment/6tasks_architecture_comparison_*/NF_reference/`
 
+---
+
+## Paper Figure - Zero Forgetting (2026-01-22)
+
+### 변경 사항
+- Table 5 (BWT Verification) 내용을 시각화하기 위한 플롯 스크립트 추가
+
+### 결과물
+- 스크립트: `scripts/plot_bwt_verification.py`
+- 출력: `Paper_works/figures/zero_forgetting_bwt_verification.pdf`
+- 출력: `Paper_works/figures/zero_forgetting_bwt_verification.png`
+
+### 구성
+- (a) Task Retention Curve: task별 학습 직후 vs 최종 I-AUC (mean ± std)
+- (b) Baseline 비교: BWT(I-AUC)와 FM(I-AUC) bar plot + Final I-AUC 텍스트 주석
