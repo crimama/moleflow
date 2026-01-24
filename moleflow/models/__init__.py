@@ -8,7 +8,9 @@ from moleflow.models.adapters import (
     SimpleTaskAdapter,
     SoftLNTaskInputAdapter,
     SpatialContextMixer,
-    create_task_adapter
+    create_task_adapter,
+    FeatureLevelPromptAdapter,
+    FeatureLevelMLPAdapter,
 )
 from moleflow.models.routing import TaskPrototype, PrototypeRouter
 from moleflow.models.mole_nf import MoLESpatialAwareNF

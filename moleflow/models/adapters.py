@@ -2401,3 +2401,144 @@ class SpatialTransformerNetwork(nn.Module):
     def __repr__(self):
         return (f"SpatialTransformerNetwork(mode={self.mode}, "
                 f"input_size={self.input_size}, num_params={self.num_params})")
+
+
+# =============================================================================
+# Feature-Level Adaptation Baselines (for Coupling vs Feature-level comparison)
+# =============================================================================
+
+class FeatureLevelPromptAdapter(nn.Module):
+    """
+    Feature-level Prompt Adapter for baseline comparison.
+
+    This implements the feature-level adaptation approach where learnable
+    prompts/adapters are applied BEFORE the NF, modifying the input distribution.
+
+    Equation: x' = x + P_t where P_t is a learnable prompt
+
+    Used to compare against DeCoFlow's coupling-level LoRA adaptation.
+    """
+
+    def __init__(self, channels: int, spatial_size: int = 14,
+                 target_params: int = 1_930_000):
+        """
+        Args:
+            channels: Feature dimension (e.g., 1024 for WideResNet50)
+            spatial_size: Spatial dimension (H=W, e.g., 14 for 224x224 input)
+            target_params: Target number of parameters to match LoRA baseline
+        """
+        super(FeatureLevelPromptAdapter, self).__init__()
+
+        self.channels = channels
+        self.spatial_size = spatial_size
+
+        # Calculate hidden dimension to match target parameters
+        # Params = channels * hidden + hidden * channels = 2 * channels * hidden
+        hidden_dim = target_params // (2 * channels)
+        self.hidden_dim = hidden_dim
+
+        # MLP-based adapter (Bottleneck structure)
+        self.adapter = nn.Sequential(
+            nn.Linear(channels, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, channels)
+        )
+
+        # Initialize to near-identity
+        nn.init.normal_(self.adapter[0].weight, std=0.01)
+        nn.init.zeros_(self.adapter[0].bias)
+        nn.init.zeros_(self.adapter[2].weight)
+        nn.init.zeros_(self.adapter[2].bias)
+
+        # Learnable spatial prompt (optional, adds spatial bias)
+        # This captures position-dependent adaptation
+        self.use_spatial_prompt = True
+        if self.use_spatial_prompt:
+            self.spatial_prompt = nn.Parameter(
+                torch.zeros(1, spatial_size, spatial_size, channels)
+            )
+
+        actual_params = sum(p.numel() for p in self.parameters())
+        print(f"📦 FeatureLevelPromptAdapter: {actual_params:,} params "
+              f"(target: {target_params:,}, hidden_dim: {hidden_dim})")
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Apply feature-level adaptation.
+
+        Args:
+            x: (B, H, W, D) input features
+
+        Returns:
+            Adapted features (B, H, W, D)
+        """
+        B, H, W, D = x.shape
+
+        # MLP adaptation
+        x_flat = x.reshape(-1, D)
+        delta = self.adapter(x_flat).reshape(B, H, W, D)
+
+        # Add spatial prompt if enabled (with interpolation for size mismatch)
+        if self.use_spatial_prompt:
+            if H != self.spatial_size or W != self.spatial_size:
+                # Interpolate prompt to match input size
+                # prompt: (1, S, S, D) -> (1, D, S, S) -> interpolate -> (1, D, H, W) -> (1, H, W, D)
+                prompt = self.spatial_prompt.permute(0, 3, 1, 2)  # (1, D, S, S)
+                prompt = torch.nn.functional.interpolate(
+                    prompt, size=(H, W), mode='bilinear', align_corners=False
+                )
+                prompt = prompt.permute(0, 2, 3, 1)  # (1, H, W, D)
+                delta = delta + prompt
+            else:
+                delta = delta + self.spatial_prompt
+
+        return x + delta
+
+
+class FeatureLevelMLPAdapter(nn.Module):
+    """
+    Feature-level MLP Adapter with larger capacity.
+
+    This is an alternative to FeatureLevelPromptAdapter with more
+    non-linear transformation capacity.
+    """
+
+    def __init__(self, channels: int, target_params: int = 1_930_000):
+        """
+        Args:
+            channels: Feature dimension
+            target_params: Target number of parameters
+        """
+        super(FeatureLevelMLPAdapter, self).__init__()
+
+        self.channels = channels
+
+        # Calculate hidden dimensions for 2-layer MLP
+        # Params = ch*h1 + h1*h2 + h2*ch ≈ 2*ch*h for h1=h2=h
+        hidden_dim = target_params // (3 * channels)
+
+        self.adapter = nn.Sequential(
+            nn.LayerNorm(channels),
+            nn.Linear(channels, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, channels)
+        )
+
+        # Zero-init last layer for identity start
+        nn.init.zeros_(self.adapter[-1].weight)
+        nn.init.zeros_(self.adapter[-1].bias)
+
+        actual_params = sum(p.numel() for p in self.parameters())
+        print(f"📦 FeatureLevelMLPAdapter: {actual_params:,} params "
+              f"(target: {target_params:,}, hidden_dim: {hidden_dim})")
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply feature-level MLP adaptation."""
+        B, H, W, D = x.shape
+
+        x_flat = x.reshape(-1, D)
+        delta = self.adapter(x_flat).reshape(B, H, W, D)
+
+        return x + delta
